@@ -52,3 +52,19 @@ Pull requests should include a concise summary, testing performed, configuration
 ## Security & Configuration
 
 Only publishable Supabase values belong in `Config.local.xcconfig`. Keep OpenAI, provider, encryption, and Supabase server keys in backend secrets. Preserve read-only mail scopes and RLS ownership checks.
+
+# Project Goals
+
+Build the project until all acceptance criteria are satisfied.
+
+## Rules
+- Never stop after one task.
+- Commit logical changes frequently.
+- Update `todo.md` after each milestone.
+- Run tests before considering a task complete.
+- If blocked, explain why and propose the next action.
+
+## Definition of Done
+- All tests pass
+- Lint passes
+- Documentation updated

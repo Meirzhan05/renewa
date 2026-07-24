@@ -16,11 +16,11 @@ struct SupabaseClient {
         )
     }
 
-    func signUp(email: String, password: String) async throws -> Session? {
+    func signUp(email: String, password: String, displayName: String) async throws -> Session? {
         let response: AuthEnvelope = try await request(
             path: "/auth/v1/signup",
             method: "POST",
-            body: ["email": email, "password": password],
+            body: SignUpBody(email: email, password: password, data: .init(displayName: displayName)),
             accessToken: nil
         )
         return response.session
@@ -53,11 +53,38 @@ struct SupabaseClient {
 
     func fetchProfile(accessToken: String) async throws -> UserProfile {
         let profiles: [UserProfile] = try await request(
-            path: "/rest/v1/profiles?select=id,display_name,default_currency&limit=1",
+            path: "/rest/v1/profiles?select=id,display_name,default_currency,avatar_key,onboarding_completed&limit=1",
             method: "GET",
             body: Optional<String>.none,
             accessToken: accessToken
         )
+        guard let profile = profiles.first else { throw APIError.invalidResponse }
+        return profile
+    }
+
+    func updateProfile(
+        id: UUID,
+        displayName: String,
+        defaultCurrency: String,
+        avatarKey: String,
+        onboardingCompleted: Bool,
+        accessToken: String
+    ) async throws -> UserProfile {
+        var request = try makeRequest(
+            path: "/rest/v1/profiles?id=eq.\(id.uuidString)",
+            method: "PATCH",
+            accessToken: accessToken
+        )
+        request.setValue("return=representation", forHTTPHeaderField: "Prefer")
+        request.httpBody = try Self.encoder.encode(
+            ProfileUpdate(
+                displayName: displayName,
+                defaultCurrency: defaultCurrency,
+                avatarKey: avatarKey,
+                onboardingCompleted: onboardingCompleted
+            )
+        )
+        let profiles: [UserProfile] = try await perform(request)
         guard let profile = profiles.first else { throw APIError.invalidResponse }
         return profile
     }
@@ -216,6 +243,34 @@ private struct AuthEnvelope: Decodable {
 
 private struct AuthorizationURLResponse: Decodable {
     let url: String
+}
+
+private struct SignUpBody: Encodable {
+    struct Metadata: Encodable {
+        let displayName: String
+
+        enum CodingKeys: String, CodingKey {
+            case displayName = "display_name"
+        }
+    }
+
+    let email: String
+    let password: String
+    let data: Metadata
+}
+
+private struct ProfileUpdate: Encodable {
+    let displayName: String
+    let defaultCurrency: String
+    let avatarKey: String
+    let onboardingCompleted: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case displayName = "display_name"
+        case defaultCurrency = "default_currency"
+        case avatarKey = "avatar_key"
+        case onboardingCompleted = "onboarding_completed"
+    }
 }
 
 private struct SubscriptionInsert: Encodable {

@@ -89,10 +89,10 @@ struct OverviewView: View {
             Spacer()
             ZStack {
                 Circle()
-                    .fill(RenewaTheme.divider.opacity(0.75))
+                    .fill(store.profileAvatar.color)
                 Text(initials)
                     .font(.renewa(21, weight: .bold))
-                    .foregroundStyle(RenewaTheme.sage.opacity(0.9))
+                    .foregroundStyle(.white)
             }
             .frame(width: 52, height: 52)
             .scaleEffect(appeared ? 1 : 0.72)
@@ -140,15 +140,20 @@ struct OverviewView: View {
                 Text(displayedSpend.currencyText(code: store.defaultCurrency))
                     .font(.system(size: 55, weight: .medium, design: .serif))
                     .foregroundStyle(RenewaTheme.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.62)
                     .contentTransition(.numericText(value: displayedSpend.doubleValue))
                 Spacer()
-                Label("Live data", systemImage: "checkmark.circle.fill")
+                Label {
+                    Text("Live data")
+                } icon: {
+                    HeroIcon(.checkCircle, style: .solid, size: 18)
+                }
                     .font(.renewa(13, weight: .bold))
                     .foregroundStyle(RenewaTheme.sage)
                     .padding(.horizontal, 13)
                     .padding(.vertical, 9)
                     .background(RenewaTheme.sage.opacity(0.1), in: Capsule())
-                    .symbolEffect(.bounce, value: store.subscriptions.count)
             }
 
             Text(spendingSummary)
@@ -220,11 +225,15 @@ struct OverviewView: View {
                 .font(.renewa(20, weight: .bold))
 
             if store.activeSubscriptions.isEmpty {
-                ContentUnavailableView(
-                    "No subscriptions yet",
-                    systemImage: "sparkles",
-                    description: Text("Add one manually or scan your inbox.")
-                )
+                ContentUnavailableView {
+                    Label {
+                        Text("No subscriptions yet")
+                    } icon: {
+                        HeroIcon(.sparkles, style: .solid, size: 34)
+                    }
+                } description: {
+                    Text("Add one manually or scan your inbox.")
+                }
                 .foregroundStyle(RenewaTheme.muted)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 30)
@@ -240,8 +249,14 @@ struct OverviewView: View {
                     SubscriptionRow(subscription: subscription)
                         .renewaEntrance(appeared, delay: 0.34 + Double(index) * 0.045, distance: 10)
                         .contextMenu {
-                            Button("Remove", systemImage: "trash", role: .destructive) {
+                            Button(role: .destructive) {
                                 Task { await store.remove(subscription) }
+                            } label: {
+                                Label {
+                                    Text("Remove")
+                                } icon: {
+                                    HeroIcon(.trash, size: 18)
+                                }
                             }
                         }
                 }
@@ -268,8 +283,14 @@ struct OverviewView: View {
                     .opacity(0.58)
                     .renewaEntrance(appeared, delay: 0.4 + Double(index) * 0.045, distance: 10)
                     .contextMenu {
-                        Button("Delete permanently", systemImage: "trash", role: .destructive) {
+                        Button(role: .destructive) {
                             Task { await store.remove(subscription) }
+                        } label: {
+                            Label {
+                                Text("Delete permanently")
+                            } icon: {
+                                HeroIcon(.trash, size: 18)
+                            }
                         }
                     }
             }

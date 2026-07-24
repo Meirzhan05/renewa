@@ -24,6 +24,13 @@ struct RootView: View {
                             ? .opacity
                             : .opacity.combined(with: .move(edge: .bottom))
                     )
+            case .onboarding:
+                OnboardingView()
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .move(edge: .trailing))
+                    )
             case .ready:
                 MainTabView()
                     .transition(
@@ -54,8 +61,7 @@ private struct ConfigurationRequiredView: View {
         ZStack {
             RenewaTheme.background.ignoresSafeArea()
             VStack(spacing: 18) {
-                Image(systemName: "externaldrive.badge.exclamationmark")
-                    .font(.system(size: 48, weight: .medium))
+                HeroIcon(.exclamationTriangle, size: 48)
                     .foregroundStyle(RenewaTheme.sage)
                 Text("Backend configuration required")
                     .font(.renewa(24, weight: .bold))
@@ -78,9 +84,13 @@ private struct LaunchView: View {
         ZStack {
             RenewaTheme.background.ignoresSafeArea()
             VStack(spacing: 14) {
-                Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90.circle.fill")
-                    .font(.system(size: 54))
-                    .foregroundStyle(RenewaTheme.sage)
+                ZStack {
+                    Circle()
+                        .fill(RenewaTheme.sage)
+                        .frame(width: 64, height: 64)
+                    HeroIcon(.arrowPath, size: 36)
+                        .foregroundStyle(.white)
+                }
                     .scaleEffect(breathe ? 1.08 : 0.94)
                     .rotationEffect(.degrees(breathe && !reduceMotion ? 10 : 0))
                 Text("Renewa")
@@ -115,12 +125,12 @@ private enum AppTab: String, CaseIterable {
         }
     }
 
-    var icon: String {
+    var icon: HeroIconName {
         switch self {
-        case .home: "house.fill"
-        case .insights: "chart.bar.xaxis"
-        case .inbox: "envelope.badge"
-        case .profile: "person.crop.circle"
+        case .home: .home
+        case .insights: .chartBar
+        case .inbox: .envelope
+        case .profile: .userCircle
         }
     }
 }
@@ -130,8 +140,25 @@ struct MainTabView: View {
     @State private var showingAdd = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    init() {
+#if DEBUG
+        switch ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] {
+        case "insights":
+            _selectedTab = State(initialValue: .insights)
+        case "inbox":
+            _selectedTab = State(initialValue: .inbox)
+        case "profile":
+            _selectedTab = State(initialValue: .profile)
+        case "add":
+            _showingAdd = State(initialValue: true)
+        default:
+            break
+        }
+#endif
+    }
+
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             Group {
                 switch selectedTab {
                 case .home: OverviewView()
@@ -147,12 +174,12 @@ struct MainTabView: View {
                     : .opacity.combined(with: .scale(scale: 0.985))
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .padding(.bottom, 78)
-
-            CustomTabBar(selectedTab: $selectedTab, showingAdd: $showingAdd)
         }
         .animation(reduceMotion ? .easeOut(duration: 0.12) : RenewaMotion.standard, value: selectedTab)
         .background(RenewaTheme.background.ignoresSafeArea())
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            CustomTabBar(selectedTab: $selectedTab, showingAdd: $showingAdd)
+        }
         .sheet(isPresented: $showingAdd) {
             AddSubscriptionView()
                 .presentationDetents([.large])
@@ -167,65 +194,81 @@ private struct CustomTabBar: View {
     @Namespace private var selection
 
     var body: some View {
-        HStack(spacing: 0) {
-            item(.home)
-            item(.insights)
+        ZStack(alignment: .top) {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 26,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 26,
+                style: .continuous
+            )
+            .fill(.ultraThinMaterial)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(RenewaTheme.divider.opacity(0.65))
+                    .frame(height: 1)
+            }
+            .padding(.top, 18)
+
+            HStack(spacing: 0) {
+                item(.home)
+                item(.insights)
+                Color.clear
+                    .frame(width: 78)
+                    .accessibilityHidden(true)
+                item(.inbox)
+                item(.profile)
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 19)
 
             Button {
+                guard !showingAdd else { return }
                 withAnimation(RenewaMotion.quick) {
                     showingAdd = true
                 }
             } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 27, weight: .medium))
+                HeroIcon(.plus, style: .solid, size: 29)
                     .foregroundStyle(.white)
-                    .frame(width: 64, height: 64)
+                    .frame(width: 60, height: 60)
                     .background(RenewaTheme.sage, in: Circle())
+                    .overlay {
+                        Circle()
+                            .stroke(RenewaTheme.background, lineWidth: 5)
+                    }
                     .shadow(color: RenewaTheme.sage.opacity(0.28), radius: 16, y: 6)
-                    .rotationEffect(.degrees(showingAdd ? 45 : 0))
             }
             .buttonStyle(PressScaleStyle())
-            .offset(y: -17)
-            .frame(maxWidth: .infinity)
             .accessibilityLabel("Add subscription")
-
-            item(.inbox)
-            item(.profile)
         }
-        .padding(.top, 12)
-        .padding(.horizontal, 16)
-        .padding(.bottom, 6)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) {
-            Rectangle().fill(RenewaTheme.divider.opacity(0.7)).frame(height: 1)
-        }
+        .frame(height: 82)
     }
 
     private func item(_ tab: AppTab) -> some View {
         Button {
-            withAnimation(.spring(response: 0.38, dampingFraction: 0.8)) {
+            withAnimation(RenewaMotion.quick) {
                 selectedTab = tab
             }
         } label: {
-            VStack(spacing: 5) {
-                Image(systemName: tab.icon)
-                    .font(.system(size: 21, weight: selectedTab == tab ? .semibold : .regular))
-                    .frame(height: 25)
-                Text(tab.title)
-                    .font(.renewa(11, weight: selectedTab == tab ? .semibold : .medium))
-            }
-            .foregroundStyle(selectedTab == tab ? RenewaTheme.ink : RenewaTheme.muted.opacity(0.58))
-            .frame(maxWidth: .infinity)
-            .overlay(alignment: .top) {
+            ZStack {
                 if selectedTab == tab {
-                    Capsule()
+                    Circle()
                         .fill(RenewaTheme.ink)
-                        .frame(width: 25, height: 3)
-                        .offset(y: -10)
+                        .frame(width: 44, height: 44)
                         .matchedGeometryEffect(id: "selectedTab", in: selection)
                 }
+                HeroIcon(
+                    tab.icon,
+                    style: selectedTab == tab ? .solid : .outline,
+                    size: 24
+                )
+                .foregroundStyle(selectedTab == tab ? .white : RenewaTheme.muted.opacity(0.68))
             }
+            .frame(height: 52)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(PressScaleStyle())
+        .accessibilityLabel(tab.title)
+        .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
     }
 }

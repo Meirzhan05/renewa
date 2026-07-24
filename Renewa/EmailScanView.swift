@@ -48,11 +48,13 @@ struct EmailScanView: View {
                                         value: isScanning
                                     )
                             }
-                            Image(systemName: isScanning ? "sparkles" : "envelope.open.fill")
-                                .font(.system(size: 37, weight: .medium))
+                            HeroIcon(
+                                isScanning ? .sparkles : .envelope,
+                                style: .solid,
+                                size: 40
+                            )
                                 .foregroundStyle(.white)
-                                .symbolEffect(.pulse, isActive: isScanning)
-                                .symbolEffect(.bounce, value: appeared)
+                                .scaleEffect(isScanning && !reduceMotion ? 1.08 : 1)
                         }
                         .frame(height: 150)
 
@@ -99,20 +101,21 @@ struct EmailScanView: View {
                 }
 
                 VStack(spacing: 12) {
-                    actionButton("Scan connected inbox", icon: "sparkles") {
+                    actionButton("Scan connected inbox") {
                         await runScan()
                     }
                     HStack(spacing: 12) {
-                        providerButton("Google", icon: "g.circle.fill", provider: "google")
-                        providerButton("Microsoft", icon: "m.circle.fill", provider: "microsoft")
+                        providerButton("Google", mark: "G", provider: "google")
+                        providerButton("Microsoft", mark: "M", provider: "microsoft")
                     }
                 }
                 .renewaEntrance(appeared, delay: 0.16)
 
-                Label(
-                    "Renewa requests read-only email access and only sends likely billing messages for extraction.",
-                    systemImage: "lock.shield.fill"
-                )
+                Label {
+                    Text("Renewa requests read-only email access and only sends likely billing messages for extraction.")
+                } icon: {
+                    HeroIcon(.lockClosed, size: 20)
+                }
                 .font(.renewa(13, weight: .medium))
                 .foregroundStyle(RenewaTheme.muted)
                 .renewaEntrance(appeared, delay: 0.22)
@@ -138,7 +141,7 @@ struct EmailScanView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func actionButton(_ title: String, icon: String, action: @escaping () async -> Void) -> some View {
+    private func actionButton(_ title: String, action: @escaping () async -> Void) -> some View {
         Button {
             Task { await action() }
         } label: {
@@ -146,7 +149,7 @@ struct EmailScanView: View {
                 if isScanning {
                     ProgressView().tint(.white)
                 } else {
-                    Image(systemName: icon)
+                    HeroIcon(.sparkles, style: .solid, size: 20)
                 }
                 Text(title)
                     .font(.renewa(16, weight: .semibold))
@@ -160,12 +163,17 @@ struct EmailScanView: View {
         .disabled(isScanning)
     }
 
-    private func providerButton(_ title: String, icon: String, provider: String) -> some View {
+    private func providerButton(_ title: String, mark: String, provider: String) -> some View {
         Button {
             Task { await connect(provider) }
         } label: {
-            Label(title, systemImage: icon)
-                .font(.renewa(14, weight: .semibold))
+            HStack(spacing: 8) {
+                Text(mark)
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundStyle(provider == "google" ? Color(red: 0.26, green: 0.52, blue: 0.96) : RenewaTheme.sage)
+                Text(title)
+                    .font(.renewa(14, weight: .semibold))
+            }
                 .foregroundStyle(RenewaTheme.ink)
                 .frame(maxWidth: .infinity)
                 .frame(height: 50)

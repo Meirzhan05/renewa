@@ -51,6 +51,30 @@ enum SubscriptionStatus: String, Codable {
     var title: String { rawValue.capitalized }
 }
 
+enum ProfileAvatar: String, Codable, CaseIterable, Identifiable {
+    case sage
+    case sky
+    case coral
+    case plum
+    case gold
+    case graphite
+
+    var id: String { rawValue }
+
+    var title: String { rawValue.capitalized }
+
+    var color: Color {
+        switch self {
+        case .sage: RenewaTheme.sage
+        case .sky: Color(red: 0.34, green: 0.57, blue: 0.76)
+        case .coral: RenewaTheme.coral
+        case .plum: Color(red: 0.54, green: 0.42, blue: 0.65)
+        case .gold: Color(red: 0.73, green: 0.58, blue: 0.24)
+        case .graphite: Color(red: 0.28, green: 0.29, blue: 0.30)
+        }
+    }
+}
+
 struct Subscription: Identifiable, Codable, Hashable {
     var id: UUID
     var userID: UUID?
@@ -119,11 +143,38 @@ struct UserProfile: Codable, Equatable {
     let id: UUID
     var displayName: String?
     var defaultCurrency: String
+    var avatarKey: String
+    var onboardingCompleted: Bool
 
     enum CodingKeys: String, CodingKey {
         case id
         case displayName = "display_name"
         case defaultCurrency = "default_currency"
+        case avatarKey = "avatar_key"
+        case onboardingCompleted = "onboarding_completed"
+    }
+
+    init(
+        id: UUID,
+        displayName: String?,
+        defaultCurrency: String,
+        avatarKey: String = ProfileAvatar.sage.rawValue,
+        onboardingCompleted: Bool = true
+    ) {
+        self.id = id
+        self.displayName = displayName
+        self.defaultCurrency = defaultCurrency
+        self.avatarKey = avatarKey
+        self.onboardingCompleted = onboardingCompleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        defaultCurrency = try container.decodeIfPresent(String.self, forKey: .defaultCurrency) ?? "USD"
+        avatarKey = try container.decodeIfPresent(String.self, forKey: .avatarKey) ?? ProfileAvatar.sage.rawValue
+        onboardingCompleted = try container.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? true
     }
 }
 
@@ -146,7 +197,17 @@ extension Decimal {
     func currencyText(code: String = "USD") -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.currencyCode = code
+        formatter.currencySymbol = [
+            "USD": "$",
+            "EUR": "€",
+            "GBP": "£",
+            "KZT": "₸",
+            "CAD": "CA$",
+            "AUD": "A$",
+            "JPY": "¥"
+        ][code] ?? code
         formatter.maximumFractionDigits = 2
         return formatter.string(from: self as NSDecimalNumber) ?? "$0"
     }

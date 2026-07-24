@@ -7,9 +7,12 @@ All account, profile, and subscription screens use Supabase data. If the backend
 ## What is included
 
 - Native SwiftUI iOS 17+ client with the supplied dashboard visual language
+- Vendored Heroicons with an outlined/solid navigation hierarchy and no runtime icon dependency
 - Month/year spending views, renewal reminders, category insights, manual entry, and deletion
 - Coordinated springs, staggered entrances, numeric transitions, and a Reduced Motion fallback
 - Supabase email/password auth with sessions stored in the iOS Keychain
+- Registration onboarding plus editable display name, avatar preset, and preferred currency
+- Visual Apple and Google sign-in entry points ready for provider credential configuration
 - Postgres schema, indexes, trigger-maintained profiles, grants, and row-level security
 - Read-only Gmail and Microsoft Graph OAuth using the server authorization-code flow
 - AES-GCM encryption for provider tokens at rest
@@ -98,6 +101,8 @@ Before shipping, add a privacy policy, account/data deletion, provider disconnec
 Renewa/                         SwiftUI client
   AppStore.swift                Session and subscription state
   SupabaseClient.swift          Auth, PostgREST, and Function requests
+  OnboardingView.swift          First-run profile and preference setup
+  HeroIcon.swift                Vendored Heroicons asset adapter
   OverviewView.swift            Reference-inspired dashboard
   EmailScanView.swift           OAuth and AI scan UX
 supabase/

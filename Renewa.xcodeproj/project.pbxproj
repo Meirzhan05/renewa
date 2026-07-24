@@ -255,7 +255,6 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
-				EXCLUDED_SOURCE_FILE_NAMES = Assets.xcassets;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Renewa-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Renewa;
@@ -291,7 +290,6 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
-				EXCLUDED_SOURCE_FILE_NAMES = Assets.xcassets;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = "Renewa-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Renewa;

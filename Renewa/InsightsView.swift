@@ -42,11 +42,15 @@ struct InsightsView: View {
                 .renewaEntrance(appeared, delay: 0.08)
 
                 if categoryTotals.isEmpty {
-                    ContentUnavailableView(
-                        "No spending insights yet",
-                        systemImage: "chart.bar",
-                        description: Text("Add an active \(store.defaultCurrency) subscription to see a breakdown.")
-                    )
+                    ContentUnavailableView {
+                        Label {
+                            Text("No spending insights yet")
+                        } icon: {
+                            HeroIcon(.chartBar, size: 34)
+                        }
+                    } description: {
+                        Text("Add an active \(store.defaultCurrency) subscription to see a breakdown.")
+                    }
                     .foregroundStyle(RenewaTheme.muted)
                     .renewaEntrance(appeared, delay: 0.14)
                 } else {
@@ -92,10 +96,8 @@ struct InsightsView: View {
 
                 RenewaCard {
                     HStack(spacing: 16) {
-                        Image(systemName: "lightbulb.max.fill")
-                            .font(.system(size: 28))
+                        HeroIcon(.lightBulb, size: 30)
                             .foregroundStyle(RenewaTheme.sand)
-                            .symbolEffect(.bounce, value: appeared)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("A useful nudge")
                                 .font(.renewa(16, weight: .bold))
