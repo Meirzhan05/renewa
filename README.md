@@ -19,6 +19,7 @@ All account, profile, and subscription screens use Supabase data. If the backend
 - Authenticated Edge Function that retrieves likely billing messages and uses the OpenAI Responses API with strict Structured Outputs
 - Idempotent event ingestion and automatic add/cancel updates
 - Canceled-subscription history and currency-safe spending totals
+- Bundled, offline brand logos for common services, with an accessible initial-and-category fallback for every other subscription
 
 ## Run the iOS app
 
@@ -114,6 +115,10 @@ supabase/
   functions/mail-oauth-*        Gmail/Microsoft authorization flow
   functions/email-scan          Mail retrieval, AI extraction, and reconciliation
 ```
+
+## Subscription brand logos
+
+Renewa stores an optional, provider-independent `brand_id` for reviewed services. It currently includes Apple, Discord, Dropbox, Google, Netflix, Notion, Spotify, and YouTube. Unknown or ambiguous merchant names keep the familiar colored initial tile, so the app never relies on a network logo lookup. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for sources and trademark notes.
 
 ## Verification
 

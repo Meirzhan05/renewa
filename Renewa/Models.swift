@@ -86,6 +86,7 @@ struct Subscription: Identifiable, Codable, Hashable {
     var category: SubscriptionCategory
     var status: SubscriptionStatus
     var iconName: String
+    var brandID: String?
     var tintHex: String
     var source: String
     var createdAt: Date?
@@ -102,6 +103,7 @@ struct Subscription: Identifiable, Codable, Hashable {
         case category
         case status
         case iconName = "icon_name"
+        case brandID = "brand_id"
         case tintHex = "tint_hex"
         case source
         case createdAt = "created_at"

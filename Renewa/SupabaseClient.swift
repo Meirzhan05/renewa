@@ -328,6 +328,7 @@ private struct SubscriptionInsert: Encodable {
     let category: SubscriptionCategory
     let status: SubscriptionStatus
     let iconName: String
+    let brandID: String?
     let tintHex: String
     let source: String
 
@@ -340,6 +341,7 @@ private struct SubscriptionInsert: Encodable {
         category = subscription.category
         status = subscription.status
         iconName = subscription.iconName
+        brandID = subscription.brandID
         tintHex = subscription.tintHex
         source = subscription.source
     }
@@ -353,6 +355,7 @@ private struct SubscriptionInsert: Encodable {
         case category
         case status
         case iconName = "icon_name"
+        case brandID = "brand_id"
         case tintHex = "tint_hex"
         case source
     }

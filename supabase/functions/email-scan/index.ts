@@ -122,6 +122,7 @@ Deno.serve(async (request) => {
           category: event.category,
           status: "active",
           icon_name: event.merchant_name.slice(0, 1).toUpperCase(),
+          brand_id: brandIDForMerchant(event.merchant_name),
           tint_hex: tintForCategory(event.category),
           source: "email",
           source_key: sourceKey,
@@ -277,6 +278,21 @@ async function extractBillingEvents(messages: MailMessage[]): Promise<BillingEve
 
 function normalizeMerchant(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 80);
+}
+
+function brandIDForMerchant(value: string): string | null {
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const aliases: Record<string, string> = {
+    netflix: "netflix", netflixcom: "netflix",
+    spotify: "spotify", spotifycom: "spotify",
+    notion: "notion", notionso: "notion",
+    dropbox: "dropbox", dropboxcom: "dropbox", dropboxplus: "dropbox",
+    youtube: "youtube", youtubepremium: "youtube", youtubecom: "youtube",
+    apple: "apple", appleone: "apple", icloud: "apple", icloudplus: "apple", applemusic: "apple", appletv: "apple",
+    google: "google", googleone: "google", googleworkspace: "google", googlecom: "google",
+    discord: "discord", discordnitro: "discord", discordcom: "discord",
+  };
+  return aliases[normalized] ?? null;
 }
 
 function nextRenewal(eventDate: string | null, cycle: BillingEvent["billing_cycle"]): string {

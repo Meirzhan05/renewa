@@ -186,13 +186,7 @@ struct AddSubscriptionView: View {
 
     private var preview: some View {
         HStack(spacing: 15) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(Color(hex: category.defaultTint))
-                HeroIcon(category.heroIcon, style: .solid, size: 27)
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 58, height: 58)
+            SubscriptionBrandIcon(subscription: previewSubscription, size: 58, cornerRadius: 18)
             .animation(reduceMotion ? nil : RenewaMotion.standard, value: category)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -329,6 +323,23 @@ struct AddSubscriptionView: View {
         name.trimmed.isEmpty ? "Your subscription" : name.trimmed
     }
 
+    private var previewSubscription: Subscription {
+        Subscription(
+            id: UUID(),
+            name: previewName,
+            price: amount ?? 0,
+            currency: store.defaultCurrency,
+            billingCycle: cycle,
+            nextRenewalDate: renewalDate,
+            category: category,
+            status: .active,
+            iconName: String(previewName.prefix(1)).uppercased(),
+            brandID: SubscriptionBrand.resolve(name)?.id,
+            tintHex: category.defaultTint,
+            source: "manual"
+        )
+    }
+
     private func save() async {
         guard let amount, amount > 0 else { return }
         withAnimation(reduceMotion ? nil : RenewaMotion.quick) {
@@ -344,6 +355,7 @@ struct AddSubscriptionView: View {
             category: category,
             status: .active,
             iconName: String(name.trimmed.prefix(1)).uppercased(),
+            brandID: SubscriptionBrand.resolve(name)?.id,
             tintHex: category.defaultTint,
             source: "manual"
         )

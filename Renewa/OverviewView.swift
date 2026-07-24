@@ -340,15 +340,7 @@ struct SubscriptionRow: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(hex: subscription.tintHex))
-                Text(subscription.iconName)
-                    .font(.renewa(subscription.iconName.count > 1 ? 15 : 21, weight: .bold))
-                    .foregroundStyle(.white)
-                    .minimumScaleFactor(0.7)
-            }
-            .frame(width: 54, height: 54)
+            SubscriptionBrandIcon(subscription: subscription)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(subscription.name)
