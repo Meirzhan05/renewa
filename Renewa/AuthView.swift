@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 struct AuthView: View {
@@ -11,6 +12,7 @@ struct AuthView: View {
     @State private var appeared = false
     @State private var backgroundDrift = false
     @State private var socialNotice: String?
+    @State private var webAuthenticationSession: ASWebAuthenticationSession?
     @FocusState private var focusedField: Field?
 
     private enum Field {
@@ -162,7 +164,7 @@ struct AuthView: View {
                             socialNotice = "Sign in with Apple is ready visually. It can be activated after the Apple Developer entitlement is added."
                         }
                         socialButton(title: "Continue with Google", mark: "G", isGoogle: true) {
-                            socialNotice = "Google sign-in is ready visually. Add the Google OAuth credentials in Supabase to activate it."
+                            startGoogleSignIn()
                         }
                     }
                     .renewaEntrance(appeared, delay: 0.24)
@@ -214,6 +216,34 @@ struct AuthView: View {
             createAccount = true
         }
 #endif
+    }
+
+    private func startGoogleSignIn() {
+        focusedField = nil
+        do {
+            let authorization = try store.googleAuthorization()
+            let session = ASWebAuthenticationSession(url: authorization.url, callbackURLScheme: "renewa") { callbackURL, error in
+                Task { @MainActor in
+                    defer { webAuthenticationSession = nil }
+                    if let error {
+                        if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
+                            store.errorMessage = error.localizedDescription
+                        }
+                        return
+                    }
+                    guard let callbackURL else {
+                        store.errorMessage = "Google sign-in did not return to Renewa."
+                        return
+                    }
+                    _ = await store.completeGoogleSignIn(callbackURL: callbackURL, codeVerifier: authorization.codeVerifier)
+                }
+            }
+            session.prefersEphemeralWebBrowserSession = false
+            webAuthenticationSession = session
+            session.start()
+        } catch {
+            store.errorMessage = error.localizedDescription
+        }
     }
 
     private var isFormValid: Bool {

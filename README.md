@@ -12,7 +12,7 @@ All account, profile, and subscription screens use Supabase data. If the backend
 - Coordinated springs, staggered entrances, numeric transitions, and a Reduced Motion fallback
 - Supabase email/password auth with sessions stored in the iOS Keychain
 - Registration onboarding plus editable display name, avatar preset, and preferred currency
-- Visual Apple and Google sign-in entry points ready for provider credential configuration
+- Google account sign-in with native PKCE; Apple remains visual-only pending its entitlement
 - Postgres schema, indexes, trigger-maintained profiles, grants, and row-level security
 - Read-only Gmail and Microsoft Graph OAuth using the server authorization-code flow
 - AES-GCM encryption for provider tokens at rest
@@ -34,7 +34,11 @@ SUPABASE_URL = http:/$()/127.0.0.1:54321
 SUPABASE_PUBLISHABLE_KEY = YOUR_PUBLISHABLE_KEY
 ```
 
-The publishable key is intended for client apps. Never put a Supabase secret/service-role key, OpenAI key, Google client secret, Microsoft client secret, or mail encryption key in the iOS project.
+The publishable key is intended for client apps. Never put a Supabase secret/service-role key, DeepSeek key, Google client secret, Microsoft client secret, or mail encryption key in the iOS project.
+
+### Enable Google account sign-in
+
+In Supabase Dashboard, open **Authentication → Providers → Google**, enable it, and enter the Google OAuth client ID and client secret. In Google Cloud, add the Supabase callback URI shown in that Provider screen (for this project: `https://fxwbhblcbrmbzrozlbwv.supabase.co/auth/v1/callback`). Finally, add `renewa://auth` to **Authentication → URL Configuration → Redirect URLs**. This account sign-in setup is separate from the Gmail inbox callback below.
 
 To exercise Functions locally, copy `supabase/functions/.env.example` to the ignored `supabase/functions/.env`, fill the external provider values, then run:
 

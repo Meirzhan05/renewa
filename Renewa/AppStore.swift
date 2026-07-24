@@ -144,6 +144,39 @@ final class AppStore {
         }
     }
 
+    func googleAuthorization() throws -> OAuthAuthorization {
+        try client.googleAuthorization()
+    }
+
+    func completeGoogleSignIn(callbackURL: URL, codeVerifier: String) async -> Bool {
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
+            errorMessage = "Google sign-in returned an invalid callback."
+            return false
+        }
+        if let message = components.queryItems?.first(where: { $0.name == "error_description" })?.value
+            ?? components.queryItems?.first(where: { $0.name == "error" })?.value {
+            errorMessage = message
+            return false
+        }
+        guard let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
+            errorMessage = "Google sign-in did not return an authorization code."
+            return false
+        }
+        do {
+            session = try await client.exchangeGoogleAuthorizationCode(code, verifier: codeVerifier)
+            try persistSession()
+            try await refreshData()
+            state = authenticatedDestination
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func signOut() async {
         if let accessToken = session?.accessToken {
             try? await client.signOut(accessToken: accessToken)

@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import Security
 
 struct SupabaseClient {
     private let configuration: AppConfiguration
@@ -24,6 +26,30 @@ struct SupabaseClient {
             accessToken: nil
         )
         return response.session
+    }
+
+    func googleAuthorization() throws -> OAuthAuthorization {
+        guard let baseURL = configuration.supabaseURL else { throw APIError.notConfigured }
+        let verifier = Self.base64URLEncoded(Self.randomBytes(count: 48))
+        let challenge = Self.base64URLEncoded(Data(SHA256.hash(data: Data(verifier.utf8))))
+        guard var components = URLComponents(url: baseURL.appending(path: "auth/v1/authorize"), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidResponse
+        }
+        components.queryItems = [
+            URLQueryItem(name: "provider", value: "google"),
+            URLQueryItem(name: "redirect_to", value: "renewa://auth"),
+            URLQueryItem(name: "code_challenge", value: challenge),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+        ]
+        guard let url = components.url else { throw APIError.invalidResponse }
+        return OAuthAuthorization(url: url, codeVerifier: verifier)
+    }
+
+    func exchangeGoogleAuthorizationCode(_ code: String, verifier: String) async throws -> Session {
+        try await authRequest(
+            path: "/auth/v1/token?grant_type=pkce",
+            body: ["auth_code": code, "code_verifier": verifier]
+        )
     }
 
     func refresh(using refreshToken: String) async throws -> Session {
@@ -220,6 +246,26 @@ struct SupabaseClient {
         }
         return decoder
     }()
+
+    private static func randomBytes(count: Int) -> Data {
+        var bytes = [UInt8](repeating: 0, count: count)
+        guard SecRandomCopyBytes(kSecRandomDefault, count, &bytes) == errSecSuccess else {
+            return Data(UUID().uuidString.utf8)
+        }
+        return Data(bytes)
+    }
+
+    private static func base64URLEncoded(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+}
+
+struct OAuthAuthorization {
+    let url: URL
+    let codeVerifier: String
 }
 
 private struct AuthEnvelope: Decodable {
