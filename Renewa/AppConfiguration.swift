@@ -14,7 +14,7 @@ struct AppConfiguration: Sendable {
     )
 
     var isConfigured: Bool {
-        supabaseURL != nil && !publishableKey.isEmpty
+        supabaseURL?.host != nil && !publishableKey.isEmpty
     }
 
     var localDebugCredentials: (email: String, password: String)? {
