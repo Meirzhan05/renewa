@@ -1,0 +1,78 @@
+import SwiftUI
+
+enum RenewaTheme {
+    static let background = Color(red: 0.965, green: 0.947, blue: 0.902)
+    static let surface = Color(red: 0.985, green: 0.974, blue: 0.944)
+    static let ink = Color(red: 0.105, green: 0.094, blue: 0.078)
+    static let muted = Color(red: 0.49, green: 0.46, blue: 0.39)
+    static let divider = Color(red: 0.87, green: 0.83, blue: 0.73)
+    static let sage = Color(red: 0.35, green: 0.59, blue: 0.49)
+    static let sageLight = Color(red: 0.77, green: 0.84, blue: 0.71)
+    static let sand = Color(red: 0.84, green: 0.77, blue: 0.62)
+    static let coral = Color(red: 0.72, green: 0.43, blue: 0.31)
+}
+
+enum RenewaMotion {
+    static let quick = Animation.spring(response: 0.32, dampingFraction: 0.82)
+    static let standard = Animation.spring(response: 0.52, dampingFraction: 0.84)
+    static let gentle = Animation.spring(response: 0.72, dampingFraction: 0.88)
+}
+
+extension Font {
+    static func renewa(_ size: CGFloat, weight: Weight = .regular) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
+    }
+}
+
+struct PressScaleStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .opacity(configuration.isPressed ? 0.86 : 1)
+            .animation(reduceMotion ? nil : RenewaMotion.quick, value: configuration.isPressed)
+    }
+}
+
+struct RenewaCard<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .padding(18)
+            .background(RenewaTheme.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(.white.opacity(0.62), lineWidth: 1)
+            }
+    }
+}
+
+private struct RenewaEntranceModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let isVisible: Bool
+    let delay: Double
+    let distance: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible ? 1 : 0)
+            .offset(y: isVisible || reduceMotion ? 0 : distance)
+            .scaleEffect(isVisible || reduceMotion ? 1 : 0.985)
+            .animation(
+                reduceMotion ? .easeOut(duration: 0.12) : RenewaMotion.gentle.delay(delay),
+                value: isVisible
+            )
+    }
+}
+
+extension View {
+    func renewaEntrance(
+        _ isVisible: Bool,
+        delay: Double = 0,
+        distance: CGFloat = 16
+    ) -> some View {
+        modifier(RenewaEntranceModifier(isVisible: isVisible, delay: delay, distance: distance))
+    }
+}

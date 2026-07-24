@@ -1,0 +1,11 @@
+.DS_Store
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+.build/
+.swiftpm/
+supabase/.temp/
+supabase/.branches/
+supabase/functions/.env
+Config.local.xcconfig

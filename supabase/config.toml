@@ -1,0 +1,30 @@
+project_id = "renewa"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+
+[db]
+port = 54322
+major_version = 17
+
+[studio]
+enabled = true
+port = 54323
+
+[auth]
+enabled = true
+site_url = "renewa://auth"
+additional_redirect_urls = ["renewa://auth", "renewa://mail-connected"]
+enable_signup = true
+
+[functions.mail-oauth-start]
+verify_jwt = true
+
+[functions.mail-oauth-callback]
+verify_jwt = false
+
+[functions.email-scan]
+verify_jwt = true

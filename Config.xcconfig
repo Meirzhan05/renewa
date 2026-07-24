@@ -1,0 +1,6 @@
+// Public client configuration only. Never put service-role or OpenAI keys here.
+SUPABASE_URL =
+SUPABASE_PUBLISHABLE_KEY =
+#include? "Config.local.xcconfig"
+PRODUCT_NAME = Renewa
+PRODUCT_BUNDLE_IDENTIFIER = com.renewa.app
