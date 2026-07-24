@@ -219,6 +219,7 @@ struct EmailScanView: View {
                 }
             }
             session.prefersEphemeralWebBrowserSession = false
+            session.presentationContextProvider = OAuthPresentationContext.shared
             webSession = session
             session.start()
         } catch {

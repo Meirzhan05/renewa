@@ -239,6 +239,7 @@ struct AuthView: View {
                 }
             }
             session.prefersEphemeralWebBrowserSession = false
+            session.presentationContextProvider = OAuthPresentationContext.shared
             webAuthenticationSession = session
             session.start()
         } catch {
