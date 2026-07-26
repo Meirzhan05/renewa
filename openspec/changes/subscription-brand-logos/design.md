@@ -6,9 +6,9 @@ Renewa currently persists `icon_name` and `tint_hex` and renders a letter tile i
 
 **Goals:**
 
-- Provide consistent, real logos for a curated set of common subscription brands.
+- Provide consistent, real logos through Logo.dev with verified domains for common subscription brands.
 - Resolve equivalent merchant names to one stable brand identifier for both entry paths.
-- Preserve the existing tile for unknown brands, offline operation, and image failures.
+- Preserve the existing tile for offline operation and image failures.
 - Persist a compact, provider-independent brand reference and retain backward compatibility for existing rows.
 - Keep the core experience functional without a third-party logo-service credential and use a client-safe provider key only as an optional fallback.
 
@@ -20,13 +20,9 @@ Renewa currently persists `icon_name` and `tint_hex` and renders a letter tile i
 
 ## Decisions
 
-### Use a curated on-device brand catalog for the first release
+### Use a curated domain catalog with Logo.dev's image CDN
 
-A `SubscriptionBrand` catalog will map normalized aliases (for example, `netflix`, `netflix.com`) to a stable `brandID`, display name, and an asset-catalog image. Bundled assets make the UI instant, work offline, and do not expose user subscription names to a logo lookup service.
-
-### Use Logo.dev's image CDN as an optional fallback
-
-When configured, the app uses Logo.dev's image CDN as the primary renderer for every subscription: verified domains for the reviewed catalog and a name endpoint for other services. Requests use `fallback=404`, so a missing or offline image returns to Renewa's bundled asset or its own initial tile rather than a provider-generated monogram. The key is safe in client code but remains in ignored local configuration. The free commercial tier's required attribution is displayed in Profile while enabled.
+`SubscriptionBrand` maps normalized aliases (for example, `netflix`, `netflix.com`) to stable identifiers and verified domains, not local image assets. When configured, the app uses Logo.dev's image CDN for every subscription: verified domains for the review catalog and a name endpoint for other services. Requests use `fallback=404`, so a missing or offline image returns to Renewa's own initial tile rather than a provider-generated monogram. The key is safe in client code but remains in ignored local configuration. The free commercial tier's required attribution is displayed in Profile while enabled.
 
 Alternative: use Logo.dev's secret-key search API. Direct name images provide the same top-match behaviour without distributing a secret or adding a server-side resolver.
 

@@ -9,8 +9,7 @@
 ## Subscription experience
 
 - [x] Redesign the New Subscription flow into a more guided form with a polished category picker, billing-cycle controls, an immediate cost preview, validation, and a clear save state.
-- [x] Add a curated, offline subscription-brand logo catalog with a safe fallback tile for unknown services.
-- [x] Use Logo.dev for subscription logos, retaining bundled and local tiles for loading, errors, and offline use.
+- [x] Use Logo.dev for subscription logos, retaining the local tile for loading, errors, and offline use.
 
 ## Authentication and onboarding
 

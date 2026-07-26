@@ -23,33 +23,33 @@ The system SHALL apply the same reviewed alias catalog to email-discovered merch
 - **THEN** the saved subscription contains no brand identifier and remains usable with the fallback icon
 
 ### Requirement: Resilient brand-logo presentation
-The system SHALL render a bundled brand logo for a subscription with a recognized available brand asset. It MUST render the existing colored initial tile whenever no usable brand asset is available, and it MUST NOT delay rendering the subscription row while determining the visual.
+The system SHALL render a Logo.dev logo when a configured provider request succeeds. It MUST render the existing colored initial tile whenever the provider image is unavailable, and it MUST NOT delay rendering the subscription row while determining the visual.
 
 #### Scenario: Recognized subscription displays a logo
-- **WHEN** a subscription has a brand identifier whose bundled asset is available
-- **THEN** its subscription row displays that asset in the standard icon frame
+- **WHEN** a subscription has a brand identifier with a verified Logo.dev domain and a provider image is available
+- **THEN** its subscription row displays that provider image in the standard icon frame
 
 #### Scenario: Existing subscription has no brand identifier
 - **WHEN** a subscription created before this capability has no brand identifier
 - **THEN** its subscription row displays the existing initial-and-tint icon without an error state
 
-#### Scenario: Brand asset is unavailable
-- **WHEN** a subscription references a brand identifier with no usable local asset
+#### Scenario: Provider image is unavailable
+- **WHEN** a subscription references a brand identifier with no available Logo.dev image
 - **THEN** its subscription row displays the existing initial-and-tint icon
 
 ### Requirement: Accessible and reviewed brand catalog
-The system SHALL expose the subscription name as the accessibility label for its brand visual. Each bundled logo in the catalog MUST have recorded provenance or license information suitable for the app's intended identifying use.
+The system SHALL expose the subscription name as the accessibility label for its brand visual. Each reviewed catalog entry MUST map to a verified domain and the system MUST retain Logo.dev attribution information.
 
 #### Scenario: VoiceOver reads a recognized logo
 - **WHEN** VoiceOver focuses the visual for a recognized subscription
 - **THEN** it announces the subscription name rather than an internal asset or identifier
 
-#### Scenario: A new catalog asset is introduced
-- **WHEN** a contributor adds a new bundled logo asset
-- **THEN** the contribution includes the asset's source or applicable license record
+#### Scenario: A new catalog entry is introduced
+- **WHEN** a contributor adds a reviewed catalog entry
+- **THEN** the contribution includes its verified domain and retains Logo.dev attribution information
 
 ### Requirement: Optional remote logo fallback
-When a valid Logo.dev publishable key is configured, the system SHALL request a Logo.dev image for every subscription, using a verified domain for a reviewed bundled brand and name lookup otherwise. It MUST use a provider 404 fallback and MUST preserve Renewa's bundled mark or initial tile during loading, offline operation, and request failure.
+When a valid Logo.dev publishable key is configured, the system SHALL request a Logo.dev image for every subscription, using a verified domain for a reviewed brand and name lookup otherwise. It MUST use a provider 404 fallback and MUST preserve Renewa's initial tile during loading, offline operation, and request failure.
 
 #### Scenario: Subscription receives a remote logo
 - **WHEN** a subscription is displayed with Logo.dev configured and its domain or name resolves to a provider image

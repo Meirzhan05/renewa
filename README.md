@@ -119,9 +119,9 @@ supabase/
 
 ## Subscription brand logos
 
-Renewa stores an optional, provider-independent `brand_id` for reviewed services. It currently includes Apple, Discord, Dropbox, Google, Netflix, Notion, Spotify, and YouTube. Unknown or ambiguous merchant names retain the familiar colored initial tile whenever no online fallback is configured or available. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for sources and trademark notes.
+Renewa stores an optional, provider-independent `brand_id` to provide verified Logo.dev domains for reviewed services. Logo.dev name lookup covers other services; every offline, missing, or error state uses the familiar colored initial tile. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for attribution and trademark notes.
 
-To use Logo.dev for all subscription logos, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa uses verified domains for the bundled catalog and name lookup for other services; it falls back to its bundled mark or local initial tile on errors or offline. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
+To use Logo.dev for all subscription logos, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa uses verified domains for its review catalog and name lookup for other services; it falls back to the local initial tile on errors or offline. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
 
 ## Verification
 

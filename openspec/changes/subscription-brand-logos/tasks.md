@@ -1,8 +1,8 @@
 ## 1. Brand catalog and assets
 
 - [x] 1.1 Define a centralized Swift `SubscriptionBrand` catalog with stable identifiers, conservative normalized aliases, display names, and asset names.
-- [x] 1.2 Select the initial supported services and add their reviewed bundled image assets to `Renewa/Assets.xcassets`.
-- [ ] 1.3 Record the provenance or license information for every bundled third-party logo and add catalog-resolution tests. (License record complete; XCTest target is not yet present.)
+- [x] 1.2 Select reviewed services and map each to a verified Logo.dev domain.
+- [ ] 1.3 Record verified domains and attribution requirements, and add catalog-resolution tests. (Attribution record complete; XCTest target is not yet present.)
 
 ## 2. Persistence and ingestion
 
@@ -14,9 +14,9 @@
 ## 3. Subscription experience
 
 - [x] 3.1 Replace the shared subscription-row icon tile with a reusable brand-logo view that renders the bundled asset when available.
-- [x] 3.2 Preserve the existing tinted initial tile for unknown brands, legacy records, and unavailable assets without changing row dimensions or animation behavior.
+- [x] 3.2 Preserve the existing tinted initial tile for unknown brands, legacy records, and unavailable provider images without changing row dimensions or animation behavior.
 - [x] 3.3 Add an accessibility label based on the subscription name and verify the visual in active and canceled subscription lists.
-- [x] 3.4 Add Logo.dev image rendering for every service, configuration handling, attribution, and bundled/initial error states.
+- [x] 3.4 Add Logo.dev image rendering for every service, configuration handling, attribution, and initial-tile error states.
 
 ## 4. Verification and release readiness
 
