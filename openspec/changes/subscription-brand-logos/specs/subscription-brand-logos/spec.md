@@ -49,10 +49,10 @@ The system SHALL expose the subscription name as the accessibility label for its
 - **THEN** the contribution includes the asset's source or applicable license record
 
 ### Requirement: Optional remote logo fallback
-When a valid Logo.dev publishable key is configured, the system SHALL request a Logo.dev name-based image only for subscriptions without a reviewed bundled brand asset. It MUST use a provider 404 fallback and MUST preserve Renewa's initial tile during loading, offline operation, and request failure.
+When a valid Logo.dev publishable key is configured, the system SHALL request a Logo.dev image for every subscription, using a verified domain for a reviewed bundled brand and name lookup otherwise. It MUST use a provider 404 fallback and MUST preserve Renewa's bundled mark or initial tile during loading, offline operation, and request failure.
 
-#### Scenario: Unknown subscription receives a remote logo
-- **WHEN** an unknown subscription is displayed with Logo.dev configured and its name resolves to a provider image
+#### Scenario: Subscription receives a remote logo
+- **WHEN** a subscription is displayed with Logo.dev configured and its domain or name resolves to a provider image
 - **THEN** the row replaces the temporary initial tile with the returned logo
 
 #### Scenario: Remote logo is unavailable

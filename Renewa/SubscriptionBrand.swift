@@ -4,6 +4,7 @@ struct SubscriptionBrand: Identifiable, Hashable {
     let id: String
     let displayName: String
     let assetName: String
+    let logoDevDomain: String
     let background: Color
     let foreground: Color
     let border: Color?
@@ -33,14 +34,14 @@ struct SubscriptionBrand: Identifiable, Hashable {
     }
 
     private static let catalog: [SubscriptionBrand] = [
-        .init(id: "netflix", displayName: "Netflix", assetName: "Brand-Netflix", background: Color(hex: "#E50914"), foreground: .white, border: nil, aliases: ["netflix", "netflixcom"]),
-        .init(id: "spotify", displayName: "Spotify", assetName: "Brand-Spotify", background: Color(hex: "#1DB954"), foreground: .black, border: nil, aliases: ["spotify", "spotifycom"]),
-        .init(id: "notion", displayName: "Notion", assetName: "Brand-Notion", background: .white, foreground: .black, border: RenewaTheme.ink.opacity(0.12), aliases: ["notion", "notionso"]),
-        .init(id: "dropbox", displayName: "Dropbox", assetName: "Brand-Dropbox", background: Color(hex: "#0061FF"), foreground: .white, border: nil, aliases: ["dropbox", "dropboxcom", "dropboxplus"]),
-        .init(id: "youtube", displayName: "YouTube", assetName: "Brand-YouTube", background: Color(hex: "#FF0000"), foreground: .white, border: nil, aliases: ["youtube", "youtubepremium", "youtubecom"]),
-        .init(id: "apple", displayName: "Apple", assetName: "Brand-Apple", background: .black, foreground: .white, border: nil, aliases: ["apple", "appleone", "icloud", "icloudplus", "applemusic", "appletv"]),
-        .init(id: "google", displayName: "Google", assetName: "Brand-Google", background: .white, foreground: Color(hex: "#4285F4"), border: RenewaTheme.ink.opacity(0.12), aliases: ["google", "googleone", "googleworkspace", "googlecom"]),
-        .init(id: "discord", displayName: "Discord", assetName: "Brand-Discord", background: Color(hex: "#5865F2"), foreground: .white, border: nil, aliases: ["discord", "discordnitro", "discordcom"]),
+        .init(id: "netflix", displayName: "Netflix", assetName: "Brand-Netflix", logoDevDomain: "netflix.com", background: Color(hex: "#E50914"), foreground: .white, border: nil, aliases: ["netflix", "netflixcom"]),
+        .init(id: "spotify", displayName: "Spotify", assetName: "Brand-Spotify", logoDevDomain: "spotify.com", background: Color(hex: "#1DB954"), foreground: .black, border: nil, aliases: ["spotify", "spotifycom"]),
+        .init(id: "notion", displayName: "Notion", assetName: "Brand-Notion", logoDevDomain: "notion.so", background: .white, foreground: .black, border: RenewaTheme.ink.opacity(0.12), aliases: ["notion", "notionso"]),
+        .init(id: "dropbox", displayName: "Dropbox", assetName: "Brand-Dropbox", logoDevDomain: "dropbox.com", background: Color(hex: "#0061FF"), foreground: .white, border: nil, aliases: ["dropbox", "dropboxcom", "dropboxplus"]),
+        .init(id: "youtube", displayName: "YouTube", assetName: "Brand-YouTube", logoDevDomain: "youtube.com", background: Color(hex: "#FF0000"), foreground: .white, border: nil, aliases: ["youtube", "youtubepremium", "youtubecom"]),
+        .init(id: "apple", displayName: "Apple", assetName: "Brand-Apple", logoDevDomain: "apple.com", background: .black, foreground: .white, border: nil, aliases: ["apple", "appleone", "icloud", "icloudplus", "applemusic", "appletv"]),
+        .init(id: "google", displayName: "Google", assetName: "Brand-Google", logoDevDomain: "google.com", background: .white, foreground: Color(hex: "#4285F4"), border: RenewaTheme.ink.opacity(0.12), aliases: ["google", "googleone", "googleworkspace", "googlecom"]),
+        .init(id: "discord", displayName: "Discord", assetName: "Brand-Discord", logoDevDomain: "discord.com", background: Color(hex: "#5865F2"), foreground: .white, border: nil, aliases: ["discord", "discordnitro", "discordcom"]),
     ]
 }
 
@@ -51,19 +52,13 @@ struct SubscriptionBrandIcon: View {
 
     var body: some View {
         let brand = SubscriptionBrand.find(id: subscription.brandID)
-        let remoteURL = brand == nil ? AppConfiguration.current.logoDevURL(forCompanyName: subscription.name) : nil
+        let remoteURL = brand.map { AppConfiguration.current.logoDevURL(forDomain: $0.logoDevDomain) }
+            ?? AppConfiguration.current.logoDevURL(forCompanyName: subscription.name)
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(brand?.background ?? (remoteURL == nil ? Color(hex: subscription.tintHex) : .white))
+                .fill(remoteURL == nil ? (brand?.background ?? Color(hex: subscription.tintHex)) : .white)
 
-            if let brand {
-                Image(brand.assetName)
-                    .resizable()
-                    .renderingMode(.template)
-                    .scaledToFit()
-                    .foregroundStyle(brand.foreground)
-                    .padding(size * 0.24)
-            } else if let remoteURL {
+            if let remoteURL {
                 AsyncImage(url: remoteURL, transaction: .init(animation: .easeInOut(duration: 0.18))) { phase in
                     if case let .success(image) = phase {
                         image
@@ -72,11 +67,11 @@ struct SubscriptionBrandIcon: View {
                             .padding(size * 0.1)
                             .transition(.opacity)
                     } else {
-                        fallbackIcon
+                        localFallback(for: brand)
                     }
                 }
             } else {
-                fallbackIcon
+                localFallback(for: brand)
             }
         }
         .overlay {
@@ -87,6 +82,30 @@ struct SubscriptionBrandIcon: View {
         }
         .frame(width: size, height: size)
         .accessibilityLabel(subscription.name)
+    }
+
+    @ViewBuilder
+    private func localFallback(for brand: SubscriptionBrand?) -> some View {
+        if let brand {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(brand.background)
+                .overlay {
+                    Image(brand.assetName)
+                        .resizable()
+                        .renderingMode(.template)
+                        .scaledToFit()
+                        .foregroundStyle(brand.foreground)
+                        .padding(size * 0.24)
+                }
+                .overlay {
+                    if let border = brand.border {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .stroke(border, lineWidth: 1)
+                    }
+                }
+        } else {
+            fallbackIcon
+        }
     }
 
     private var fallbackIcon: some View {

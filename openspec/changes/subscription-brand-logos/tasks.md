@@ -16,7 +16,7 @@
 - [x] 3.1 Replace the shared subscription-row icon tile with a reusable brand-logo view that renders the bundled asset when available.
 - [x] 3.2 Preserve the existing tinted initial tile for unknown brands, legacy records, and unavailable assets without changing row dimensions or animation behavior.
 - [x] 3.3 Add an accessibility label based on the subscription name and verify the visual in active and canceled subscription lists.
-- [x] 3.4 Add Logo.dev's optional name-image fallback for unknown services, configuration handling, attribution, and initial-tile error states.
+- [x] 3.4 Add Logo.dev image rendering for every service, configuration handling, attribution, and bundled/initial error states.
 
 ## 4. Verification and release readiness
 

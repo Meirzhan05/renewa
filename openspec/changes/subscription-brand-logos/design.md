@@ -26,7 +26,7 @@ A `SubscriptionBrand` catalog will map normalized aliases (for example, `netflix
 
 ### Use Logo.dev's image CDN as an optional fallback
 
-For services absent from the reviewed catalog, the app can use Logo.dev's name image endpoint with the user-configured publishable `pk_` key. Requests use `fallback=404`, so a missing or offline image returns to Renewa's own initial tile rather than a provider-generated monogram. The key is safe in client code but remains in ignored local configuration. The free commercial tier's required attribution is displayed in Profile while enabled.
+When configured, the app uses Logo.dev's image CDN as the primary renderer for every subscription: verified domains for the reviewed catalog and a name endpoint for other services. Requests use `fallback=404`, so a missing or offline image returns to Renewa's bundled asset or its own initial tile rather than a provider-generated monogram. The key is safe in client code but remains in ignored local configuration. The free commercial tier's required attribution is displayed in Profile while enabled.
 
 Alternative: use Logo.dev's secret-key search API. Direct name images provide the same top-match behaviour without distributing a secret or adding a server-side resolver.
 
