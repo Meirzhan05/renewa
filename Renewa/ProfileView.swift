@@ -127,6 +127,17 @@ struct ProfileView: View {
                 .buttonStyle(.bordered)
                 .tint(RenewaTheme.coral)
                 .renewaEntrance(appeared, delay: 0.24)
+
+                if AppConfiguration.current.hasLogoDevPublishableKey,
+                   let logoDevURL = URL(string: "https://logo.dev") {
+                    Link(destination: logoDevURL) {
+                        Text("Logos powered by Logo.dev")
+                            .font(.renewa(12, weight: .medium))
+                            .foregroundStyle(RenewaTheme.muted)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .renewaEntrance(appeared, delay: 0.28)
+                }
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 30)

@@ -35,6 +35,8 @@
 	<string>public.app-category.finance</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>LOGO_DEV_PUBLISHABLE_KEY</key>
+	<string>$(LOGO_DEV_PUBLISHABLE_KEY)</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

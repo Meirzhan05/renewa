@@ -10,7 +10,7 @@ Renewa currently persists `icon_name` and `tint_hex` and renders a letter tile i
 - Resolve equivalent merchant names to one stable brand identifier for both entry paths.
 - Preserve the existing tile for unknown brands, offline operation, and image failures.
 - Persist a compact, provider-independent brand reference and retain backward compatibility for existing rows.
-- Keep the initial release free of required third-party logo-service credentials.
+- Keep the core experience functional without a third-party logo-service credential and use a client-safe provider key only as an optional fallback.
 
 **Non-Goals:**
 
@@ -24,7 +24,11 @@ Renewa currently persists `icon_name` and `tint_hex` and renders a letter tile i
 
 A `SubscriptionBrand` catalog will map normalized aliases (for example, `netflix`, `netflix.com`) to a stable `brandID`, display name, and an asset-catalog image. Bundled assets make the UI instant, work offline, and do not expose user subscription names to a logo lookup service.
 
-Alternative: request images from a logo API at runtime. This offers broader coverage but introduces privacy, reliability, rate-limit, and licensing dependencies. It remains a future extension behind the persisted reference.
+### Use Logo.dev's image CDN as an optional fallback
+
+For services absent from the reviewed catalog, the app can use Logo.dev's name image endpoint with the user-configured publishable `pk_` key. Requests use `fallback=404`, so a missing or offline image returns to Renewa's own initial tile rather than a provider-generated monogram. The key is safe in client code but remains in ignored local configuration. The free commercial tier's required attribution is displayed in Profile while enabled.
+
+Alternative: use Logo.dev's secret-key search API. Direct name images provide the same top-match behaviour without distributing a secret or adding a server-side resolver.
 
 ### Store an optional stable `brand_id`, not an image blob or provider URL
 
@@ -48,7 +52,8 @@ Initial assets and aliases will be explicitly listed and reviewed. Each logo mus
 - [Alias false positive maps a merchant to the wrong brand] → Use exact normalized aliases, keep matching case-insensitive but conservative, and fall back for ambiguous names.
 - [Catalog becomes stale] → Keep the resolver centralized, add catalog tests, and version additions through normal releases.
 - [Existing records lack `brand_id`] → Make the column nullable and preserve the letter tile until a record is edited/recreated or a future migration backfills known aliases.
-- [A future remote provider becomes desirable] → Keep `brand_id` independent of provider-specific URLs and add a separate resolver/cache layer only with privacy review.
+- [A remote name lookup returns the wrong brand] → Use it only after the reviewed local catalog, request provider 404 fallbacks, and retain the user-visible initial tile on failure.
+- [Provider or network unavailable] → Render the initial tile immediately while the image loads, then retain it on error.
 
 ## Migration Plan
 

@@ -3,6 +3,7 @@ import Foundation
 struct AppConfiguration: Sendable {
     let supabaseURL: URL?
     let publishableKey: String
+    let logoDevPublishableKey: String
 
     static let current = AppConfiguration(
         supabaseURL: {
@@ -10,11 +11,39 @@ struct AppConfiguration: Sendable {
                   !raw.isEmpty else { return nil }
             return URL(string: raw)
         }(),
-        publishableKey: Bundle.main.object(forInfoDictionaryKey: "SUPABASE_PUBLISHABLE_KEY") as? String ?? ""
+        publishableKey: Bundle.main.object(forInfoDictionaryKey: "SUPABASE_PUBLISHABLE_KEY") as? String ?? "",
+        logoDevPublishableKey: Bundle.main.object(forInfoDictionaryKey: "LOGO_DEV_PUBLISHABLE_KEY") as? String ?? ""
     )
 
     var isConfigured: Bool {
         supabaseURL?.host != nil && !publishableKey.isEmpty
+    }
+
+    var hasLogoDevPublishableKey: Bool {
+        logoDevPublishableKey.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("pk_")
+    }
+
+    func logoDevURL(forCompanyName name: String) -> URL? {
+        let key = logoDevPublishableKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let company = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hasLogoDevPublishableKey, !company.isEmpty else { return nil }
+
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "img.logo.dev"
+        let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
+        guard let encodedName = company.addingPercentEncoding(withAllowedCharacters: allowed) else {
+            return nil
+        }
+        components.percentEncodedPath = "/name/\(encodedName)"
+        components.queryItems = [
+            URLQueryItem(name: "token", value: key),
+            URLQueryItem(name: "size", value: "128"),
+            URLQueryItem(name: "format", value: "jpg"),
+            URLQueryItem(name: "retina", value: "true"),
+            URLQueryItem(name: "fallback", value: "404"),
+        ]
+        return components.url
     }
 
     var localDebugCredentials: (email: String, password: String)? {

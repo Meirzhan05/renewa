@@ -33,6 +33,7 @@ Create `Config.local.xcconfig` with the public values printed by `npx --yes supa
 ```xcconfig
 SUPABASE_URL = http:/$()/127.0.0.1:54321
 SUPABASE_PUBLISHABLE_KEY = YOUR_PUBLISHABLE_KEY
+LOGO_DEV_PUBLISHABLE_KEY = pk_YOUR_LOGO_DEV_PUBLISHABLE_KEY
 ```
 
 The publishable key is intended for client apps. Never put a Supabase secret/service-role key, DeepSeek key, Google client secret, Microsoft client secret, or mail encryption key in the iOS project.
@@ -118,7 +119,9 @@ supabase/
 
 ## Subscription brand logos
 
-Renewa stores an optional, provider-independent `brand_id` for reviewed services. It currently includes Apple, Discord, Dropbox, Google, Netflix, Notion, Spotify, and YouTube. Unknown or ambiguous merchant names keep the familiar colored initial tile, so the app never relies on a network logo lookup. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for sources and trademark notes.
+Renewa stores an optional, provider-independent `brand_id` for reviewed services. It currently includes Apple, Discord, Dropbox, Google, Netflix, Notion, Spotify, and YouTube. Unknown or ambiguous merchant names retain the familiar colored initial tile whenever no online fallback is configured or available. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for sources and trademark notes.
+
+To add Logo.dev as an online fallback for services outside this catalog, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa requests an image only for unknown services and falls back to its local initial tile on errors or offline. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
 
 ## Verification
 

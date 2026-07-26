@@ -51,9 +51,10 @@ struct SubscriptionBrandIcon: View {
 
     var body: some View {
         let brand = SubscriptionBrand.find(id: subscription.brandID)
+        let remoteURL = brand == nil ? AppConfiguration.current.logoDevURL(forCompanyName: subscription.name) : nil
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(brand?.background ?? Color(hex: subscription.tintHex))
+                .fill(brand?.background ?? (remoteURL == nil ? Color(hex: subscription.tintHex) : .white))
 
             if let brand {
                 Image(brand.assetName)
@@ -62,11 +63,20 @@ struct SubscriptionBrandIcon: View {
                     .scaledToFit()
                     .foregroundStyle(brand.foreground)
                     .padding(size * 0.24)
+            } else if let remoteURL {
+                AsyncImage(url: remoteURL, transaction: .init(animation: .easeInOut(duration: 0.18))) { phase in
+                    if case let .success(image) = phase {
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .padding(size * 0.1)
+                            .transition(.opacity)
+                    } else {
+                        fallbackIcon
+                    }
+                }
             } else {
-                Text(subscription.iconName)
-                    .font(.renewa(subscription.iconName.count > 1 ? size * 0.28 : size * 0.39, weight: .bold))
-                    .foregroundStyle(.white)
-                    .minimumScaleFactor(0.7)
+                fallbackIcon
             }
         }
         .overlay {
@@ -77,5 +87,12 @@ struct SubscriptionBrandIcon: View {
         }
         .frame(width: size, height: size)
         .accessibilityLabel(subscription.name)
+    }
+
+    private var fallbackIcon: some View {
+        Text(subscription.iconName)
+            .font(.renewa(subscription.iconName.count > 1 ? size * 0.28 : size * 0.39, weight: .bold))
+            .foregroundStyle(.white)
+            .minimumScaleFactor(0.7)
     }
 }
