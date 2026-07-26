@@ -2,8 +2,11 @@ import SwiftUI
 
 struct OverviewView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var period: Period = .month
     @State private var appeared = false
+    @State private var removingSubscriptionIDs = Set<UUID>()
+    @State private var removalNotice: RemovalNotice?
     @Namespace private var periodSelection
 
     private enum Period: String, CaseIterable {
@@ -64,6 +67,19 @@ struct OverviewView: View {
         }
         .scrollIndicators(.hidden)
         .background(RenewaTheme.background)
+        .overlay(alignment: .bottom) {
+            if let removalNotice {
+                removalToast(removalNotice)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 16)
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .move(edge: .bottom).combined(with: .opacity)
+                    )
+            }
+        }
+        .animation(removalAnimation, value: removalNotice)
         .refreshable {
             do {
                 try await store.refreshData()
@@ -246,20 +262,24 @@ struct OverviewView: View {
                     ),
                     id: \.element.id
                 ) { index, subscription in
-                    SubscriptionRow(subscription: subscription)
-                        .renewaEntrance(appeared, delay: 0.34 + Double(index) * 0.045, distance: 10)
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                Task { await store.remove(subscription) }
-                            } label: {
-                                Label {
-                                    Text("Remove")
-                                } icon: {
-                                    HeroIcon(.trash, size: 18)
+                    if !removingSubscriptionIDs.contains(subscription.id) {
+                        SubscriptionRow(subscription: subscription)
+                            .renewaEntrance(appeared, delay: 0.34 + Double(index) * 0.045, distance: 10)
+                            .transition(.subscriptionRemoval)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    remove(subscription)
+                                } label: {
+                                    Label {
+                                        Text("Remove")
+                                    } icon: {
+                                        HeroIcon(.trash, size: 18)
+                                    }
                                 }
                             }
-                        }
+                    }
                 }
+                .animation(removalAnimation, value: removingSubscriptionIDs)
             }
         }
     }
@@ -279,22 +299,91 @@ struct OverviewView: View {
                 ),
                 id: \.element.id
             ) { index, subscription in
-                SubscriptionRow(subscription: subscription, statusText: subscription.status.title)
-                    .opacity(0.58)
-                    .renewaEntrance(appeared, delay: 0.4 + Double(index) * 0.045, distance: 10)
-                    .contextMenu {
-                        Button(role: .destructive) {
-                            Task { await store.remove(subscription) }
-                        } label: {
-                            Label {
-                                Text("Delete permanently")
-                            } icon: {
-                                HeroIcon(.trash, size: 18)
+                if !removingSubscriptionIDs.contains(subscription.id) {
+                    SubscriptionRow(subscription: subscription, statusText: subscription.status.title)
+                        .opacity(0.58)
+                        .renewaEntrance(appeared, delay: 0.4 + Double(index) * 0.045, distance: 10)
+                        .transition(.subscriptionRemoval)
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                remove(subscription)
+                            } label: {
+                                Label {
+                                    Text("Delete permanently")
+                                } icon: {
+                                    HeroIcon(.trash, size: 18)
+                                }
                             }
                         }
-                    }
+                }
+            }
+            .animation(removalAnimation, value: removingSubscriptionIDs)
+        }
+    }
+
+    private var removalAnimation: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.16)
+            : .spring(response: 0.42, dampingFraction: 0.86)
+    }
+
+    private func remove(_ subscription: Subscription) {
+        guard !removingSubscriptionIDs.contains(subscription.id) else { return }
+
+        withAnimation(removalAnimation) {
+            _ = removingSubscriptionIDs.insert(subscription.id)
+        }
+
+        Task {
+            if !reduceMotion {
+                try? await Task.sleep(for: .milliseconds(280))
+            }
+
+            let wasRemoved = await store.remove(subscription)
+            guard wasRemoved else {
+                withAnimation(removalAnimation) {
+                    _ = removingSubscriptionIDs.remove(subscription.id)
+                }
+                return
+            }
+
+            presentRemovalNotice(for: subscription)
+        }
+    }
+
+    private func presentRemovalNotice(for subscription: Subscription) {
+        let notice = RemovalNotice(subscriptionName: subscription.name)
+        withAnimation(removalAnimation) {
+            removalNotice = notice
+        }
+
+        Task {
+            try? await Task.sleep(for: .seconds(2.4))
+            guard removalNotice == notice else { return }
+            withAnimation(removalAnimation) {
+                removalNotice = nil
             }
         }
+    }
+
+    private func removalToast(_ notice: RemovalNotice) -> some View {
+        HStack(spacing: 10) {
+            HeroIcon(.checkCircle, style: .solid, size: 20)
+                .foregroundStyle(RenewaTheme.sage)
+            Text("\(notice.subscriptionName) removed")
+                .font(.renewa(15, weight: .semibold))
+                .foregroundStyle(RenewaTheme.ink)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 52)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke(.white.opacity(0.72), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.1), radius: 14, y: 5)
+        .accessibilityLabel("\(notice.subscriptionName) removed")
     }
 
     private var categoryTotals: [(SubscriptionCategory, Decimal)] {
@@ -334,6 +423,11 @@ struct OverviewView: View {
         }
         return text
     }
+
+    private struct RemovalNotice: Equatable {
+        let id = UUID()
+        let subscriptionName: String
+    }
 }
 
 struct SubscriptionRow: View {
@@ -360,14 +454,6 @@ struct SubscriptionRow: View {
             price
         }
         .contentShape(Rectangle())
-        .transition(
-            reduceMotion
-                ? .opacity
-                : .asymmetric(
-                    insertion: .opacity.combined(with: .move(edge: .leading)),
-                    removal: .opacity.combined(with: .scale(scale: 0.9))
-                )
-        )
     }
 
     @ViewBuilder
@@ -391,6 +477,31 @@ struct SubscriptionRow: View {
                 .font(.renewa(17, weight: .medium))
                 .foregroundStyle(RenewaTheme.ink)
         }
+    }
+}
+
+private struct SubscriptionRemovalEffect: ViewModifier {
+    let progress: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(1 - progress)
+            .scaleEffect(x: 1 - (0.08 * progress), y: 1 - (0.2 * progress), anchor: .trailing)
+            .rotationEffect(.degrees(Double(4 * progress)), anchor: .trailing)
+            .offset(x: 92 * progress)
+            .blur(radius: 2 * progress)
+    }
+}
+
+private extension AnyTransition {
+    static var subscriptionRemoval: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .move(edge: .leading)),
+            removal: .modifier(
+                active: SubscriptionRemovalEffect(progress: 1),
+                identity: SubscriptionRemovalEffect(progress: 0)
+            )
+        )
     }
 }
 

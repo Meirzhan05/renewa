@@ -12,6 +12,7 @@
 - [x] Use Logo.dev for subscription logos, retaining the local tile for loading, errors, and offline use.
 - [x] Present subscription logos as circular brand medallions that match the app's soft card design.
 - [x] Convert subscription prices, totals, and category insights when the preferred currency changes, while preserving original amounts.
+- [x] Redesign subscription removal with an immediate card-dismiss animation, failure recovery, and completion feedback.
 
 ## Authentication and onboarding
 

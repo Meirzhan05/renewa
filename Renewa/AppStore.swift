@@ -262,15 +262,17 @@ final class AppStore {
         }
     }
 
-    func remove(_ subscription: Subscription) async {
-        guard let accessToken = session?.accessToken else { return }
+    func remove(_ subscription: Subscription) async -> Bool {
+        guard let accessToken = session?.accessToken else { return false }
         do {
             try await client.deleteSubscription(id: subscription.id, accessToken: accessToken)
             withAnimation(RenewaMotion.standard) {
                 subscriptions.removeAll { $0.id == subscription.id }
             }
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
