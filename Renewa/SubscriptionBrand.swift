@@ -44,20 +44,23 @@ struct SubscriptionBrand: Identifiable, Hashable {
 struct SubscriptionBrandIcon: View {
     let subscription: Subscription
     var size: CGFloat = 54
-    var cornerRadius: CGFloat = 16
 
     var body: some View {
         let brand = SubscriptionBrand.find(id: subscription.brandID)
         let remoteURL = brand.map { AppConfiguration.current.logoDevURL(forDomain: $0.logoDevDomain) }
             ?? AppConfiguration.current.logoDevURL(forCompanyName: subscription.name)
         ZStack {
+            Circle()
+                .fill(RenewaTheme.surface)
+
             if let remoteURL {
                 AsyncImage(url: remoteURL, transaction: .init(animation: .easeInOut(duration: 0.18))) { phase in
                     if case let .success(image) = phase {
                         image
                             .resizable()
-                            .scaledToFit()
-                            .padding(size * 0.1)
+                            .scaledToFill()
+                            .clipShape(Circle())
+                            .padding(2)
                             .transition(.opacity)
                     } else {
                         fallbackTile
@@ -68,11 +71,16 @@ struct SubscriptionBrandIcon: View {
             }
         }
         .frame(width: size, height: size)
+        .overlay {
+            Circle()
+                .stroke(.white.opacity(0.82), lineWidth: 1)
+        }
+        .shadow(color: RenewaTheme.ink.opacity(0.09), radius: size * 0.12, y: size * 0.06)
         .accessibilityLabel(subscription.name)
     }
 
     private var fallbackTile: some View {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        Circle()
             .fill(Color(hex: subscription.tintHex))
             .overlay {
                 Text(subscription.iconName)

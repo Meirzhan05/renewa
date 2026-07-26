@@ -22,7 +22,7 @@ Renewa currently persists `icon_name` and `tint_hex` and renders a letter tile i
 
 ### Use a curated domain catalog with Logo.dev's image CDN
 
-`SubscriptionBrand` maps normalized aliases (for example, `netflix`, `netflix.com`) to stable identifiers and verified domains, not local image assets. When configured, the app uses Logo.dev's image CDN for every subscription: verified domains for the review catalog and a name endpoint for other services. Requests use `fallback=404`, so a missing or offline image returns to Renewa's own initial tile rather than a provider-generated monogram. The key is safe in client code but remains in ignored local configuration. The free commercial tier's required attribution is displayed in Profile while enabled.
+`SubscriptionBrand` maps normalized aliases (for example, `netflix`, `netflix.com`) to stable identifiers and verified domains, not local image assets. When configured, the app uses Logo.dev's image CDN for every subscription: verified domains for the review catalog and a name endpoint for other services. Requests use `fallback=404`, so a missing or offline image returns to Renewa's own initial tile rather than a provider-generated monogram. Every outcome is framed as a circular, softly elevated brand medallion so provider image dimensions do not disrupt the app's visual language. The key is safe in client code but remains in ignored local configuration. The free commercial tier's required attribution is displayed in Profile while enabled.
 
 Alternative: use Logo.dev's secret-key search API. Direct name images provide the same top-match behaviour without distributing a secret or adding a server-side resolver.
 

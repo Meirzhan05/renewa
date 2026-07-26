@@ -196,7 +196,7 @@ struct AddSubscriptionView: View {
                     }
                     .frame(width: 58, height: 58)
                 } else {
-                    SubscriptionBrandIcon(subscription: previewSubscription, size: 58, cornerRadius: 18)
+                    SubscriptionBrandIcon(subscription: previewSubscription, size: 58)
                 }
             }
             .animation(reduceMotion ? nil : RenewaMotion.standard, value: category)

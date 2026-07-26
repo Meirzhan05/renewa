@@ -23,7 +23,7 @@ The system SHALL apply the same reviewed alias catalog to email-discovered merch
 - **THEN** the saved subscription contains no brand identifier and remains usable with the fallback icon
 
 ### Requirement: Resilient brand-logo presentation
-The system SHALL render a Logo.dev logo when a configured provider request succeeds. It MUST render the existing colored initial tile whenever the provider image is unavailable, and it MUST NOT delay rendering the subscription row while determining the visual.
+The system SHALL render a Logo.dev logo when a configured provider request succeeds. It MUST render the existing colored initial tile whenever the provider image is unavailable, and it MUST NOT delay rendering the subscription row while determining the visual. Both states MUST use the same circular, subtly elevated medallion treatment.
 
 #### Scenario: Recognized subscription displays a logo
 - **WHEN** a subscription has a brand identifier with a verified Logo.dev domain and a provider image is available
