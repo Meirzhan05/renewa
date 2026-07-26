@@ -186,7 +186,19 @@ struct AddSubscriptionView: View {
 
     private var preview: some View {
         HStack(spacing: 15) {
-            SubscriptionBrandIcon(subscription: previewSubscription, size: 58, cornerRadius: 18)
+            Group {
+                if name.trimmed.isEmpty {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color(hex: category.defaultTint))
+                        HeroIcon(category.heroIcon, style: .solid, size: 27)
+                            .foregroundStyle(.white)
+                    }
+                    .frame(width: 58, height: 58)
+                } else {
+                    SubscriptionBrandIcon(subscription: previewSubscription, size: 58, cornerRadius: 18)
+                }
+            }
             .animation(reduceMotion ? nil : RenewaMotion.standard, value: category)
 
             VStack(alignment: .leading, spacing: 4) {
