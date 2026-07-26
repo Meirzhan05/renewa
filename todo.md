@@ -11,6 +11,7 @@
 - [x] Redesign the New Subscription flow into a more guided form with a polished category picker, billing-cycle controls, an immediate cost preview, validation, and a clear save state.
 - [x] Use Logo.dev for subscription logos, retaining the local tile for loading, errors, and offline use.
 - [x] Present subscription logos as circular brand medallions that match the app's soft card design.
+- [x] Convert subscription prices, totals, and category insights when the preferred currency changes, while preserving original amounts.
 
 ## Authentication and onboarding
 

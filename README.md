@@ -18,8 +18,8 @@ All account, profile, and subscription screens use Supabase data. If the backend
 - AES-GCM encryption for provider tokens at rest
 - Authenticated Edge Function that retrieves likely billing messages and uses the OpenAI Responses API with strict Structured Outputs
 - Idempotent event ingestion and automatic add/cancel updates
-- Canceled-subscription history and currency-safe spending totals
-- Bundled, offline brand logos for common services, with an accessible initial-and-category fallback for every other subscription
+- Canceled-subscription history and live-currency converted spending totals
+- Logo.dev brand logos with an accessible initial-and-category fallback for every other subscription
 
 ## Run the iOS app
 
@@ -122,6 +122,10 @@ supabase/
 Renewa stores an optional, provider-independent `brand_id` to provide verified Logo.dev domains for reviewed services. Logo.dev name lookup covers other services; every offline, missing, or error state uses the familiar colored initial tile. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for attribution and trademark notes.
 
 To use Logo.dev for all subscription logos, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa uses verified domains for its review catalog and name lookup for other services; it falls back to the local initial tile on errors or offline. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
+
+## Currency conversion
+
+Each subscription retains the amount and ISO currency in which it was created or discovered. When a user changes **Preferred currency** in Profile, Renewa refreshes current reference rates from the no-key [Frankfurter API](https://frankfurter.dev/) and converts dashboard totals, category insights, and subscription-row display values. The original amount remains visible beneath a converted row value and is never rewritten. If rates cannot be retrieved, Renewa explicitly keeps that original amount visible rather than presenting a misleading conversion.
 
 ## Verification
 

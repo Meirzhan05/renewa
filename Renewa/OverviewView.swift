@@ -145,7 +145,7 @@ struct OverviewView: View {
                     .contentTransition(.numericText(value: displayedSpend.doubleValue))
                 Spacer()
                 Label {
-                    Text("Live data")
+                    Text(store.exchangeRateStatus)
                 } icon: {
                     HeroIcon(.checkCircle, style: .solid, size: 18)
                 }
@@ -298,11 +298,12 @@ struct OverviewView: View {
     }
 
     private var categoryTotals: [(SubscriptionCategory, Decimal)] {
-        let grouped = Dictionary(
-            grouping: store.activeSubscriptions.filter { $0.currency == store.defaultCurrency },
-            by: \.category
-        )
-            .mapValues { $0.reduce(Decimal.zero) { $0 + $1.monthlyCost } }
+        let values = store.activeSubscriptions.compactMap { subscription -> (SubscriptionCategory, Decimal)? in
+            guard let convertedCost = store.convertedMonthlyCost(for: subscription) else { return nil }
+            return (subscription.category, convertedCost)
+        }
+        let grouped = Dictionary(grouping: values, by: \.0)
+            .mapValues { $0.reduce(Decimal.zero) { $0 + $1.1 } }
         let sorted = grouped.sorted { $0.value > $1.value }
         return sorted.isEmpty ? [(.other, 1)] : sorted
     }
@@ -324,14 +325,19 @@ struct OverviewView: View {
 
     private var spendingSummary: String {
         var text = "≈ \(store.yearlySpend.currencyText(code: store.defaultCurrency)) a year · \(store.activeSubscriptions.count) active subscriptions"
-        if store.foreignCurrencySubscriptionCount > 0 {
-            text += " · \(store.foreignCurrencySubscriptionCount) shown separately"
+        if store.isRefreshingExchangeRates {
+            text += " · updating exchange rates"
+        } else if store.unavailableConversionCount > 0 {
+            text += " · \(store.unavailableConversionCount) amount\(store.unavailableConversionCount == 1 ? "" : "s") unavailable"
+        } else if store.foreignCurrencySubscriptionCount > 0 {
+            text += " · converted to \(store.defaultCurrency)"
         }
         return text
     }
 }
 
 struct SubscriptionRow: View {
+    @Environment(AppStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let subscription: Subscription
@@ -351,9 +357,7 @@ struct SubscriptionRow: View {
                     .foregroundStyle(showsRenewal ? RenewaTheme.coral : RenewaTheme.muted.opacity(0.75))
             }
             Spacer()
-            Text(subscription.price.currencyText(code: subscription.currency))
-                .font(.renewa(17, weight: .medium))
-                .foregroundStyle(RenewaTheme.ink)
+            price
         }
         .contentShape(Rectangle())
         .transition(
@@ -364,6 +368,29 @@ struct SubscriptionRow: View {
                     removal: .opacity.combined(with: .scale(scale: 0.9))
                 )
         )
+    }
+
+    @ViewBuilder
+    private var price: some View {
+        if subscription.currency == store.defaultCurrency {
+            Text(subscription.price.currencyText(code: subscription.currency))
+                .font(.renewa(17, weight: .medium))
+                .foregroundStyle(RenewaTheme.ink)
+        } else if let converted = store.convertedAmount(subscription.price, from: subscription.currency) {
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("≈ \(converted.currencyText(code: store.defaultCurrency))")
+                    .font(.renewa(17, weight: .medium))
+                    .foregroundStyle(RenewaTheme.ink)
+                Text(subscription.price.currencyText(code: subscription.currency))
+                    .font(.renewa(12, weight: .medium))
+                    .foregroundStyle(RenewaTheme.muted)
+            }
+            .contentTransition(.numericText())
+        } else {
+            Text(subscription.price.currencyText(code: subscription.currency))
+                .font(.renewa(17, weight: .medium))
+                .foregroundStyle(RenewaTheme.ink)
+        }
     }
 }
 

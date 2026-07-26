@@ -7,12 +7,13 @@ struct InsightsView: View {
     @State private var appeared = false
 
     private var categoryTotals: [(SubscriptionCategory, Decimal)] {
-        Dictionary(
-            grouping: store.activeSubscriptions.filter { $0.currency == store.defaultCurrency },
-            by: \.category
-        )
+        let values = store.activeSubscriptions.compactMap { subscription -> (SubscriptionCategory, Decimal)? in
+            guard let convertedCost = store.convertedMonthlyCost(for: subscription) else { return nil }
+            return (subscription.category, convertedCost)
+        }
+        return Dictionary(grouping: values, by: \.0)
             .map { category, values in
-                (category, values.reduce(Decimal.zero) { $0 + $1.monthlyCost })
+                (category, values.reduce(Decimal.zero) { $0 + $1.1 })
             }
             .sorted { $0.1 > $1.1 }
     }
@@ -49,7 +50,7 @@ struct InsightsView: View {
                             HeroIcon(.chartBar, size: 34)
                         }
                     } description: {
-                        Text("Add an active \(store.defaultCurrency) subscription to see a breakdown.")
+                        Text("Add an active subscription to see a breakdown.")
                     }
                     .foregroundStyle(RenewaTheme.muted)
                     .renewaEntrance(appeared, delay: 0.14)

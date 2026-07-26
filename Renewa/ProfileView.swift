@@ -70,6 +70,11 @@ struct ProfileView: View {
                                 .frame(height: 40)
                                 .contentShape(Rectangle())
                             }
+                            if currency != store.defaultCurrency {
+                                Text("Subscription prices and spending totals will be converted to \(currency). Original amounts stay unchanged.")
+                                    .font(.renewa(12, weight: .medium))
+                                    .foregroundStyle(RenewaTheme.muted)
+                            }
                         }
                     }
                 }

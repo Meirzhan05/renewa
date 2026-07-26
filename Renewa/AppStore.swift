@@ -15,6 +15,7 @@ final class AppStore {
 
     private let client = SupabaseClient()
     private let keychain = KeychainStore()
+    private let currencyRateClient = CurrencyRateClient()
 
     var state: LaunchState = .loading
     var session: Session?
@@ -22,6 +23,10 @@ final class AppStore {
     var subscriptions: [Subscription] = []
     var errorMessage: String?
     var isBusy = false
+    var isRefreshingExchangeRates = false
+    var exchangeRateErrorMessage: String?
+    private var exchangeRateBaseCurrency: String?
+    private var exchangeRates: [String: Decimal] = [:]
 
     var activeSubscriptions: [Subscription] {
         subscriptions.filter { $0.status == .active }
@@ -33,8 +38,8 @@ final class AppStore {
 
     var monthlySpend: Decimal {
         activeSubscriptions
-            .filter { $0.currency == defaultCurrency }
-            .reduce(0) { $0 + $1.monthlyCost }
+            .compactMap(convertedMonthlyCost(for:))
+            .reduce(0, +)
     }
 
     var yearlySpend: Decimal { monthlySpend * 12 }
@@ -60,6 +65,22 @@ final class AppStore {
 
     var foreignCurrencySubscriptionCount: Int {
         activeSubscriptions.count(where: { $0.currency != defaultCurrency })
+    }
+
+    var unavailableConversionCount: Int {
+        activeSubscriptions.count { subscription in
+            subscription.currency != defaultCurrency && convertedAmount(subscription.price, from: subscription.currency) == nil
+        }
+    }
+
+    var exchangeRateStatus: String {
+        if isRefreshingExchangeRates {
+            return "Updating rates"
+        }
+        if unavailableConversionCount > 0 {
+            return "Rates unavailable"
+        }
+        return foreignCurrencySubscriptionCount > 0 ? "Exchange rates" : "Your currency"
     }
 
     func bootstrap() async {
@@ -185,6 +206,9 @@ final class AppStore {
         session = nil
         profile = nil
         subscriptions = []
+        exchangeRates = [:]
+        exchangeRateBaseCurrency = nil
+        exchangeRateErrorMessage = nil
         state = .signedOut
     }
 
@@ -194,11 +218,13 @@ final class AppStore {
         async let profileRequest = client.fetchProfile(accessToken: accessToken)
         subscriptions = try await subscriptionsRequest
         profile = try await profileRequest
+        await refreshExchangeRates()
     }
 
     func refreshSubscriptions() async throws {
         guard let accessToken = session?.accessToken else { return }
         subscriptions = try await client.fetchSubscriptions(accessToken: accessToken)
+        await refreshExchangeRates()
     }
 
     func completeOnboarding(displayName: String, currency: String, avatar: ProfileAvatar) async -> Bool {
@@ -228,6 +254,7 @@ final class AppStore {
                 subscriptions.append(created)
                 subscriptions.sort { $0.nextRenewalDate < $1.nextRenewalDate }
             }
+            await refreshExchangeRates()
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -257,6 +284,44 @@ final class AppStore {
         let result = try await client.scanEmail(accessToken: accessToken)
         try await refreshSubscriptions()
         return result
+    }
+
+    func convertedAmount(_ amount: Decimal, from sourceCurrency: String) -> Decimal? {
+        let source = sourceCurrency.uppercased()
+        let target = defaultCurrency.uppercased()
+        if source == target {
+            return amount
+        }
+        guard exchangeRateBaseCurrency == target,
+              let rate = exchangeRates[source] else {
+            return nil
+        }
+        return amount * rate
+    }
+
+    func convertedMonthlyCost(for subscription: Subscription) -> Decimal? {
+        convertedAmount(subscription.monthlyCost, from: subscription.currency)
+    }
+
+    private func refreshExchangeRates() async {
+        let target = defaultCurrency.uppercased()
+        let sourceCurrencies = Set(activeSubscriptions.map { $0.currency.uppercased() })
+        exchangeRateBaseCurrency = nil
+        exchangeRates = [:]
+        exchangeRateErrorMessage = nil
+        isRefreshingExchangeRates = true
+        defer { isRefreshingExchangeRates = false }
+
+        do {
+            let snapshot = try await currencyRateClient.latestRates(
+                from: sourceCurrencies,
+                to: target
+            )
+            exchangeRateBaseCurrency = snapshot.baseCurrency
+            exchangeRates = snapshot.rates
+        } catch {
+            exchangeRateErrorMessage = error.localizedDescription
+        }
     }
 
     private func persistSession() throws {
@@ -291,6 +356,7 @@ final class AppStore {
                 onboardingCompleted: onboardingCompleted,
                 accessToken: session.accessToken
             )
+            await refreshExchangeRates()
             if onboardingCompleted {
                 state = .ready
             }
