@@ -191,7 +191,6 @@ struct MainTabView: View {
 private struct CustomTabBar: View {
     @Binding var selectedTab: AppTab
     @Binding var showingAdd: Bool
-    @Namespace private var selection
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -202,7 +201,7 @@ private struct CustomTabBar: View {
                 topTrailingRadius: 26,
                 style: .continuous
             )
-            .fill(.ultraThinMaterial)
+            .fill(RenewaTheme.surface)
             .overlay(alignment: .top) {
                 Rectangle()
                     .fill(RenewaTheme.divider.opacity(0.65))
@@ -250,20 +249,12 @@ private struct CustomTabBar: View {
                 selectedTab = tab
             }
         } label: {
-            ZStack {
-                if selectedTab == tab {
-                    Circle()
-                        .fill(RenewaTheme.ink)
-                        .frame(width: 44, height: 44)
-                        .matchedGeometryEffect(id: "selectedTab", in: selection)
-                }
-                HeroIcon(
-                    tab.icon,
-                    style: selectedTab == tab ? .solid : .outline,
-                    size: 24
-                )
-                .foregroundStyle(selectedTab == tab ? .white : RenewaTheme.muted.opacity(0.68))
-            }
+            HeroIcon(
+                tab.icon,
+                style: selectedTab == tab ? .solid : .outline,
+                size: 24
+            )
+            .foregroundStyle(selectedTab == tab ? RenewaTheme.ink : RenewaTheme.muted.opacity(0.68))
             .frame(height: 52)
             .frame(maxWidth: .infinity)
         }
