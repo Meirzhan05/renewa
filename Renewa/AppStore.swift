@@ -27,6 +27,9 @@ final class AppStore {
     var exchangeRateErrorMessage: String?
     private var exchangeRateBaseCurrency: String?
     private var exchangeRates: [String: Decimal] = [:]
+    private var sessionRefreshTask: Task<Session, Error>?
+
+    private let sessionRefreshLeadTime: TimeInterval = 90
 
     var activeSubscriptions: [Subscription] {
         subscriptions.filter { $0.status == .active }
@@ -110,20 +113,20 @@ final class AppStore {
                 state = .signedOut
                 return
             }
-            let cached = try JSONDecoder().decode(Session.self, from: data)
-            if let expiresAt = cached.expiresAt, expiresAt < Date().timeIntervalSince1970 + 60 {
-                session = try await client.refresh(using: cached.refreshToken)
-                try persistSession()
-            } else {
-                session = cached
-            }
+            session = try JSONDecoder().decode(Session.self, from: data)
+            _ = try await validAccessToken()
             try await refreshData()
             state = authenticatedDestination
         } catch {
-            keychain.clear()
-            session = nil
-            state = .signedOut
-            errorMessage = error.localizedDescription
+            if session == nil {
+                keychain.clear()
+                state = .signedOut
+                if errorMessage == nil {
+                    errorMessage = error.localizedDescription
+                }
+            } else {
+                state = authenticatedDestination
+            }
         }
     }
 
@@ -202,28 +205,29 @@ final class AppStore {
         if let accessToken = session?.accessToken {
             try? await client.signOut(accessToken: accessToken)
         }
-        keychain.clear()
-        session = nil
-        profile = nil
-        subscriptions = []
-        exchangeRates = [:]
-        exchangeRateBaseCurrency = nil
-        exchangeRateErrorMessage = nil
-        state = .signedOut
+        clearLocalSession()
+    }
+
+    func appDidBecomeActive() async {
+        guard session != nil, state != .signedOut else { return }
+        _ = try? await validAccessToken()
     }
 
     func refreshData() async throws {
-        guard let accessToken = session?.accessToken else { return }
-        async let subscriptionsRequest = client.fetchSubscriptions(accessToken: accessToken)
-        async let profileRequest = client.fetchProfile(accessToken: accessToken)
-        subscriptions = try await subscriptionsRequest
-        profile = try await profileRequest
+        let values: ([Subscription], UserProfile) = try await performAuthenticated { accessToken in
+            async let subscriptionsRequest = self.client.fetchSubscriptions(accessToken: accessToken)
+            async let profileRequest = self.client.fetchProfile(accessToken: accessToken)
+            return try await (subscriptionsRequest, profileRequest)
+        }
+        subscriptions = values.0
+        profile = values.1
         await refreshExchangeRates()
     }
 
     func refreshSubscriptions() async throws {
-        guard let accessToken = session?.accessToken else { return }
-        subscriptions = try await client.fetchSubscriptions(accessToken: accessToken)
+        subscriptions = try await performAuthenticated { accessToken in
+            try await self.client.fetchSubscriptions(accessToken: accessToken)
+        }
         await refreshExchangeRates()
     }
 
@@ -247,9 +251,11 @@ final class AppStore {
 
     func add(_ subscription: Subscription) async -> Bool {
         errorMessage = nil
-        guard let accessToken = session?.accessToken else { return false }
+        guard session != nil else { return false }
         do {
-            let created = try await client.createSubscription(subscription, accessToken: accessToken)
+            let created = try await performAuthenticated { accessToken in
+                try await self.client.createSubscription(subscription, accessToken: accessToken)
+            }
             withAnimation(RenewaMotion.standard) {
                 subscriptions.append(created)
                 subscriptions.sort { $0.nextRenewalDate < $1.nextRenewalDate }
@@ -257,34 +263,38 @@ final class AppStore {
             await refreshExchangeRates()
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            reportAuthenticatedOperationError(error)
             return false
         }
     }
 
     func remove(_ subscription: Subscription) async -> Bool {
-        guard let accessToken = session?.accessToken else { return false }
+        guard session != nil else { return false }
         do {
-            try await client.deleteSubscription(id: subscription.id, accessToken: accessToken)
+            try await performAuthenticated { accessToken in
+                try await self.client.deleteSubscription(id: subscription.id, accessToken: accessToken)
+            }
             withAnimation(RenewaMotion.standard) {
                 subscriptions.removeAll { $0.id == subscription.id }
             }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            reportAuthenticatedOperationError(error)
             return false
         }
     }
 
     func updateBrand(for subscription: Subscription, brandID: String?) async -> Bool {
         errorMessage = nil
-        guard let accessToken = session?.accessToken else { return false }
+        guard session != nil else { return false }
         do {
-            let updated = try await client.updateSubscriptionBrand(
-                id: subscription.id,
-                brandID: brandID,
-                accessToken: accessToken
-            )
+            let updated = try await performAuthenticated { accessToken in
+                try await self.client.updateSubscriptionBrand(
+                    id: subscription.id,
+                    brandID: brandID,
+                    accessToken: accessToken
+                )
+            }
             guard let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) else {
                 return false
             }
@@ -293,19 +303,21 @@ final class AppStore {
             }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            reportAuthenticatedOperationError(error)
             return false
         }
     }
 
     func emailAuthorizationURL(provider: String) async throws -> URL {
-        guard let accessToken = session?.accessToken else { throw APIError.notConfigured }
-        return try await client.mailAuthorizationURL(provider: provider, accessToken: accessToken)
+        try await performAuthenticated { accessToken in
+            try await self.client.mailAuthorizationURL(provider: provider, accessToken: accessToken)
+        }
     }
 
     func scanEmail() async throws -> EmailScanResult {
-        guard let accessToken = session?.accessToken else { throw APIError.notConfigured }
-        let result = try await client.scanEmail(accessToken: accessToken)
+        let result = try await performAuthenticated { accessToken in
+            try await self.client.scanEmail(accessToken: accessToken)
+        }
         try await refreshSubscriptions()
         return result
     }
@@ -353,6 +365,78 @@ final class AppStore {
         try keychain.save(JSONEncoder().encode(session))
     }
 
+    private func performAuthenticated<T>(
+        _ operation: (String) async throws -> T
+    ) async throws -> T {
+        let accessToken = try await validAccessToken()
+        do {
+            return try await operation(accessToken)
+        } catch {
+            guard error.isAuthorizationFailure else { throw error }
+            let refreshedAccessToken = try await validAccessToken(forceRefresh: true)
+            return try await operation(refreshedAccessToken)
+        }
+    }
+
+    private func validAccessToken(forceRefresh: Bool = false) async throws -> String {
+        guard let session else { throw APIError.notAuthenticated }
+        guard forceRefresh || sessionNeedsRefresh(session) else {
+            return session.accessToken
+        }
+        return try await refreshSession(using: session).accessToken
+    }
+
+    private func sessionNeedsRefresh(_ session: Session) -> Bool {
+        guard let expiresAt = session.expiresAt else { return false }
+        return expiresAt <= Date().timeIntervalSince1970 + sessionRefreshLeadTime
+    }
+
+    private func refreshSession(using currentSession: Session) async throws -> Session {
+        if let sessionRefreshTask {
+            return try await sessionRefreshTask.value
+        }
+
+        let refreshToken = currentSession.refreshToken
+        let task = Task { [client] in
+            try await client.refresh(using: refreshToken)
+        }
+        sessionRefreshTask = task
+        defer { sessionRefreshTask = nil }
+
+        do {
+            let refreshed = try await task.value
+            guard session?.refreshToken == refreshToken else {
+                throw APIError.notAuthenticated
+            }
+            try keychain.save(JSONEncoder().encode(refreshed))
+            session = refreshed
+            return refreshed
+        } catch {
+            if error.isTerminalRefreshFailure {
+                clearLocalSession(message: "Your session expired. Please sign in again.")
+            }
+            throw error
+        }
+    }
+
+    private func clearLocalSession(message: String? = nil) {
+        keychain.clear()
+        session = nil
+        profile = nil
+        subscriptions = []
+        exchangeRates = [:]
+        exchangeRateBaseCurrency = nil
+        exchangeRateErrorMessage = nil
+        state = .signedOut
+        errorMessage = message
+    }
+
+    private func reportAuthenticatedOperationError(_ error: Error) {
+        if state != .signedOut {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     private var authenticatedDestination: LaunchState {
         profile?.onboardingCompleted == false ? .onboarding : .ready
     }
@@ -364,7 +448,7 @@ final class AppStore {
         onboardingCompleted: Bool
     ) async -> Bool {
         let trimmedName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty, let session else {
+        guard !trimmedName.isEmpty, let userID = session?.user.id else {
             errorMessage = "Enter a display name before saving."
             return false
         }
@@ -372,22 +456,38 @@ final class AppStore {
         errorMessage = nil
         defer { isBusy = false }
         do {
-            profile = try await client.updateProfile(
-                id: session.user.id,
-                displayName: trimmedName,
-                defaultCurrency: currency,
-                avatarKey: avatar.rawValue,
-                onboardingCompleted: onboardingCompleted,
-                accessToken: session.accessToken
-            )
+            profile = try await performAuthenticated { accessToken in
+                try await self.client.updateProfile(
+                    id: userID,
+                    displayName: trimmedName,
+                    defaultCurrency: currency,
+                    avatarKey: avatar.rawValue,
+                    onboardingCompleted: onboardingCompleted,
+                    accessToken: accessToken
+                )
+            }
             await refreshExchangeRates()
             if onboardingCompleted {
                 state = .ready
             }
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            reportAuthenticatedOperationError(error)
             return false
         }
+    }
+}
+
+private extension Error {
+    var isAuthorizationFailure: Bool {
+        guard let apiError = self as? APIError,
+              case let .server(status, _) = apiError else { return false }
+        return status == 401
+    }
+
+    var isTerminalRefreshFailure: Bool {
+        guard let apiError = self as? APIError,
+              case let .server(status, _) = apiError else { return false }
+        return [400, 401, 403].contains(status)
     }
 }

@@ -398,6 +398,7 @@ private struct ErrorEnvelope: Decodable {
 
 enum APIError: LocalizedError {
     case notConfigured
+    case notAuthenticated
     case invalidResponse
     case emailConfirmationRequired
     case decoding(String)
@@ -406,6 +407,7 @@ enum APIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured: "Add your Supabase URL and publishable key to Config.local.xcconfig."
+        case .notAuthenticated: "Sign in to continue."
         case .invalidResponse: "The server returned an invalid response."
         case .emailConfirmationRequired: "Check your inbox to confirm your email, then sign in."
         case let .decoding(detail): "Could not read the server response: \(detail)"

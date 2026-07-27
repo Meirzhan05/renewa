@@ -10,7 +10,7 @@ All account, profile, and subscription screens use Supabase data. If the backend
 - Vendored Heroicons with an outlined/solid navigation hierarchy and no runtime icon dependency
 - Month/year spending views, renewal reminders, category insights, manual entry, and deletion
 - Coordinated springs, staggered entrances, numeric transitions, and a Reduced Motion fallback
-- Supabase email/password auth with sessions stored in the iOS Keychain
+- Supabase email/password auth with Keychain-backed sessions, proactive JWT refresh, and a one-time 401 retry
 - Registration onboarding plus editable display name, avatar preset, and preferred currency
 - Google account sign-in with native PKCE; Apple remains visual-only pending its entitlement
 - Postgres schema, indexes, trigger-maintained profiles, grants, and row-level security
@@ -122,6 +122,10 @@ supabase/
 Renewa stores an optional, provider-independent `brand_id` to provide verified Logo.dev domains for reviewed services. Every other non-empty subscription name receives an automatic Logo.dev name lookup, while users can replace it with a reviewed brand or choose the local initial fallback. Every logo is shown in a contained soft-squircle stamp, with the same fallback during loading, errors, and offline use. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for attribution and trademark notes.
 
 To use Logo.dev for automatic subscription logos, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa requests transparent PNG logos from a verified domain when available and otherwise from Logo.dev's name endpoint; a name match is automatic, not a verified identity. Users can choose a reviewed brand or keep the local initial from the add flow or a subscription's context menu. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
+
+## Session refresh
+
+Renewa keeps the Supabase access token and its rotating refresh token together in the iOS Keychain. Before each authenticated request—and when the app becomes active—it refreshes a token nearing expiry. A 401 response gets one refresh-and-retry attempt. Invalid refresh tokens return the person to sign-in; temporary network failures retain the saved session so it can recover later.
 
 ## Currency conversion
 
