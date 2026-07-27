@@ -276,6 +276,28 @@ final class AppStore {
         }
     }
 
+    func updateBrand(for subscription: Subscription, brandID: String?) async -> Bool {
+        errorMessage = nil
+        guard let accessToken = session?.accessToken else { return false }
+        do {
+            let updated = try await client.updateSubscriptionBrand(
+                id: subscription.id,
+                brandID: brandID,
+                accessToken: accessToken
+            )
+            guard let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) else {
+                return false
+            }
+            withAnimation(RenewaMotion.quick) {
+                subscriptions[index] = updated
+            }
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func emailAuthorizationURL(provider: String) async throws -> URL {
         guard let accessToken = session?.accessToken else { throw APIError.notConfigured }
         return try await client.mailAuthorizationURL(provider: provider, accessToken: accessToken)

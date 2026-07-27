@@ -9,8 +9,9 @@
 ## Subscription experience
 
 - [x] Redesign the New Subscription flow into a more guided form with a polished category picker, billing-cycle controls, an immediate cost preview, validation, and a clear save state.
-- [x] Use Logo.dev for subscription logos, retaining the local tile for loading, errors, and offline use.
-- [x] Present subscription logos as circular brand medallions that match the app's soft card design.
+- [x] Use Logo.dev for reviewed subscription logos, retaining a local fallback for loading, errors, unknown services, and offline use.
+- [x] Present subscription logos as contained soft-squircle brand stamps that match the app's soft card design.
+- [x] Let people confirm or clear a reviewed brand logo while adding a subscription or from a subscription's context menu.
 - [x] Convert subscription prices, totals, and category insights when the preferred currency changes, while preserving original amounts.
 - [x] Redesign subscription removal with an immediate card-dismiss animation, failure recovery, and completion feedback.
 

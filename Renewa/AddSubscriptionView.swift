@@ -11,6 +11,9 @@ struct AddSubscriptionView: View {
     @State private var renewalDate = Calendar.current.date(byAdding: .month, value: 1, to: .now) ?? .now
     @State private var isSaving = false
     @State private var appeared = false
+    @State private var selectedBrandID: String?
+    @State private var hasManuallySelectedBrand = false
+    @State private var showingBrandPicker = false
     @FocusState private var focusedField: Field?
 
     private enum Field {
@@ -72,6 +75,13 @@ struct AddSubscriptionView: View {
                         }
                     }
                     .renewaEntrance(appeared, delay: 0.12)
+
+                    if !name.trimmed.isEmpty {
+                        sectionCard(title: "Logo") {
+                            brandSelection
+                        }
+                        .renewaEntrance(appeared, delay: 0.15)
+                    }
 
                     sectionCard(title: "Billing cycle") {
                         LazyVGrid(columns: columns, spacing: 10) {
@@ -167,6 +177,21 @@ struct AddSubscriptionView: View {
                 focusedField = .name
             }
         }
+        .sheet(isPresented: $showingBrandPicker) {
+            SubscriptionBrandPicker(
+                subscriptionName: name.trimmed,
+                tintHex: category.defaultTint,
+                initialBrandID: effectiveBrandID
+            ) { brandID in
+                withAnimation(reduceMotion ? nil : RenewaMotion.quick) {
+                    selectedBrandID = brandID
+                    hasManuallySelectedBrand = true
+                }
+                return true
+            }
+            .presentationDetents([.medium, .large])
+            .presentationCornerRadius(30)
+        }
     }
 
     private var amount: Decimal? {
@@ -237,6 +262,33 @@ struct AddSubscriptionView: View {
         .animation(reduceMotion ? nil : RenewaMotion.quick, value: previewName)
         .animation(reduceMotion ? nil : RenewaMotion.quick, value: price)
         .animation(reduceMotion ? nil : RenewaMotion.quick, value: cycle)
+    }
+
+    private var brandSelection: some View {
+        Button {
+            showingBrandPicker = true
+        } label: {
+            HStack(spacing: 13) {
+                SubscriptionBrandIcon(subscription: previewSubscription, size: 46)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(selectedBrand?.displayName ?? "Subscription initial")
+                        .font(.renewa(16, weight: .bold))
+                    Text(brandSelectionSubtitle)
+                        .font(.renewa(13, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                }
+
+                Spacer()
+                HeroIcon(.chevronRight, size: 19)
+                    .foregroundStyle(RenewaTheme.muted)
+            }
+            .foregroundStyle(RenewaTheme.ink)
+            .padding(12)
+            .background(RenewaTheme.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        }
+        .buttonStyle(PressScaleStyle())
+        .accessibilityHint("Choose a reviewed brand logo or use the subscription initial.")
     }
 
     private var saveButton: some View {
@@ -335,6 +387,25 @@ struct AddSubscriptionView: View {
         name.trimmed.isEmpty ? "Your subscription" : name.trimmed
     }
 
+    private var automaticBrandID: String? {
+        SubscriptionBrand.resolve(name)?.id
+    }
+
+    private var effectiveBrandID: String? {
+        hasManuallySelectedBrand ? selectedBrandID : automaticBrandID
+    }
+
+    private var selectedBrand: SubscriptionBrand? {
+        SubscriptionBrand.find(id: effectiveBrandID)
+    }
+
+    private var brandSelectionSubtitle: String {
+        if selectedBrand != nil, !hasManuallySelectedBrand {
+            return "Verified from subscription name"
+        }
+        return hasManuallySelectedBrand ? "Selected by you" : "No company logo"
+    }
+
     private var previewSubscription: Subscription {
         Subscription(
             id: UUID(),
@@ -346,7 +417,7 @@ struct AddSubscriptionView: View {
             category: category,
             status: .active,
             iconName: String(previewName.prefix(1)).uppercased(),
-            brandID: SubscriptionBrand.resolve(name)?.id,
+            brandID: effectiveBrandID,
             tintHex: category.defaultTint,
             source: "manual"
         )
@@ -367,7 +438,7 @@ struct AddSubscriptionView: View {
             category: category,
             status: .active,
             iconName: String(name.trimmed.prefix(1)).uppercased(),
-            brandID: SubscriptionBrand.resolve(name)?.id,
+            brandID: effectiveBrandID,
             tintHex: category.defaultTint,
             source: "manual"
         )

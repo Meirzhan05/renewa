@@ -7,6 +7,7 @@ struct OverviewView: View {
     @State private var appeared = false
     @State private var removingSubscriptionIDs = Set<UUID>()
     @State private var removalNotice: RemovalNotice?
+    @State private var subscriptionForBrandSelection: Subscription?
     @Namespace private var periodSelection
 
     private enum Period: String, CaseIterable {
@@ -86,6 +87,17 @@ struct OverviewView: View {
             } catch {
                 store.errorMessage = error.localizedDescription
             }
+        }
+        .sheet(item: $subscriptionForBrandSelection) { subscription in
+            SubscriptionBrandPicker(
+                subscriptionName: subscription.name,
+                tintHex: subscription.tintHex,
+                initialBrandID: subscription.brandID
+            ) { brandID in
+                await store.updateBrand(for: subscription, brandID: brandID)
+            }
+            .presentationDetents([.medium, .large])
+            .presentationCornerRadius(30)
         }
         .onAppear {
             appeared = true
@@ -267,6 +279,16 @@ struct OverviewView: View {
                             .renewaEntrance(appeared, delay: 0.34 + Double(index) * 0.045, distance: 10)
                             .transition(.subscriptionRemoval)
                             .contextMenu {
+                                Button {
+                                    subscriptionForBrandSelection = subscription
+                                } label: {
+                                    Label {
+                                        Text("Change logo")
+                                    } icon: {
+                                        HeroIcon(.rectangleStack, size: 18)
+                                    }
+                                }
+
                                 Button(role: .destructive) {
                                     remove(subscription)
                                 } label: {
@@ -305,6 +327,16 @@ struct OverviewView: View {
                         .renewaEntrance(appeared, delay: 0.4 + Double(index) * 0.045, distance: 10)
                         .transition(.subscriptionRemoval)
                         .contextMenu {
+                            Button {
+                                subscriptionForBrandSelection = subscription
+                            } label: {
+                                Label {
+                                    Text("Change logo")
+                                } icon: {
+                                    HeroIcon(.rectangleStack, size: 18)
+                                }
+                            }
+
                             Button(role: .destructive) {
                                 remove(subscription)
                             } label: {

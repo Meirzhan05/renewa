@@ -128,6 +128,23 @@ struct SupabaseClient {
         return created
     }
 
+    func updateSubscriptionBrand(
+        id: UUID,
+        brandID: String?,
+        accessToken: String
+    ) async throws -> Subscription {
+        var request = try makeRequest(
+            path: "/rest/v1/subscriptions?id=eq.\(id.uuidString)",
+            method: "PATCH",
+            accessToken: accessToken
+        )
+        request.setValue("return=representation", forHTTPHeaderField: "Prefer")
+        request.httpBody = try Self.encoder.encode(SubscriptionBrandUpdate(brandID: brandID))
+        let values: [Subscription] = try await perform(request)
+        guard let updated = values.first else { throw APIError.invalidResponse }
+        return updated
+    }
+
     func deleteSubscription(id: UUID, accessToken: String) async throws {
         let request = try makeRequest(
             path: "/rest/v1/subscriptions?id=eq.\(id.uuidString)",
@@ -358,6 +375,14 @@ private struct SubscriptionInsert: Encodable {
         case brandID = "brand_id"
         case tintHex = "tint_hex"
         case source
+    }
+}
+
+private struct SubscriptionBrandUpdate: Encodable {
+    let brandID: String?
+
+    enum CodingKeys: String, CodingKey {
+        case brandID = "brand_id"
     }
 }
 

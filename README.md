@@ -119,9 +119,9 @@ supabase/
 
 ## Subscription brand logos
 
-Renewa stores an optional, provider-independent `brand_id` to provide verified Logo.dev domains for reviewed services. Logo.dev name lookup covers other services; every offline, missing, or error state uses the familiar colored initial tile. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for attribution and trademark notes.
+Renewa stores an optional, provider-independent `brand_id` to provide verified Logo.dev domains for reviewed services. It never guesses a company logo from an unknown subscription name: those subscriptions retain the initial fallback until the user confirms a reviewed brand. Every logo is shown in a contained soft-squircle stamp, with the same fallback during loading, errors, and offline use. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for attribution and trademark notes.
 
-To use Logo.dev for all subscription logos, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa uses verified domains for its review catalog and name lookup for other services; it falls back to the local initial tile on errors or offline. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
+To use Logo.dev for reviewed subscription logos, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa requests transparent PNG logos from verified domains, keeps a local initial fallback, and lets users choose or clear a reviewed brand from the add flow or a subscription's context menu. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
 
 ## Currency conversion
 

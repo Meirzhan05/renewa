@@ -23,33 +23,27 @@ struct AppConfiguration: Sendable {
         logoDevPublishableKey.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("pk_")
     }
 
-    func logoDevURL(forCompanyName name: String) -> URL? {
-        logoDevURL(path: "name", identifier: name)
-    }
-
-    func logoDevURL(forDomain domain: String) -> URL? {
-        logoDevURL(path: nil, identifier: domain)
-    }
-
-    private func logoDevURL(path: String?, identifier: String) -> URL? {
+    func logoDevURL(forVerifiedDomain domain: String) -> URL? {
         let key = logoDevPublishableKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let identifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hasLogoDevPublishableKey, !identifier.isEmpty else { return nil }
+        let domain = domain.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hasLogoDevPublishableKey, !domain.isEmpty else { return nil }
 
         var components = URLComponents()
         components.scheme = "https"
         components.host = "img.logo.dev"
         let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
-        guard let encodedIdentifier = identifier.addingPercentEncoding(withAllowedCharacters: allowed) else {
+        guard let encodedDomain = domain.addingPercentEncoding(withAllowedCharacters: allowed) else {
             return nil
         }
-        components.percentEncodedPath = path.map { "/\($0)/\(encodedIdentifier)" } ?? "/\(encodedIdentifier)"
+        components.percentEncodedPath = "/\(encodedDomain)"
         components.queryItems = [
             URLQueryItem(name: "token", value: key),
-            URLQueryItem(name: "size", value: "128"),
-            URLQueryItem(name: "format", value: "jpg"),
+            URLQueryItem(name: "size", value: "160"),
+            URLQueryItem(name: "format", value: "png"),
+            URLQueryItem(name: "theme", value: "light"),
             URLQueryItem(name: "retina", value: "true"),
             URLQueryItem(name: "fallback", value: "404"),
+            URLQueryItem(name: "v", value: "brand-stamp-1"),
         ]
         return components.url
     }

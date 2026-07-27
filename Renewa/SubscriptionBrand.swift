@@ -16,6 +16,8 @@ struct SubscriptionBrand: Identifiable, Hashable {
         return catalog.first { $0.id == id }
     }
 
+    static var reviewedBrands: [SubscriptionBrand] { catalog }
+
     static func normalizedAlias(for name: String) -> String {
         normalize(name)
     }
@@ -47,10 +49,9 @@ struct SubscriptionBrandIcon: View {
 
     var body: some View {
         let brand = SubscriptionBrand.find(id: subscription.brandID)
-        let remoteURL = brand.map { AppConfiguration.current.logoDevURL(forDomain: $0.logoDevDomain) }
-            ?? AppConfiguration.current.logoDevURL(forCompanyName: subscription.name)
+        let remoteURL = brand.flatMap { AppConfiguration.current.logoDevURL(forVerifiedDomain: $0.logoDevDomain) }
         ZStack {
-            Circle()
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(RenewaTheme.surface)
 
             if let remoteURL {
@@ -58,35 +59,38 @@ struct SubscriptionBrandIcon: View {
                     if case let .success(image) = phase {
                         image
                             .resizable()
-                            .scaledToFill()
-                            .clipShape(Circle())
-                            .padding(2)
+                            .scaledToFit()
+                            .frame(width: logoSize, height: logoSize)
                             .transition(.opacity)
                     } else {
-                        fallbackTile
+                        fallbackMark
                     }
                 }
             } else {
-                fallbackTile
+                fallbackMark
             }
         }
         .frame(width: size, height: size)
         .overlay {
-            Circle()
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(.white.opacity(0.82), lineWidth: 1)
         }
         .shadow(color: RenewaTheme.ink.opacity(0.09), radius: size * 0.12, y: size * 0.06)
         .accessibilityLabel(subscription.name)
     }
 
-    private var fallbackTile: some View {
-        Circle()
-            .fill(Color(hex: subscription.tintHex))
-            .overlay {
-                Text(subscription.iconName)
-                    .font(.renewa(subscription.iconName.count > 1 ? size * 0.28 : size * 0.39, weight: .bold))
-                    .foregroundStyle(.white)
-                    .minimumScaleFactor(0.7)
-            }
+    private var cornerRadius: CGFloat { min(size * 0.31, 18) }
+    private var logoSize: CGFloat { size * 0.62 }
+
+    private var fallbackMark: some View {
+        Text(subscription.iconName)
+            .font(.renewa(subscription.iconName.count > 1 ? size * 0.25 : size * 0.36, weight: .bold))
+            .foregroundStyle(Color(hex: subscription.tintHex))
+            .minimumScaleFactor(0.7)
+            .frame(width: size * 0.62, height: size * 0.62)
+            .background(
+                Color(hex: subscription.tintHex).opacity(0.14),
+                in: RoundedRectangle(cornerRadius: cornerRadius * 0.62, style: .continuous)
+            )
     }
 }
