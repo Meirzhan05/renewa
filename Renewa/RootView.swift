@@ -133,11 +133,29 @@ private enum AppTab: String, CaseIterable {
         case .profile: .userCircle
         }
     }
+
+    var index: Int {
+        AppTab.allCases.firstIndex(of: self) ?? 0
+    }
+}
+
+private enum TabNavigationDirection {
+    case forward
+    case backward
+
+    var insertionEdge: Edge {
+        self == .forward ? .trailing : .leading
+    }
+
+    var removalEdge: Edge {
+        self == .forward ? .leading : .trailing
+    }
 }
 
 struct MainTabView: View {
     @State private var selectedTab: AppTab = .home
     @State private var showingAdd = false
+    @State private var tabNavigationDirection: TabNavigationDirection = .forward
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init() {
@@ -171,14 +189,17 @@ struct MainTabView: View {
             .transition(
                 reduceMotion
                     ? .opacity
-                    : .opacity.combined(with: .scale(scale: 0.985))
+                    : pageTransition
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .animation(reduceMotion ? .easeOut(duration: 0.12) : RenewaMotion.standard, value: selectedTab)
         .background(RenewaTheme.background.ignoresSafeArea())
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            CustomTabBar(selectedTab: $selectedTab, showingAdd: $showingAdd)
+            CustomTabBar(
+                selectedTab: $selectedTab,
+                showingAdd: $showingAdd,
+                onTabSelected: selectTab
+            )
                 .padding(.horizontal, 18)
                 .padding(.bottom, 10)
         }
@@ -188,11 +209,34 @@ struct MainTabView: View {
                 .presentationCornerRadius(30)
         }
     }
+
+    private var pageTransition: AnyTransition {
+        .asymmetric(
+            insertion: .move(edge: tabNavigationDirection.insertionEdge).combined(with: .opacity),
+            removal: .move(edge: tabNavigationDirection.removalEdge).combined(with: .opacity)
+        )
+    }
+
+    private func selectTab(_ tab: AppTab) {
+        guard tab != selectedTab else { return }
+
+        withAnimation(
+            reduceMotion
+                ? .easeOut(duration: 0.12)
+                : .spring(response: 0.42, dampingFraction: 0.9)
+        ) {
+            tabNavigationDirection = tab.index > selectedTab.index ? .forward : .backward
+            selectedTab = tab
+        }
+    }
 }
 
 private struct CustomTabBar: View {
     @Binding var selectedTab: AppTab
     @Binding var showingAdd: Bool
+    let onTabSelected: (AppTab) -> Void
+    @Namespace private var activeIndicator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -239,16 +283,36 @@ private struct CustomTabBar: View {
 
     private func item(_ tab: AppTab) -> some View {
         Button {
-            withAnimation(RenewaMotion.quick) {
-                selectedTab = tab
-            }
+            onTabSelected(tab)
         } label: {
-            HeroIcon(
-                tab.icon,
-                style: selectedTab == tab ? .solid : .outline,
-                size: 24
-            )
-            .foregroundStyle(selectedTab == tab ? RenewaTheme.ink : RenewaTheme.muted.opacity(0.68))
+            VStack(spacing: 4) {
+                HeroIcon(
+                    tab.icon,
+                    style: selectedTab == tab ? .solid : .outline,
+                    size: 24
+                )
+                .foregroundStyle(selectedTab == tab ? RenewaTheme.ink : RenewaTheme.muted.opacity(0.68))
+                .scaleEffect(selectedTab == tab && !reduceMotion ? 1.1 : 1)
+
+                Group {
+                    if selectedTab == tab {
+                        if reduceMotion {
+                            Capsule()
+                                .fill(RenewaTheme.sage)
+                                .frame(width: 14, height: 3)
+                                .transition(.opacity)
+                        } else {
+                            Capsule()
+                                .fill(RenewaTheme.sage)
+                                .frame(width: 14, height: 3)
+                                .matchedGeometryEffect(id: "activeTabIndicator", in: activeIndicator)
+                        }
+                    } else {
+                        Color.clear
+                            .frame(width: 14, height: 3)
+                    }
+                }
+            }
             .frame(height: 66)
             .frame(maxWidth: .infinity)
         }

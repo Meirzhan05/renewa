@@ -7,6 +7,7 @@
 - [x] Remove tab text labels, retaining clear accessibility labels and selected-state treatment for every icon.
 - [x] Make the tab bar opaque and express the active tab through the icon rather than a background pill.
 - [x] Redesign the tab bar as a floating, rounded control with breathing room around it.
+- [x] Animate tab changes with directional page movement and a moving active-tab accent, while respecting Reduce Motion.
 - [x] Remove the exchange-rate status title from the home-page spending summary.
 
 ## Subscription experience
