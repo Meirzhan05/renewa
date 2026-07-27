@@ -177,15 +177,10 @@ struct MainTabView: View {
         }
         .animation(reduceMotion ? .easeOut(duration: 0.12) : RenewaMotion.standard, value: selectedTab)
         .background(RenewaTheme.background.ignoresSafeArea())
-        .ignoresSafeArea(edges: .bottom)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             CustomTabBar(selectedTab: $selectedTab, showingAdd: $showingAdd)
-        }
-        .overlay(alignment: .bottom) {
-            Color.clear
-                .frame(height: 0)
-                .background(RenewaTheme.surface, ignoresSafeAreaEdges: .bottom)
-                .allowsHitTesting(false)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 10)
         }
         .sheet(isPresented: $showingAdd) {
             AddSubscriptionView()
@@ -201,32 +196,24 @@ private struct CustomTabBar: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 26,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 26,
-                style: .continuous
-            )
-            .fill(RenewaTheme.surface)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(RenewaTheme.divider.opacity(0.65))
-                    .frame(height: 1)
-            }
-            .padding(.top, 18)
-
             HStack(spacing: 0) {
                 item(.home)
                 item(.insights)
                 Color.clear
-                    .frame(width: 78)
+                    .frame(width: 74)
                     .accessibilityHidden(true)
                 item(.inbox)
                 item(.profile)
             }
-            .padding(.horizontal, 10)
-            .padding(.top, 19)
+            .frame(height: 66)
+            .padding(.horizontal, 8)
+            .background(RenewaTheme.surface, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(.white.opacity(0.72), lineWidth: 1)
+            }
+            .shadow(color: RenewaTheme.ink.opacity(0.1), radius: 18, y: 8)
+            .padding(.top, 20)
 
             Button {
                 guard !showingAdd else { return }
@@ -240,14 +227,14 @@ private struct CustomTabBar: View {
                     .background(RenewaTheme.sage, in: Circle())
                     .overlay {
                         Circle()
-                            .stroke(RenewaTheme.background, lineWidth: 5)
+                            .stroke(RenewaTheme.surface, lineWidth: 5)
                     }
                     .shadow(color: RenewaTheme.sage.opacity(0.28), radius: 16, y: 6)
             }
             .buttonStyle(PressScaleStyle())
             .accessibilityLabel("Add subscription")
         }
-        .frame(height: 82)
+        .frame(height: 86)
     }
 
     private func item(_ tab: AppTab) -> some View {
@@ -262,7 +249,7 @@ private struct CustomTabBar: View {
                 size: 24
             )
             .foregroundStyle(selectedTab == tab ? RenewaTheme.ink : RenewaTheme.muted.opacity(0.68))
-            .frame(height: 52)
+            .frame(height: 66)
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(PressScaleStyle())
