@@ -6,6 +6,7 @@
 - [x] Fix the floating **Add** tab button: it should not conflict with the tab bar's layout, selection indicator, safe area, or sheet presentation. Verify opening and dismissing the add sheet on compact and large iPhones.
 - [x] Remove tab text labels, retaining clear accessibility labels and selected-state treatment for every icon.
 - [x] Make the tab bar opaque and express the active tab through the icon rather than a background pill.
+- [x] Extend the tab bar surface through the bottom safe area.
 - [x] Remove the exchange-rate status title from the home-page spending summary.
 
 ## Subscription experience

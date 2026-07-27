@@ -177,8 +177,15 @@ struct MainTabView: View {
         }
         .animation(reduceMotion ? .easeOut(duration: 0.12) : RenewaMotion.standard, value: selectedTab)
         .background(RenewaTheme.background.ignoresSafeArea())
+        .ignoresSafeArea(edges: .bottom)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             CustomTabBar(selectedTab: $selectedTab, showingAdd: $showingAdd)
+        }
+        .overlay(alignment: .bottom) {
+            Color.clear
+                .frame(height: 0)
+                .background(RenewaTheme.surface, ignoresSafeAreaEdges: .bottom)
+                .allowsHitTesting(false)
         }
         .sheet(isPresented: $showingAdd) {
             AddSubscriptionView()
