@@ -119,9 +119,9 @@ supabase/
 
 ## Subscription brand logos
 
-Renewa stores an optional, provider-independent `brand_id` to provide verified Logo.dev domains for reviewed services. It never guesses a company logo from an unknown subscription name: those subscriptions retain the initial fallback until the user confirms a reviewed brand. Every logo is shown in a contained soft-squircle stamp, with the same fallback during loading, errors, and offline use. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for attribution and trademark notes.
+Renewa stores an optional, provider-independent `brand_id` to provide verified Logo.dev domains for reviewed services. Every other non-empty subscription name receives an automatic Logo.dev name lookup, while users can replace it with a reviewed brand or choose the local initial fallback. Every logo is shown in a contained soft-squircle stamp, with the same fallback during loading, errors, and offline use. See [SubscriptionBrandLogos.md](Renewa/ThirdPartyLicenses/SubscriptionBrandLogos.md) for attribution and trademark notes.
 
-To use Logo.dev for reviewed subscription logos, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa requests transparent PNG logos from verified domains, keeps a local initial fallback, and lets users choose or clear a reviewed brand from the add flow or a subscription's context menu. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
+To use Logo.dev for automatic subscription logos, create its free account and add the client-safe `pk_…` key as `LOGO_DEV_PUBLISHABLE_KEY` in `Config.local.xcconfig`. Renewa requests transparent PNG logos from a verified domain when available and otherwise from Logo.dev's name endpoint; a name match is automatic, not a verified identity. Users can choose a reviewed brand or keep the local initial from the add flow or a subscription's context menu. The free commercial tier requires the in-app Logo.dev attribution that appears in Profile.
 
 ## Currency conversion
 

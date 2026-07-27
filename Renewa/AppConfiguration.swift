@@ -24,18 +24,26 @@ struct AppConfiguration: Sendable {
     }
 
     func logoDevURL(forVerifiedDomain domain: String) -> URL? {
+        logoDevURL(pathPrefix: nil, identifier: domain)
+    }
+
+    func logoDevURL(forCompanyName name: String) -> URL? {
+        logoDevURL(pathPrefix: "name", identifier: name)
+    }
+
+    private func logoDevURL(pathPrefix: String?, identifier: String) -> URL? {
         let key = logoDevPublishableKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        let domain = domain.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard hasLogoDevPublishableKey, !domain.isEmpty else { return nil }
+        let identifier = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hasLogoDevPublishableKey, !identifier.isEmpty else { return nil }
 
         var components = URLComponents()
         components.scheme = "https"
         components.host = "img.logo.dev"
         let allowed = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
-        guard let encodedDomain = domain.addingPercentEncoding(withAllowedCharacters: allowed) else {
+        guard let encodedIdentifier = identifier.addingPercentEncoding(withAllowedCharacters: allowed) else {
             return nil
         }
-        components.percentEncodedPath = "/\(encodedDomain)"
+        components.percentEncodedPath = pathPrefix.map { "/\($0)/\(encodedIdentifier)" } ?? "/\(encodedIdentifier)"
         components.queryItems = [
             URLQueryItem(name: "token", value: key),
             URLQueryItem(name: "size", value: "160"),

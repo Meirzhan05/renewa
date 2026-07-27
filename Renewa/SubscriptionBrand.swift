@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct SubscriptionBrand: Identifiable, Hashable {
+    // A persisted, provider-independent choice that keeps automatic name lookup disabled for one row.
+    static let fallbackOverrideID = "renewa-fallback"
+
     let id: String
     let displayName: String
     let logoDevDomain: String
@@ -14,6 +17,10 @@ struct SubscriptionBrand: Identifiable, Hashable {
     static func find(id: String?) -> SubscriptionBrand? {
         guard let id else { return nil }
         return catalog.first { $0.id == id }
+    }
+
+    static func isFallbackOverride(_ id: String?) -> Bool {
+        id == fallbackOverrideID
     }
 
     static var reviewedBrands: [SubscriptionBrand] { catalog }
@@ -49,7 +56,12 @@ struct SubscriptionBrandIcon: View {
 
     var body: some View {
         let brand = SubscriptionBrand.find(id: subscription.brandID)
-        let remoteURL = brand.flatMap { AppConfiguration.current.logoDevURL(forVerifiedDomain: $0.logoDevDomain) }
+        let remoteURL: URL? = if SubscriptionBrand.isFallbackOverride(subscription.brandID) {
+            nil
+        } else {
+            brand.flatMap { AppConfiguration.current.logoDevURL(forVerifiedDomain: $0.logoDevDomain) }
+                ?? AppConfiguration.current.logoDevURL(forCompanyName: subscription.name)
+        }
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(RenewaTheme.surface)

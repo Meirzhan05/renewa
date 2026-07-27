@@ -38,7 +38,7 @@ struct SubscriptionBrandPicker: View {
                     option(
                         title: "Use subscription initial",
                         subtitle: "No company logo",
-                        brandID: nil
+                        brandID: SubscriptionBrand.fallbackOverrideID
                     )
 
                     Text("REVIEWED BRANDS")
