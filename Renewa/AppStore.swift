@@ -76,16 +76,6 @@ final class AppStore {
         }
     }
 
-    var exchangeRateStatus: String {
-        if isRefreshingExchangeRates {
-            return "Updating rates"
-        }
-        if unavailableConversionCount > 0 {
-            return "Rates unavailable"
-        }
-        return foreignCurrencySubscriptionCount > 0 ? "Exchange rates" : "Your currency"
-    }
-
     func bootstrap() async {
         guard AppConfiguration.current.isConfigured else {
             state = .configurationRequired

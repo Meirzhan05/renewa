@@ -172,16 +172,6 @@ struct OverviewView: View {
                     .minimumScaleFactor(0.62)
                     .contentTransition(.numericText(value: displayedSpend.doubleValue))
                 Spacer()
-                Label {
-                    Text(store.exchangeRateStatus)
-                } icon: {
-                    HeroIcon(.checkCircle, style: .solid, size: 18)
-                }
-                    .font(.renewa(13, weight: .bold))
-                    .foregroundStyle(RenewaTheme.sage)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 9)
-                    .background(RenewaTheme.sage.opacity(0.1), in: Capsule())
             }
 
             Text(spendingSummary)
