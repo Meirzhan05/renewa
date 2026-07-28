@@ -1,14 +1,15 @@
 # Account Deletion Setup
 
-The iOS Delete account action calls the authenticated `delete-account` Edge Function. The Function determines the user from the bearer token and uses a server-only Supabase service-role key to permanently delete that user. The app never sends a target user ID.
+The iOS Delete account action calls the authenticated `delete-account` Edge Function. The Function determines the user from the bearer token and uses Supabase's server-only secret-key environment to permanently delete that user. The app never sends a target user ID.
 
-Deploy it after confirming the Supabase project has a server key available to Edge Functions:
+On hosted Supabase projects, the platform automatically provides `SUPABASE_SECRET_KEYS` to Edge Functions. Do not create or set a secret with a `SUPABASE_` name: that prefix is reserved, and no manual key configuration is required.
+
+Deploy the Function:
 
 ```sh
 supabase functions deploy delete-account
-supabase secrets set SUPABASE_SERVICE_ROLE_KEY=...
 ```
 
-If the project uses the newer secret key naming, set `SUPABASE_SECRET_KEY` instead. Do not place either value in `Config.local.xcconfig` or the iOS app.
+The Function prefers the modern hosted key maps and retains local and legacy fallbacks for development. Never place a Supabase secret key in `Config.local.xcconfig`, the iOS app, Git, or chat.
 
 Before release, use a dedicated test account with a profile, subscriptions, a connected mailbox, scan history, billing events, snapshots, and Insight reports. Confirm that entering `DELETE` removes the Auth user and all associated records, then verify a failed request leaves the account intact. This action is permanent.
