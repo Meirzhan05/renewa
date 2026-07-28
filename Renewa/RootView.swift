@@ -91,8 +91,8 @@ private struct LaunchView: View {
                     HeroIcon(.arrowPath, size: 36)
                         .foregroundStyle(.white)
                 }
-                    .scaleEffect(breathe ? 1.08 : 0.94)
-                    .rotationEffect(.degrees(breathe && !reduceMotion ? 10 : 0))
+                .scaleEffect(breathe ? 1.08 : 0.94)
+                .rotationEffect(.degrees(breathe && !reduceMotion ? 10 : 0))
                 Text("Renewa")
                     .font(.renewa(28, weight: .bold))
                     .opacity(breathe ? 1 : 0.62)
@@ -159,20 +159,20 @@ struct MainTabView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init() {
-#if DEBUG
-        switch ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] {
-        case "insights":
-            _selectedTab = State(initialValue: .insights)
-        case "inbox":
-            _selectedTab = State(initialValue: .inbox)
-        case "profile":
-            _selectedTab = State(initialValue: .profile)
-        case "add":
-            _showingAdd = State(initialValue: true)
-        default:
-            break
-        }
-#endif
+        #if DEBUG
+            switch ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] {
+            case "insights", "insights-empty", "insights-failure", "insights-inactive":
+                _selectedTab = State(initialValue: .insights)
+            case "inbox":
+                _selectedTab = State(initialValue: .inbox)
+            case "profile":
+                _selectedTab = State(initialValue: .profile)
+            case "add":
+                _showingAdd = State(initialValue: true)
+            default:
+                break
+            }
+        #endif
     }
 
     var body: some View {
@@ -187,7 +187,15 @@ struct MainTabView: View {
                             OverviewView()
                         }
                     }
-                case .insights: InsightsView()
+                case .insights:
+                    InsightsView(
+                        onAddSubscription: {
+                            showingAdd = true
+                        },
+                        onScanInbox: {
+                            selectTab(.inbox)
+                        }
+                    )
                 case .inbox: EmailScanView()
                 case .profile: ProfileView()
                 }
@@ -207,8 +215,8 @@ struct MainTabView: View {
                 showingAdd: $showingAdd,
                 onTabSelected: selectTab
             )
-                .padding(.horizontal, 18)
-                .padding(.bottom, 10)
+            .padding(.horizontal, 18)
+            .padding(.bottom, 10)
         }
         .sheet(isPresented: $showingAdd) {
             AddSubscriptionView()
@@ -225,11 +233,11 @@ struct MainTabView: View {
     }
 
     private var showsCalendarForQA: Bool {
-#if DEBUG
-        ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] == "calendar"
-#else
-        false
-#endif
+        #if DEBUG
+            ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] == "calendar"
+        #else
+            false
+        #endif
     }
 
     private func selectTab(_ tab: AppTab) {

@@ -9,6 +9,7 @@ All account, profile, and subscription screens use Supabase data. If the backend
 - Native SwiftUI iOS 17+ client with the supplied dashboard visual language
 - Vendored Heroicons with an outlined/solid navigation hierarchy and no runtime icon dependency
 - Month/year spending views, a Logo.dev-powered upcoming-payments calendar, renewal reminders, category insights, manual entry, and deletion
+- A guided first-time Insights state with direct manual-entry and inbox-discovery actions plus honest partial-data and currency-conversion messaging
 - Coordinated springs, staggered entrances, numeric transitions, and a Reduced Motion fallback
 - Supabase email/password auth with Keychain-backed sessions, proactive JWT refresh, and a one-time 401 retry
 - Registration onboarding plus editable display name, avatar preset, and preferred currency
@@ -111,7 +112,11 @@ Renewa/                         SwiftUI client
   HeroIcon.swift                Vendored Heroicons asset adapter
   OverviewView.swift            Reference-inspired dashboard
   PaymentCalendarView.swift     Upcoming payments grouped by renewal month
+  InsightsView.swift            Insight activation, summaries, and visualizations
+  InsightsPresentationState.swift
+                                Testable Insights evidence and completeness states
   EmailScanView.swift           OAuth and AI scan UX
+RenewaTests/                    XCTest coverage for client presentation logic
 supabase/
   migrations/                   Database, grants, RLS, and triggers
   functions/mail-oauth-*        Gmail/Microsoft authorization flow
@@ -142,4 +147,9 @@ xcodebuild -project Renewa.xcodeproj -target Renewa \
 xcodebuild -project Renewa.xcodeproj -target Renewa \
   -configuration Debug -sdk iphonesimulator -arch arm64 \
   SYMROOT=/tmp/RenewaBuild OBJROOT=/tmp/RenewaObj build
+xcodebuild -project Renewa.xcodeproj -scheme Renewa \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
+xcrun swift-format lint --configuration .swift-format \
+  Renewa/InsightsView.swift Renewa/InsightsPresentationState.swift \
+  Renewa/RootView.swift RenewaTests/InsightsPresentationStateTests.swift
 ```

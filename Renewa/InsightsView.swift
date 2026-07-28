@@ -6,6 +6,9 @@ struct InsightsView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
 
+    let onAddSubscription: () -> Void
+    let onScanInbox: () -> Void
+
     private var categoryTotals: [(SubscriptionCategory, Decimal)] {
         let values = store.activeSubscriptions.compactMap { subscription -> (SubscriptionCategory, Decimal)? in
             guard let amount = store.convertedMonthlyCost(for: subscription) else { return nil }
@@ -33,15 +36,79 @@ struct InsightsView: View {
             .sorted { $0.date < $1.date }
     }
 
+    private var snapshotPeriodCount: Int {
+        Set(store.spendingSnapshots.map(\.periodStart)).count
+    }
+
+    private var presentationState: InsightsPresentationState {
+        #if DEBUG
+            if ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] == "insights-empty" {
+                return InsightsPresentationState(
+                    hasLoadedInsightsData: true,
+                    isLoadingInsightReport: false,
+                    subscriptionCount: 0,
+                    snapshotPeriodCount: 0,
+                    hasInsightReport: false,
+                    hasInsightsError: false,
+                    activeSubscriptionCount: 0,
+                    unavailableConversionCount: 0,
+                    usableTrendPointCount: 0
+                )
+            }
+            if ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] == "insights-failure" {
+                return InsightsPresentationState(
+                    hasLoadedInsightsData: true,
+                    isLoadingInsightReport: false,
+                    subscriptionCount: 0,
+                    snapshotPeriodCount: 0,
+                    hasInsightReport: false,
+                    hasInsightsError: true,
+                    activeSubscriptionCount: 0,
+                    unavailableConversionCount: 0,
+                    usableTrendPointCount: 0
+                )
+            }
+            if ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] == "insights-inactive" {
+                return InsightsPresentationState(
+                    hasLoadedInsightsData: true,
+                    isLoadingInsightReport: false,
+                    subscriptionCount: 1,
+                    snapshotPeriodCount: 0,
+                    hasInsightReport: false,
+                    hasInsightsError: false,
+                    activeSubscriptionCount: 0,
+                    unavailableConversionCount: 0,
+                    usableTrendPointCount: 0
+                )
+            }
+        #endif
+        return InsightsPresentationState(
+            hasLoadedInsightsData: store.hasLoadedInsightsData,
+            isLoadingInsightReport: store.isLoadingInsightReport,
+            subscriptionCount: store.subscriptions.count,
+            snapshotPeriodCount: snapshotPeriodCount,
+            hasInsightReport: store.insightReport != nil,
+            hasInsightsError: store.insightsErrorMessage != nil,
+            activeSubscriptionCount: store.activeSubscriptions.count,
+            unavailableConversionCount: store.unavailableConversionCount,
+            usableTrendPointCount: trendPoints.count
+        )
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header
-                if isShowingInitialSkeleton {
+                switch presentationState.evidence {
+                case .unresolved:
                     RenewaDelayedSkeleton(accessibilityLabel: "Loading insights") {
                         InsightsLoadingSkeleton()
                     }
-                } else {
+                case .activation:
+                    activationState
+                case .failure:
+                    serviceFailureState
+                case .dashboard:
                     commitmentCard
                     aiSummary
                     trendSection
@@ -58,10 +125,6 @@ struct InsightsView: View {
         .onAppear { appeared = true }
     }
 
-    private var isShowingInitialSkeleton: Bool {
-        store.isLoadingInsights && !store.hasLoadedInsightsData
-    }
-
     private var header: some View {
         HStack(alignment: .bottom) {
             VStack(alignment: .leading, spacing: 5) {
@@ -72,45 +135,224 @@ struct InsightsView: View {
                     .foregroundStyle(RenewaTheme.muted)
             }
             Spacer()
-            if store.isRefreshingInsights {
-                Text("Updating…")
-                    .font(.renewa(13, weight: .semibold))
-                    .foregroundStyle(RenewaTheme.muted)
-                    .transition(.opacity)
-                    .accessibilityLabel("Updating insights")
+            if presentationState.evidence == .dashboard {
+                if store.isRefreshingInsights {
+                    Text("Updating…")
+                        .font(.renewa(13, weight: .semibold))
+                        .foregroundStyle(RenewaTheme.muted)
+                        .transition(.opacity)
+                        .accessibilityLabel("Updating insights")
+                }
+                Button {
+                    Task { await store.loadInsights(force: true) }
+                } label: {
+                    HeroIcon(.arrowPath, size: 20)
+                        .foregroundStyle(RenewaTheme.ink)
+                        .frame(width: 40, height: 40)
+                        .background(RenewaTheme.surface, in: Circle())
+                }
+                .buttonStyle(PressScaleStyle())
+                .disabled(store.isLoadingInsights || store.isLoadingInsightReport || store.isRefreshingInsights)
+                .accessibilityLabel("Refresh insights")
             }
-            Button {
-                Task { await store.loadInsights(force: true) }
-            } label: {
-                HeroIcon(.arrowPath, size: 20)
-                    .foregroundStyle(RenewaTheme.ink)
-                    .frame(width: 40, height: 40)
-                    .background(RenewaTheme.surface, in: Circle())
-            }
-            .buttonStyle(PressScaleStyle())
-            .disabled(store.isLoadingInsights || store.isLoadingInsightReport || store.isRefreshingInsights)
-            .accessibilityLabel("Refresh insights")
         }
         .padding(.top, 18)
         .renewaEntrance(appeared, delay: 0.02)
     }
 
+    private var activationState: some View {
+        RenewaCard {
+            VStack(spacing: 22) {
+                InsightsActivationGraphic()
+
+                VStack(spacing: 8) {
+                    Text("Your first insight starts with one subscription")
+                        .font(.renewa(23, weight: .bold))
+                        .foregroundStyle(RenewaTheme.ink)
+                        .multilineTextAlignment(.center)
+                    Text("Add what you pay for, or let Renewa discover subscriptions from your inbox.")
+                        .font(.renewa(15))
+                        .foregroundStyle(RenewaTheme.muted)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                VStack(spacing: 11) {
+                    Button(action: onAddSubscription) {
+                        HStack(spacing: 9) {
+                            HeroIcon(.plus, style: .solid, size: 19)
+                            Text("Add subscription")
+                        }
+                        .font(.renewa(16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 54)
+                        .background(RenewaTheme.ink, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    }
+                    .buttonStyle(PressScaleStyle())
+                    .accessibilityHint("Opens the manual subscription form")
+
+                    Button(action: onScanInbox) {
+                        HStack(spacing: 9) {
+                            HeroIcon(.envelope, size: 20)
+                            Text("Scan my inbox")
+                        }
+                        .font(.renewa(16, weight: .semibold))
+                        .foregroundStyle(RenewaTheme.ink)
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 52)
+                        .background(
+                            RenewaTheme.background.opacity(0.72),
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        )
+                    }
+                    .buttonStyle(PressScaleStyle())
+                    .accessibilityHint("Opens Inbox intelligence")
+                }
+
+                Divider()
+                    .overlay(RenewaTheme.divider)
+
+                HStack(alignment: .top, spacing: 8) {
+                    activationBenefit(
+                        icon: .chartBar,
+                        title: "Spending mix",
+                        tint: RenewaTheme.sage
+                    )
+                    activationBenefit(
+                        icon: .calendar,
+                        title: "Renewals",
+                        tint: RenewaTheme.coral
+                    )
+                    activationBenefit(
+                        icon: .sparkles,
+                        title: "Trends",
+                        tint: RenewaTheme.sand
+                    )
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .renewaEntrance(appeared, delay: 0.07)
+    }
+
+    private func activationBenefit(
+        icon: HeroIconName,
+        title: String,
+        tint: Color
+    ) -> some View {
+        VStack(spacing: 8) {
+            HeroIcon(icon, style: icon == .sparkles ? .solid : .outline, size: 19)
+                .foregroundStyle(tint)
+                .frame(width: 34, height: 34)
+                .background(tint.opacity(0.12), in: Circle())
+            Text(title)
+                .font(.renewa(12, weight: .semibold))
+                .foregroundStyle(RenewaTheme.ink)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var serviceFailureState: some View {
+        RenewaCard {
+            VStack(spacing: 14) {
+                HeroIcon(.exclamationTriangle, size: 34)
+                    .foregroundStyle(RenewaTheme.coral)
+                Text("Insights couldn’t load")
+                    .font(.renewa(21, weight: .bold))
+                    .foregroundStyle(RenewaTheme.ink)
+                Text(store.insightsErrorMessage ?? "Your insights are temporarily unavailable.")
+                    .font(.renewa(15))
+                    .foregroundStyle(RenewaTheme.muted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    Task { await store.loadInsights(force: true) }
+                } label: {
+                    Text("Try again")
+                        .font(.renewa(15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: 50)
+                        .background(RenewaTheme.ink, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                }
+                .buttonStyle(PressScaleStyle())
+                .disabled(store.isLoadingInsights || store.isLoadingInsightReport || store.isRefreshingInsights)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+        }
+        .renewaEntrance(appeared, delay: 0.07)
+    }
+
+    @ViewBuilder
     private var commitmentCard: some View {
         RenewaCard {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Annual commitment")
-                    .font(.renewa(15, weight: .medium))
-                    .foregroundStyle(RenewaTheme.muted)
-                Text(store.yearlySpend.currencyText(code: store.defaultCurrency))
-                    .font(.system(size: 43, weight: .medium, design: .serif))
-                    .contentTransition(.numericText())
-                Text("That’s (store.monthlySpend.currencyText(code: store.defaultCurrency)) every month.")
-                    .font(.renewa(15))
-                    .foregroundStyle(RenewaTheme.muted)
+                switch presentationState.commitment {
+                case .noActiveSubscriptions:
+                    Label {
+                        Text("No active commitments")
+                    } icon: {
+                        HeroIcon(.checkCircle, style: .solid, size: 22)
+                    }
+                    .font(.renewa(22, weight: .bold))
+                    .foregroundStyle(RenewaTheme.sage)
+                    Text("Your previous subscriptions and any available history remain below.")
+                        .font(.renewa(15))
+                        .foregroundStyle(RenewaTheme.muted)
+                case .unavailable(let excludedCount):
+                    Text("Annual commitment")
+                        .font(.renewa(15, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                    Text("Total unavailable")
+                        .font(.renewa(30, weight: .bold))
+                        .foregroundStyle(RenewaTheme.ink)
+                    Text(conversionMessage(excludedCount: excludedCount, isPartial: false))
+                        .font(.renewa(14))
+                        .foregroundStyle(RenewaTheme.coral)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .partial(let excludedCount):
+                    Text("Known annual commitment")
+                        .font(.renewa(15, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                    Text("≈ \(store.yearlySpend.currencyText(code: store.defaultCurrency))")
+                        .font(.system(size: 43, weight: .medium, design: .serif))
+                        .contentTransition(.numericText())
+                    Text("That’s \(store.monthlySpend.currencyText(code: store.defaultCurrency)) every month from converted subscriptions.")
+                        .font(.renewa(15))
+                        .foregroundStyle(RenewaTheme.muted)
+                    Text(conversionMessage(excludedCount: excludedCount, isPartial: true))
+                        .font(.renewa(13, weight: .medium))
+                        .foregroundStyle(RenewaTheme.coral)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .complete:
+                    Text("Annual commitment")
+                        .font(.renewa(15, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                    Text(store.yearlySpend.currencyText(code: store.defaultCurrency))
+                        .font(.system(size: 43, weight: .medium, design: .serif))
+                        .contentTransition(.numericText())
+                    Text("That’s \(store.monthlySpend.currencyText(code: store.defaultCurrency)) every month.")
+                        .font(.renewa(15))
+                        .foregroundStyle(RenewaTheme.muted)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .renewaEntrance(appeared, delay: 0.07)
+    }
+
+    private func conversionMessage(excludedCount: Int, isPartial: Bool) -> String {
+        let noun = excludedCount == 1 ? "subscription" : "subscriptions"
+        if isPartial {
+            return "Excludes \(excludedCount) \(noun) that couldn’t be converted to \(store.defaultCurrency)."
+        }
+        return "\(excludedCount) \(noun) couldn’t be converted to \(store.defaultCurrency). Try refreshing rates."
     }
 
     @ViewBuilder
@@ -150,12 +392,12 @@ struct InsightsView: View {
                 InsightSummarySkeleton()
             }
         } else if let message = store.insightsErrorMessage {
-            RenewaCard {
-                HStack(alignment: .top, spacing: 12) {
-                    HeroIcon(.lightBulb, size: 23).foregroundStyle(RenewaTheme.sand)
-                    Text(message).font(.renewa(14)).foregroundStyle(RenewaTheme.muted)
-                }
-            }
+            stateCard(
+                title: "Renewa’s read is unavailable",
+                message: message,
+                icon: .lightBulb,
+                tint: RenewaTheme.sand
+            )
         }
     }
 
@@ -163,7 +405,8 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 13) {
             Text("Monthly commitment")
                 .font(.renewa(20, weight: .bold))
-            if trendPoints.count >= 2 {
+            switch presentationState.trend {
+            case .available:
                 RenewaCard {
                     VStack(alignment: .leading, spacing: 12) {
                         Chart(trendPoints) { point in
@@ -187,15 +430,30 @@ struct InsightsView: View {
                         .chartXAxis { AxisMarks(values: .automatic(desiredCount: 4)) }
                         .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) }
                         .frame(height: 170)
-                        Text("Showing persisted monthly commitments in (store.defaultCurrency).")
+                        Text("Showing persisted monthly commitments in \(store.defaultCurrency).")
                             .font(.renewa(12))
                             .foregroundStyle(RenewaTheme.muted)
                     }
                 }
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Monthly commitment trend with (trendPoints.count) monthly data points in (store.defaultCurrency)")
-            } else {
-                emptyCard("Your trend will appear after two monthly snapshots. We never estimate missing history.", icon: .chartBar)
+                .accessibilityLabel("Monthly commitment trend with \(trendPoints.count) monthly data points in \(store.defaultCurrency)")
+            case .conversionUnavailable(let periodCount):
+                stateCard(
+                    title: "Trend unavailable",
+                    message:
+                        "We have history across \(periodCount) monthly periods, but their currencies couldn’t be converted to \(store.defaultCurrency). Try refreshing rates.",
+                    icon: .exclamationTriangle,
+                    tint: RenewaTheme.coral
+                )
+            case .building(let periodCount):
+                stateCard(
+                    title: periodCount == 1 ? "One month captured" : "History is building",
+                    message: periodCount == 1
+                        ? "Your trend will appear after the next monthly snapshot. We never estimate missing history."
+                        : "Your trend will appear after Renewa records two monthly snapshots. We never estimate missing history.",
+                    icon: .chartBar,
+                    tint: RenewaTheme.sage
+                )
             }
         }
         .renewaEntrance(appeared, delay: 0.16)
@@ -205,8 +463,20 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 13) {
             Text("Where it goes")
                 .font(.renewa(20, weight: .bold))
-            if categoryTotals.isEmpty {
-                emptyCard("Add an active subscription to see your category mix.", icon: .chartBar)
+            if store.activeSubscriptions.isEmpty {
+                stateCard(
+                    title: "No current category spending",
+                    message: "There are no active subscriptions to group. Any saved history remains available above.",
+                    icon: .checkCircle,
+                    tint: RenewaTheme.sage
+                )
+            } else if categoryTotals.isEmpty {
+                stateCard(
+                    title: "Category mix unavailable",
+                    message: "Your active subscriptions couldn’t be converted to \(store.defaultCurrency). Try refreshing rates.",
+                    icon: .exclamationTriangle,
+                    tint: RenewaTheme.coral
+                )
             } else {
                 RenewaCard {
                     VStack(spacing: 16) {
@@ -230,6 +500,21 @@ struct InsightsView: View {
                                 }
                             }
                         }
+                        if store.unavailableConversionCount > 0 {
+                            Label {
+                                Text(
+                                    conversionMessage(
+                                        excludedCount: store.unavailableConversionCount,
+                                        isPartial: true
+                                    )
+                                )
+                            } icon: {
+                                HeroIcon(.exclamationTriangle, size: 17)
+                            }
+                            .font(.renewa(12, weight: .medium))
+                            .foregroundStyle(RenewaTheme.coral)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
             }
@@ -241,8 +526,20 @@ struct InsightsView: View {
         VStack(alignment: .leading, spacing: 13) {
             Text("Next 30 days")
                 .font(.renewa(20, weight: .bold))
-            if upcomingRenewals.isEmpty {
-                emptyCard("Nothing renews in the next 30 days.", icon: .checkCircle)
+            if store.activeSubscriptions.isEmpty {
+                stateCard(
+                    title: "No active renewals",
+                    message: "There are no current subscription payments to schedule.",
+                    icon: .checkCircle,
+                    tint: RenewaTheme.sage
+                )
+            } else if upcomingRenewals.isEmpty {
+                stateCard(
+                    title: "You’re clear for 30 days",
+                    message: "No active subscription payments are scheduled in the next 30 days.",
+                    icon: .checkCircle,
+                    tint: RenewaTheme.sage
+                )
             } else {
                 RenewaCard {
                     Chart(upcomingRenewals) { subscription in
@@ -267,13 +564,67 @@ struct InsightsView: View {
         .renewaEntrance(appeared, delay: 0.24)
     }
 
-    private func emptyCard(_ message: String, icon: HeroIconName) -> some View {
+    private func stateCard(
+        title: String,
+        message: String,
+        icon: HeroIconName,
+        tint: Color
+    ) -> some View {
         RenewaCard {
             HStack(alignment: .top, spacing: 12) {
-                HeroIcon(icon, size: 24).foregroundStyle(RenewaTheme.muted)
-                Text(message).font(.renewa(14)).foregroundStyle(RenewaTheme.muted)
+                HeroIcon(icon, size: 23)
+                    .foregroundStyle(tint)
+                    .frame(width: 38, height: 38)
+                    .background(tint.opacity(0.12), in: Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.renewa(15, weight: .bold))
+                        .foregroundStyle(RenewaTheme.ink)
+                    Text(message)
+                        .font(.renewa(14))
+                        .foregroundStyle(RenewaTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            .accessibilityElement(children: .combine)
         }
+    }
+}
+
+private struct InsightsActivationGraphic: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(RenewaTheme.sage.opacity(0.1))
+                .frame(width: 130, height: 130)
+            Circle()
+                .stroke(RenewaTheme.sage.opacity(0.2), lineWidth: 1)
+                .frame(width: 104, height: 104)
+
+            HStack(alignment: .bottom, spacing: 7) {
+                activationBar(height: 30, color: RenewaTheme.sand)
+                activationBar(height: 49, color: RenewaTheme.sageLight)
+                activationBar(height: 68, color: RenewaTheme.sage)
+            }
+            .frame(height: 76, alignment: .bottom)
+
+            HeroIcon(.sparkles, style: .solid, size: 19)
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(RenewaTheme.coral, in: Circle())
+                .overlay {
+                    Circle().stroke(RenewaTheme.surface, lineWidth: 4)
+                }
+                .offset(x: 49, y: -43)
+        }
+        .frame(height: 142)
+        .accessibilityHidden(true)
+    }
+
+    private func activationBar(height: CGFloat, color: Color) -> some View {
+        RoundedRectangle(cornerRadius: 8, style: .continuous)
+            .fill(color)
+            .frame(width: 22, height: height)
     }
 }
 

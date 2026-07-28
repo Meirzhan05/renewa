@@ -9,6 +9,7 @@
 /* Begin PBXFileReference section */
 		100000000000000000000001 /* Renewa.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Renewa.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000002 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		200000000000000000000001 /* RenewaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RenewaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -17,10 +18,22 @@
 			path = Renewa;
 			sourceTree = "<group>";
 		};
+		200000000000000000000003 /* RenewaTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = RenewaTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		100000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		200000000000000000000004 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -34,6 +47,7 @@
 			isa = PBXGroup;
 			children = (
 				100000000000000000000003 /* Renewa */,
+				200000000000000000000003 /* RenewaTests */,
 				100000000000000000000002 /* Config.xcconfig */,
 				100000000000000000000006 /* Products */,
 			);
@@ -43,6 +57,7 @@
 			isa = PBXGroup;
 			children = (
 				100000000000000000000001 /* Renewa.app */,
+				200000000000000000000001 /* RenewaTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -72,6 +87,29 @@
 			productReference = 100000000000000000000001 /* Renewa.app */;
 			productType = "com.apple.product-type.application";
 		};
+		200000000000000000000007 /* RenewaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 200000000000000000000008 /* Build configuration list for PBXNativeTarget "RenewaTests" */;
+			buildPhases = (
+				200000000000000000000009 /* Sources */,
+				200000000000000000000004 /* Frameworks */,
+				20000000000000000000000A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				200000000000000000000011 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				200000000000000000000003 /* RenewaTests */,
+			);
+			name = RenewaTests;
+			packageProductDependencies = (
+			);
+			productName = RenewaTests;
+			productReference = 200000000000000000000001 /* RenewaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -84,6 +122,10 @@
 				TargetAttributes = {
 					100000000000000000000007 = {
 						CreatedOnToolsVersion = 26.0;
+					};
+					200000000000000000000007 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = 100000000000000000000007;
 					};
 				};
 			};
@@ -102,12 +144,20 @@
 			projectRoot = "";
 			targets = (
 				100000000000000000000007 /* Renewa */,
+				200000000000000000000007 /* RenewaTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		10000000000000000000000A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		20000000000000000000000A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -124,7 +174,32 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		200000000000000000000009 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXContainerItemProxy section */
+		200000000000000000000012 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 10000000000000000000000B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000007;
+			remoteInfo = Renewa;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		200000000000000000000011 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 100000000000000000000007 /* Renewa */;
+			targetProxy = 200000000000000000000012 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		10000000000000000000000D /* Debug */ = {
@@ -315,6 +390,54 @@
 			};
 			name = Release;
 		};
+		20000000000000000000000F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.renewa.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Renewa.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Renewa";
+			};
+			name = Debug;
+		};
+		200000000000000000000010 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.renewa.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Renewa.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Renewa";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -332,6 +455,15 @@
 			buildConfigurations = (
 				10000000000000000000000D /* Debug */,
 				10000000000000000000000E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		200000000000000000000008 /* Build configuration list for PBXNativeTarget "RenewaTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				20000000000000000000000F /* Debug */,
+				200000000000000000000010 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
