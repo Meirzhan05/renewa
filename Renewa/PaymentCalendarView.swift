@@ -2,68 +2,103 @@ import SwiftUI
 
 struct PaymentCalendarView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var appeared = false
+    @State private var focusedMonth = Self.currentMonth
+    @State private var selectedDate = Date.now.startOfDay
 
-    private var upcomingPayments: [Subscription] {
+    private static var currentMonth: Date {
+        Calendar.current.date(from: Calendar.current.dateComponents([.calendar, .year, .month], from: .now)) ?? .now
+    }
+
+    private let calendar = Calendar.current
+
+    private var projector: SubscriptionDeadlineProjector {
+        SubscriptionDeadlineProjector(calendar: calendar)
+    }
+
+    private var activeSubscriptions: [Subscription] {
         store.activeSubscriptions
-            .filter { $0.nextRenewalDate >= Date.now.startOfDay }
-            .sorted { $0.nextRenewalDate < $1.nextRenewalDate }
     }
 
-    private var monthGroups: [PaymentMonthGroup] {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: upcomingPayments) { subscription in
-            let components = calendar.dateComponents(
-                [.calendar, .year, .month],
-                from: subscription.nextRenewalDate
-            )
-            return components.date ?? subscription.nextRenewalDate.startOfDay
+    private var focusedMonthStart: Date {
+        calendar.date(from: calendar.dateComponents([.calendar, .year, .month], from: focusedMonth)) ?? focusedMonth.startOfDay
+    }
+
+    private var visibleDeadlines: [SubscriptionDeadline] {
+        projector.deadlines(for: activeSubscriptions, inMonthContaining: focusedMonthStart)
+    }
+
+    private var deadlinesByDay: [Date: [SubscriptionDeadline]] {
+        Dictionary(grouping: visibleDeadlines) { deadline in
+            calendar.startOfDay(for: deadline.date)
         }
-
-        return grouped
-            .map { PaymentMonthGroup(month: $0.key, payments: $0.value) }
-            .sorted { $0.month < $1.month }
     }
 
-    private var nextThirtyDays: [Subscription] {
-        let limit = Calendar.current.date(byAdding: .day, value: 30, to: Date.now.startOfDay) ?? .now
-        return upcomingPayments.filter { $0.nextRenewalDate <= limit }
+    private var selectedDeadlines: [SubscriptionDeadline] {
+        deadlinesByDay[calendar.startOfDay(for: selectedDate)] ?? []
+    }
+
+    private var nextThirtyDays: [SubscriptionDeadline] {
+        let end = calendar.date(byAdding: .day, value: 30, to: Date.now.startOfDay) ?? .now
+        return projector.deadlines(for: activeSubscriptions, from: Date.now.startOfDay, until: end)
     }
 
     private var nextThirtyDayTotal: Decimal {
         nextThirtyDays
-            .compactMap { store.convertedAmount($0.price, from: $0.currency) }
+            .compactMap { store.convertedAmount($0.subscription.price, from: $0.subscription.currency) }
             .reduce(0, +)
     }
 
     private var hasUnavailableThirtyDayTotal: Bool {
         nextThirtyDays.contains {
-            store.convertedAmount($0.price, from: $0.currency) == nil
+            store.convertedAmount($0.subscription.price, from: $0.subscription.currency) == nil
         }
+    }
+
+    private var selectedDateTotal: Decimal? {
+        guard !selectedDeadlines.isEmpty else { return nil }
+        let converted = selectedDeadlines.compactMap {
+            store.convertedAmount($0.subscription.price, from: $0.subscription.currency)
+        }
+        guard converted.count == selectedDeadlines.count else { return nil }
+        return converted.reduce(0, +)
+    }
+
+    private var calendarDays: [Date?] {
+        let dayCount = calendar.range(of: .day, in: .month, for: focusedMonthStart)?.count ?? 0
+        let firstWeekday = calendar.component(.weekday, from: focusedMonthStart)
+        let leadingCount = (firstWeekday - calendar.firstWeekday + 7) % 7
+        let dates = (0..<dayCount).compactMap { offset in
+            calendar.date(byAdding: .day, value: offset, to: focusedMonthStart)
+        }
+        let leading = Array(repeating: Date?.none, count: leadingCount)
+        let trailingCount = (7 - ((leading.count + dates.count) % 7)) % 7
+        return leading + dates.map(Optional.some) + Array(repeating: Date?.none, count: trailingCount)
+    }
+
+    private var weekdaySymbols: [String] {
+        let symbols = calendar.shortWeekdaySymbols
+        let firstIndex = max(0, calendar.firstWeekday - 1)
+        return Array(symbols[firstIndex...]) + Array(symbols[..<firstIndex])
     }
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 26) {
+            LazyVStack(alignment: .leading, spacing: 24) {
                 header
                     .renewaEntrance(appeared, delay: 0.02)
 
                 summaryCard
-                    .renewaEntrance(appeared, delay: 0.08)
+                    .renewaEntrance(appeared, delay: 0.07)
 
-                if monthGroups.isEmpty {
-                    emptyState
-                        .renewaEntrance(appeared, delay: 0.14)
-                } else {
-                    ForEach(Array(monthGroups.enumerated()), id: \.element.id) { index, group in
-                        monthSection(group)
-                            .renewaEntrance(
-                                appeared,
-                                delay: 0.14 + min(Double(index) * 0.05, 0.25),
-                                distance: 12
-                            )
-                    }
-                }
+                calendarCard
+                    .renewaEntrance(appeared, delay: 0.12)
+
+                selectedDateSection
+                    .id(selectedDate)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+                    .renewaEntrance(appeared, delay: 0.16, distance: 10)
             }
             .padding(.horizontal, 24)
             .padding(.top, 12)
@@ -75,17 +110,23 @@ struct PaymentCalendarView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(RenewaTheme.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        .animation(calendarAnimation, value: focusedMonth)
+        .animation(calendarAnimation, value: selectedDate)
         .onAppear {
             appeared = true
         }
     }
 
+    private var calendarAnimation: Animation? {
+        reduceMotion ? .easeOut(duration: 0.12) : .easeInOut(duration: 0.2)
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Upcoming payments")
+            Text("Payment calendar")
                 .font(.renewa(32, weight: .bold))
                 .foregroundStyle(RenewaTheme.ink)
-            Text("Your next subscription charges, organized by date.")
+            Text("Plan around every subscription renewal.")
                 .font(.renewa(15))
                 .foregroundStyle(RenewaTheme.muted)
         }
@@ -130,42 +171,201 @@ struct PaymentCalendarView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func monthSection(_ group: PaymentMonthGroup) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(group.month.formatted(.dateTime.month(.wide).year()))
-                    .font(.renewa(20, weight: .bold))
-                    .foregroundStyle(RenewaTheme.ink)
-                Spacer()
-                Text("\(group.payments.count)")
-                    .font(.renewa(14, weight: .bold))
-                    .foregroundStyle(RenewaTheme.sage)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(RenewaTheme.sage.opacity(0.12), in: Capsule())
+    private var calendarCard: some View {
+        RenewaCard {
+            VStack(spacing: 18) {
+                monthNavigation
+                weekdayHeader
+                monthGrid
             }
+        }
+    }
 
-            RenewaCard {
-                VStack(spacing: 0) {
-                    ForEach(Array(group.payments.enumerated()), id: \.element.id) { index, subscription in
-                        paymentRow(subscription)
+    private var monthNavigation: some View {
+        HStack(spacing: 10) {
+            monthButton(direction: -1, accessibilityLabel: "Previous month")
 
-                        if index < group.payments.count - 1 {
-                            Divider()
-                                .overlay(RenewaTheme.divider)
-                                .padding(.leading, 58)
-                                .padding(.vertical, 13)
-                        }
-                    }
+            Text(focusedMonthStart.formatted(.dateTime.month(.wide).year()))
+                .font(.renewa(19, weight: .bold))
+                .foregroundStyle(RenewaTheme.ink)
+                .frame(maxWidth: .infinity)
+
+            Button("Today") {
+                focusedMonth = Self.currentMonth
+                selectedDate = Date.now.startOfDay
+            }
+            .font(.renewa(13, weight: .bold))
+            .foregroundStyle(RenewaTheme.sage)
+            .buttonStyle(PressScaleStyle())
+            .accessibilityHint("Returns to the current month and today")
+
+            monthButton(direction: 1, accessibilityLabel: "Next month")
+        }
+    }
+
+    private func monthButton(direction: Int, accessibilityLabel: String) -> some View {
+        Button {
+            guard let month = calendar.date(byAdding: .month, value: direction, to: focusedMonthStart) else { return }
+            focusedMonth = month
+            if !calendar.isDate(selectedDate, equalTo: month, toGranularity: .month) {
+                selectedDate = month.startOfDay
+            }
+        } label: {
+            HeroIcon(.chevronRight, size: 16)
+                .foregroundStyle(RenewaTheme.ink)
+                .rotationEffect(.degrees(direction < 0 ? 180 : 0))
+                .frame(width: 30, height: 30)
+                .background(RenewaTheme.background.opacity(0.75), in: Circle())
+        }
+        .buttonStyle(PressScaleStyle())
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var weekdayHeader: some View {
+        LazyVGrid(columns: gridColumns, spacing: 4) {
+            ForEach(weekdaySymbols, id: \.self) { symbol in
+                Text(symbol.prefix(1).uppercased())
+                    .font(.renewa(11, weight: .bold))
+                    .foregroundStyle(RenewaTheme.muted)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private var monthGrid: some View {
+        LazyVGrid(columns: gridColumns, spacing: 7) {
+            ForEach(Array(calendarDays.enumerated()), id: \.offset) { _, date in
+                if let date {
+                    dayButton(for: date)
+                } else {
+                    Color.clear
+                        .frame(height: 46)
+                        .accessibilityHidden(true)
                 }
             }
         }
     }
 
-    private func paymentRow(_ subscription: Subscription) -> some View {
-        HStack(spacing: 13) {
-            dateBadge(subscription.nextRenewalDate)
+    private var gridColumns: [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
+    }
 
+    private func dayButton(for date: Date) -> some View {
+        let day = calendar.startOfDay(for: date)
+        let deadlines = deadlinesByDay[day] ?? []
+        let isSelected = calendar.isDate(day, inSameDayAs: selectedDate)
+        let isToday = calendar.isDateInToday(day)
+
+        return Button {
+            selectedDate = day
+        } label: {
+            VStack(spacing: 3) {
+                Text(day.formatted(.dateTime.day()))
+                    .font(.renewa(15, weight: .bold))
+                    .foregroundStyle(isSelected ? .white : RenewaTheme.ink)
+                    .frame(maxWidth: .infinity)
+
+                deadlineIndicator(count: deadlines.count, isSelected: isSelected)
+            }
+            .frame(height: 46)
+            .background(isSelected ? RenewaTheme.sage : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(isToday && !isSelected ? RenewaTheme.sage.opacity(0.75) : .clear, lineWidth: 1.5)
+            }
+        }
+        .buttonStyle(PressScaleStyle())
+        .accessibilityLabel(dayAccessibilityLabel(for: day, deadlines: deadlines))
+        .accessibilityHint("Shows subscription payments due on this date")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private func deadlineIndicator(count: Int, isSelected: Bool) -> some View {
+        if count == 1 {
+            Circle()
+                .fill(isSelected ? .white.opacity(0.9) : RenewaTheme.coral)
+                .frame(width: 5, height: 5)
+                .accessibilityHidden(true)
+        } else if count > 1 {
+            Text("\(count)")
+                .font(.renewa(9, weight: .bold))
+                .foregroundStyle(isSelected ? RenewaTheme.sage : .white)
+                .frame(minWidth: 15, minHeight: 15)
+                .background(isSelected ? .white : RenewaTheme.coral, in: Capsule())
+                .accessibilityHidden(true)
+        } else {
+            Color.clear
+                .frame(height: 5)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var selectedDateSection: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(selectedDate.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                        .font(.renewa(20, weight: .bold))
+                        .foregroundStyle(RenewaTheme.ink)
+                    Text(selectedDeadlines.isEmpty ? "No payments due" : "\(selectedDeadlines.count) payment\(selectedDeadlines.count == 1 ? "" : "s") due")
+                        .font(.renewa(13, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                }
+
+                Spacer()
+
+                if let selectedDateTotal {
+                    Text(selectedDateTotal.currencyText(code: store.defaultCurrency))
+                        .font(.renewa(15, weight: .bold))
+                        .foregroundStyle(RenewaTheme.sage)
+                }
+            }
+
+            RenewaCard {
+                if selectedDeadlines.isEmpty {
+                    emptySelectedDateState
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(Array(selectedDeadlines.enumerated()), id: \.element.id) { index, deadline in
+                            paymentRow(deadline)
+
+                            if index < selectedDeadlines.count - 1 {
+                                Divider()
+                                    .overlay(RenewaTheme.divider)
+                                    .padding(.leading, 58)
+                                    .padding(.vertical, 13)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var emptySelectedDateState: some View {
+        HStack(spacing: 13) {
+            HeroIcon(.checkCircle, size: 27)
+                .foregroundStyle(RenewaTheme.sage)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Nothing due")
+                    .font(.renewa(16, weight: .bold))
+                    .foregroundStyle(RenewaTheme.ink)
+                Text("No subscription payments are scheduled for this day.")
+                    .font(.renewa(13))
+                    .foregroundStyle(RenewaTheme.muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
+    }
+
+    private func paymentRow(_ deadline: SubscriptionDeadline) -> some View {
+        let subscription = deadline.subscription
+
+        return HStack(spacing: 13) {
             SubscriptionBrandIcon(subscription: subscription, size: 46)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -173,28 +373,15 @@ struct PaymentCalendarView: View {
                     .font(.renewa(16, weight: .semibold))
                     .foregroundStyle(RenewaTheme.ink)
                     .lineLimit(1)
-                Text(subscription.renewalDescription)
+                Text("\(subscription.billingCycle.title) • \(dueDescription(for: deadline.date))")
                     .font(.renewa(13, weight: .medium))
-                    .foregroundStyle(isDueSoon(subscription) ? RenewaTheme.coral : RenewaTheme.muted)
+                    .foregroundStyle(isDueSoon(deadline.date) ? RenewaTheme.coral : RenewaTheme.muted)
             }
 
             Spacer(minLength: 6)
             paymentPrice(subscription)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private func dateBadge(_ date: Date) -> some View {
-        VStack(spacing: 1) {
-            Text(date.formatted(.dateTime.weekday(.abbreviated)).uppercased())
-                .font(.renewa(10, weight: .bold))
-                .foregroundStyle(RenewaTheme.muted)
-            Text(date.formatted(.dateTime.day()))
-                .font(.renewa(21, weight: .bold))
-                .foregroundStyle(RenewaTheme.ink)
-        }
-        .frame(width: 44, height: 48)
-        .background(RenewaTheme.background.opacity(0.8), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     @ViewBuilder
@@ -219,37 +406,29 @@ struct PaymentCalendarView: View {
         }
     }
 
-    private var emptyState: some View {
-        RenewaCard {
-            VStack(spacing: 13) {
-                HeroIcon(.calendar, size: 34)
-                    .foregroundStyle(RenewaTheme.sage)
-                Text("No upcoming payments")
-                    .font(.renewa(18, weight: .bold))
-                    .foregroundStyle(RenewaTheme.ink)
-                Text("Active subscriptions with future renewal dates will appear here.")
-                    .font(.renewa(14))
-                    .foregroundStyle(RenewaTheme.muted)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 18)
-        }
+    private func dueDescription(for date: Date) -> String {
+        let days = calendar.dateComponents([.day], from: Date.now.startOfDay, to: date.startOfDay).day ?? 0
+        if days == 0 { return "Due today" }
+        if days == 1 { return "Due tomorrow" }
+        if days > 1 { return "Due in \(days) days" }
+        return "Due \(date.formatted(.dateTime.month(.abbreviated).day()))"
     }
 
-    private func isDueSoon(_ subscription: Subscription) -> Bool {
-        let days = Calendar.current.dateComponents(
-            [.day],
-            from: Date.now.startOfDay,
-            to: subscription.nextRenewalDate.startOfDay
-        ).day ?? 99
+    private func isDueSoon(_ date: Date) -> Bool {
+        let days = calendar.dateComponents([.day], from: Date.now.startOfDay, to: date.startOfDay).day ?? 99
         return (0...7).contains(days)
     }
-}
 
-private struct PaymentMonthGroup: Identifiable {
-    let month: Date
-    let payments: [Subscription]
+    private func dayAccessibilityLabel(for date: Date, deadlines: [SubscriptionDeadline]) -> String {
+        let dateText = date.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
+        guard !deadlines.isEmpty else { return "\(dateText), no subscription payments due" }
 
-    var id: Date { month }
+        let paymentText = "\(deadlines.count) subscription payment\(deadlines.count == 1 ? "" : "s") due"
+        let converted = deadlines.compactMap {
+            store.convertedAmount($0.subscription.price, from: $0.subscription.currency)
+        }
+        guard converted.count == deadlines.count else { return "\(dateText), \(paymentText), total unavailable" }
+        let total = converted.reduce(0, +).currencyText(code: store.defaultCurrency)
+        return "\(dateText), \(paymentText), \(total) due"
+    }
 }
