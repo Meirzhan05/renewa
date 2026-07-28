@@ -5,6 +5,11 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppStore {
+    struct AuthenticationIssue: Equatable {
+        let title: String
+        let message: String
+    }
+
     enum LaunchState: Equatable {
         case loading
         case configurationRequired
@@ -26,6 +31,7 @@ final class AppStore {
     var isLoadingInsights = false
     var insightsErrorMessage: String?
     var errorMessage: String?
+    var authenticationIssue: AuthenticationIssue?
     var isBusy = false
     var isRefreshingExchangeRates = false
     var exchangeRateErrorMessage: String?
@@ -132,12 +138,16 @@ final class AppStore {
     ) async -> Bool {
         isBusy = true
         errorMessage = nil
+        authenticationIssue = nil
         defer { isBusy = false }
         do {
             if createAccount {
                 let trimmedName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard !trimmedName.isEmpty else {
-                    errorMessage = "Enter your name to create an account."
+                    authenticationIssue = AuthenticationIssue(
+                        title: "Add your name",
+                        message: "Enter the name you would like us to use in Renewa."
+                    )
                     return false
                 }
                 guard let created = try await client.signUp(
@@ -145,7 +155,10 @@ final class AppStore {
                     password: password,
                     displayName: trimmedName
                 ) else {
-                    errorMessage = "Check your inbox to confirm your email, then sign in."
+                    authenticationIssue = AuthenticationIssue(
+                        title: "Confirm your email",
+                        message: "We sent a confirmation link to \(email). Open it, then return here to sign in."
+                    )
                     return false
                 }
                 session = created
@@ -157,7 +170,7 @@ final class AppStore {
             state = authenticatedDestination
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            authenticationIssue = authenticationIssue(for: error, creatingAccount: createAccount)
             return false
         }
     }
@@ -169,18 +182,28 @@ final class AppStore {
     func completeGoogleSignIn(callbackURL: URL, codeVerifier: String) async -> Bool {
         isBusy = true
         errorMessage = nil
+        authenticationIssue = nil
         defer { isBusy = false }
         guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false) else {
-            errorMessage = "Google sign-in returned an invalid callback."
+            authenticationIssue = AuthenticationIssue(
+                title: "Google sign-in didn’t finish",
+                message: "Return to Renewa and try Google sign-in again."
+            )
             return false
         }
         if let message = components.queryItems?.first(where: { $0.name == "error_description" })?.value
             ?? components.queryItems?.first(where: { $0.name == "error" })?.value {
-            errorMessage = message
+            authenticationIssue = AuthenticationIssue(
+                title: "Google sign-in didn’t finish",
+                message: message.humanReadableAuthenticationMessage
+            )
             return false
         }
         guard let code = components.queryItems?.first(where: { $0.name == "code" })?.value else {
-            errorMessage = "Google sign-in did not return an authorization code."
+            authenticationIssue = AuthenticationIssue(
+                title: "Google sign-in didn’t finish",
+                message: "We didn’t receive a sign-in code. Please try again."
+            )
             return false
         }
         do {
@@ -190,9 +213,17 @@ final class AppStore {
             state = authenticatedDestination
             return true
         } catch {
-            errorMessage = error.localizedDescription
+            authenticationIssue = authenticationIssue(for: error, creatingAccount: false)
             return false
         }
+    }
+
+    func showGoogleAuthenticationIssue(_ error: Error) {
+        authenticationIssue = authenticationIssue(for: error, creatingAccount: false)
+    }
+
+    func clearAuthenticationIssue() {
+        authenticationIssue = nil
     }
 
     func signOut() async {
@@ -485,6 +516,83 @@ final class AppStore {
         }
     }
 
+    private func authenticationIssue(for error: Error, creatingAccount: Bool) -> AuthenticationIssue {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost:
+                return AuthenticationIssue(
+                    title: "You’re offline",
+                    message: "Check your internet connection, then try again."
+                )
+            case .timedOut:
+                return AuthenticationIssue(
+                    title: "This is taking too long",
+                    message: "Renewa couldn’t reach the server. Please try again."
+                )
+            default:
+                break
+            }
+        }
+
+        if let apiError = error as? APIError, case .notConfigured = apiError {
+            return AuthenticationIssue(
+                title: "App setup is incomplete",
+                message: "Renewa’s connection settings are missing. Please contact the app owner."
+            )
+        }
+
+        let rawMessage = error.localizedDescription
+        let normalized = rawMessage.lowercased()
+
+        if normalized.contains("invalid login credentials") || normalized.contains("invalid credentials") {
+            return AuthenticationIssue(
+                title: "Email or password is incorrect",
+                message: "Check both entries and try again, or create an account if you’re new to Renewa."
+            )
+        }
+        if normalized.contains("email not confirmed") || normalized.contains("email confirmation") {
+            return AuthenticationIssue(
+                title: "Confirm your email first",
+                message: "Open the confirmation link we sent you, then return here to sign in."
+            )
+        }
+        if normalized.contains("already registered") || normalized.contains("already exists") {
+            return AuthenticationIssue(
+                title: "An account already exists",
+                message: "Try signing in with this email instead."
+            )
+        }
+        if normalized.contains("password") && (normalized.contains("weak") || normalized.contains("at least") || normalized.contains("short")) {
+            return AuthenticationIssue(
+                title: "Choose a stronger password",
+                message: "Use at least 6 characters, then try again."
+            )
+        }
+        if normalized.contains("rate limit") || normalized.contains("too many") {
+            return AuthenticationIssue(
+                title: "Please wait a moment",
+                message: "There have been too many attempts. Wait a few minutes before trying again."
+            )
+        }
+        if normalized.contains("signup") && normalized.contains("disabled") {
+            return AuthenticationIssue(
+                title: "Sign-up is unavailable",
+                message: "New accounts are not available right now. Please try again later."
+            )
+        }
+        if normalized.contains("email") && (normalized.contains("invalid") || normalized.contains("valid")) {
+            return AuthenticationIssue(
+                title: "Check your email address",
+                message: "Enter a valid email address, then try again."
+            )
+        }
+
+        return AuthenticationIssue(
+            title: creatingAccount ? "We couldn’t create your account" : "We couldn’t sign you in",
+            message: "Please try again in a moment. If this keeps happening, check your connection and try later."
+        )
+    }
+
     private var authenticatedDestination: LaunchState {
         profile?.onboardingCompleted == false ? .onboarding : .ready
     }
@@ -537,5 +645,18 @@ private extension Error {
         guard let apiError = self as? APIError,
               case let .server(status, _) = apiError else { return false }
         return [400, 401, 403].contains(status)
+    }
+}
+
+private extension String {
+    var humanReadableAuthenticationMessage: String {
+        let normalized = lowercased()
+        if normalized.contains("access_denied") || normalized.contains("access denied") {
+            return "Google sign-in was cancelled or wasn’t allowed. Please try again when you’re ready."
+        }
+        if normalized.contains("redirect") {
+            return "Google sign-in needs a valid return address. Please try again after checking the app’s sign-in setup."
+        }
+        return "Please return to Renewa and try Google sign-in again."
     }
 }

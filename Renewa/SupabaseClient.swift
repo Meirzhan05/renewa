@@ -259,7 +259,8 @@ struct SupabaseClient {
     private func validate(response: URLResponse, data: Data) throws {
         guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         guard 200..<300 ~= response.statusCode else {
-            let message = (try? Self.decoder.decode(ErrorEnvelope.self, from: data).message)
+            let envelope = try? Self.decoder.decode(ErrorEnvelope.self, from: data)
+            let message = envelope?.message ?? envelope?.errorDescription
                 ?? HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
             throw APIError.server(status: response.statusCode, message: message)
         }

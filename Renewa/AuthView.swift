@@ -64,6 +64,17 @@ struct AuthView: View {
                     }
                     .renewaEntrance(appeared, delay: 0.08)
 
+                    if let issue = store.authenticationIssue {
+                        authenticationIssueCard(issue)
+                            .transition(
+                                reduceMotion
+                                    ? .opacity
+                                    : .move(edge: .top).combined(with: .opacity)
+                            )
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel("Sign-in issue: \(issue.title). \(issue.message)")
+                    }
+
                     VStack(spacing: 13) {
                         if createAccount {
                             field(
@@ -174,6 +185,7 @@ struct AuthView: View {
                             createAccount.toggle()
                             confirmPassword = ""
                             focusedField = nil
+                            store.clearAuthenticationIssue()
                         }
                     } label: {
                         Text(createAccount ? "Already have an account? Sign in" : "New to Renewa? Create an account")
@@ -208,6 +220,18 @@ struct AuthView: View {
                 backgroundDrift = true
             }
         }
+        .onChange(of: email) { _, _ in
+            store.clearAuthenticationIssue()
+        }
+        .onChange(of: password) { _, _ in
+            store.clearAuthenticationIssue()
+        }
+        .onChange(of: displayName) { _, _ in
+            store.clearAuthenticationIssue()
+        }
+        .onChange(of: confirmPassword) { _, _ in
+            store.clearAuthenticationIssue()
+        }
     }
 
     private func applyQALaunchState() {
@@ -220,6 +244,7 @@ struct AuthView: View {
 
     private func startGoogleSignIn() {
         focusedField = nil
+        store.clearAuthenticationIssue()
         do {
             let authorization = try store.googleAuthorization()
             let session = ASWebAuthenticationSession(url: authorization.url, callbackURLScheme: "renewa") { callbackURL, error in
@@ -227,7 +252,7 @@ struct AuthView: View {
                     defer { webAuthenticationSession = nil }
                     if let error {
                         if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
-                            store.errorMessage = error.localizedDescription
+                            store.showGoogleAuthenticationIssue(error)
                         }
                         return
                     }
@@ -243,8 +268,42 @@ struct AuthView: View {
             webAuthenticationSession = session
             session.start()
         } catch {
-            store.errorMessage = error.localizedDescription
+            store.showGoogleAuthenticationIssue(error)
         }
+    }
+
+    private func authenticationIssueCard(_ issue: AppStore.AuthenticationIssue) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            HeroIcon(.exclamationTriangle, size: 21)
+                .foregroundStyle(RenewaTheme.coral)
+                .frame(width: 25, height: 25)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(issue.title)
+                    .font(.renewa(15, weight: .bold))
+                    .foregroundStyle(RenewaTheme.ink)
+                Text(issue.message)
+                    .font(.renewa(14))
+                    .foregroundStyle(RenewaTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button {
+                store.clearAuthenticationIssue()
+            } label: {
+                Text("Dismiss")
+                    .font(.renewa(13, weight: .semibold))
+                    .foregroundStyle(RenewaTheme.coral)
+            }
+            .accessibilityLabel("Dismiss sign-in issue")
+        }
+        .padding(15)
+        .background(RenewaTheme.coral.opacity(0.09), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(RenewaTheme.coral.opacity(0.28), lineWidth: 1)
+        }
+        .animation(reduceMotion ? nil : RenewaMotion.quick, value: issue)
     }
 
     private var isFormValid: Bool {
