@@ -8,7 +8,7 @@ All account, profile, and subscription screens use Supabase data. If the backend
 
 - Native SwiftUI iOS 17+ client with the supplied dashboard visual language
 - Vendored Heroicons with an outlined/solid navigation hierarchy and no runtime icon dependency
-- Month/year spending views, renewal reminders, category insights, manual entry, and deletion
+- Month/year spending views, a Logo.dev-powered upcoming-payments calendar, renewal reminders, category insights, manual entry, and deletion
 - Coordinated springs, staggered entrances, numeric transitions, and a Reduced Motion fallback
 - Supabase email/password auth with Keychain-backed sessions, proactive JWT refresh, and a one-time 401 retry
 - Registration onboarding plus editable display name, avatar preset, and preferred currency
@@ -110,6 +110,7 @@ Renewa/                         SwiftUI client
   OnboardingView.swift          First-run profile and preference setup
   HeroIcon.swift                Vendored Heroicons asset adapter
   OverviewView.swift            Reference-inspired dashboard
+  PaymentCalendarView.swift     Upcoming payments grouped by renewal month
   EmailScanView.swift           OAuth and AI scan UX
 supabase/
   migrations/                   Database, grants, RLS, and triggers

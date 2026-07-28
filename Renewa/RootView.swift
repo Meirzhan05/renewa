@@ -179,7 +179,14 @@ struct MainTabView: View {
         ZStack {
             Group {
                 switch selectedTab {
-                case .home: OverviewView()
+                case .home:
+                    NavigationStack {
+                        if showsCalendarForQA {
+                            PaymentCalendarView()
+                        } else {
+                            OverviewView()
+                        }
+                    }
                 case .insights: InsightsView()
                 case .inbox: EmailScanView()
                 case .profile: ProfileView()
@@ -215,6 +222,14 @@ struct MainTabView: View {
             insertion: .move(edge: tabNavigationDirection.insertionEdge).combined(with: .opacity),
             removal: .move(edge: tabNavigationDirection.removalEdge).combined(with: .opacity)
         )
+    }
+
+    private var showsCalendarForQA: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] == "calendar"
+#else
+        false
+#endif
     }
 
     private func selectTab(_ tab: AppTab) {

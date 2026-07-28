@@ -9,6 +9,7 @@
 - [x] Redesign the tab bar as a floating, rounded control with breathing room around it.
 - [x] Animate tab changes with directional page movement and a moving active-tab accent, while respecting Reduce Motion.
 - [x] Remove the exchange-rate status title from the home-page spending summary.
+- [x] Replace the home-page avatar with a calendar shortcut to a Logo.dev-powered upcoming-payments view.
 
 ## Subscription experience
 

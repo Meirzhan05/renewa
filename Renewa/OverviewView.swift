@@ -115,17 +115,25 @@ struct OverviewView: View {
                     .foregroundStyle(RenewaTheme.ink)
             }
             Spacer()
-            ZStack {
-                Circle()
-                    .fill(store.profileAvatar.color)
-                Text(initials)
-                    .font(.renewa(21, weight: .bold))
-                    .foregroundStyle(.white)
+            NavigationLink {
+                PaymentCalendarView()
+            } label: {
+                HeroIcon(.calendar, size: 25)
+                    .foregroundStyle(RenewaTheme.ink)
+                    .frame(width: 52, height: 52)
+                    .background(RenewaTheme.surface, in: Circle())
+                    .overlay {
+                        Circle()
+                            .stroke(.white.opacity(0.72), lineWidth: 1)
+                    }
+                    .shadow(color: RenewaTheme.ink.opacity(0.08), radius: 10, y: 4)
             }
-            .frame(width: 52, height: 52)
+            .buttonStyle(PressScaleStyle())
             .scaleEffect(appeared ? 1 : 0.72)
             .rotationEffect(.degrees(appeared ? 0 : -12))
             .animation(RenewaMotion.gentle.delay(0.12), value: appeared)
+            .accessibilityLabel("Upcoming payments calendar")
+            .accessibilityHint("Shows upcoming subscription renewal dates")
         }
     }
 
@@ -426,12 +434,6 @@ struct OverviewView: View {
         case 12..<18: "Good afternoon, \(store.displayName)"
         default: "Good evening, \(store.displayName)"
         }
-    }
-
-    private var initials: String {
-        let words = store.displayName.split(separator: " ").prefix(2)
-        let initials = words.compactMap(\.first).map(String.init).joined()
-        return initials.isEmpty ? "R" : initials.uppercased()
     }
 
     private var spendingSummary: String {

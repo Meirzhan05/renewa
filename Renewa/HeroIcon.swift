@@ -5,6 +5,7 @@ enum HeroIconName: String {
     case arrowPath = "arrow-path"
     case arrowRightStartOnRectangle = "arrow-right-start-on-rectangle"
     case briefcase
+    case calendar
     case camera
     case chartBar = "chart-bar"
     case checkCircle = "check-circle"
