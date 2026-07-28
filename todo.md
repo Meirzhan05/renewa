@@ -32,6 +32,8 @@
 - [x] Simplify the profile screen by removing non-actionable account-storage and similar informational sections.
 - [x] Make the profile editable: display name, avatar, preferred currency, and other relevant preferences. Persist changes to the user's Supabase profile and provide clear save/error feedback.
 - [x] Add an avatar picker with a safe default placeholder and a path for future Supabase Storage upload support.
+- [x] Redesign Profile as a grouped preferences hub with focused identity and currency editors, an About & licenses destination, and no AI Insights data setting.
+- [x] Add the guarded in-app account-deletion flow with typed `DELETE` confirmation and a self-scoped Supabase Edge Function. Deploy and test the Function with a non-production account before release.
 
 ## Insights
 

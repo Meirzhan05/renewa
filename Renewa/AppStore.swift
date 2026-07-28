@@ -202,6 +202,26 @@ final class AppStore {
         clearLocalSession()
     }
 
+    func deleteAccount() async -> Bool {
+        guard session != nil else {
+            errorMessage = "Sign in to delete your account."
+            return false
+        }
+        isBusy = true
+        errorMessage = nil
+        defer { isBusy = false }
+        do {
+            try await performAuthenticated { accessToken in
+                try await self.client.deleteAccount(accessToken: accessToken)
+            }
+            clearLocalSession()
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
     func appDidBecomeActive() async {
         guard session != nil, state != .signedOut else { return }
         _ = try? await validAccessToken()

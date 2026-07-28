@@ -31,3 +31,6 @@ verify_jwt = true
 
 [functions.insights-refresh]
 verify_jwt = true
+
+[functions.delete-account]
+verify_jwt = true

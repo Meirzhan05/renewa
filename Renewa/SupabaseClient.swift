@@ -68,6 +68,16 @@ struct SupabaseClient {
         try await performEmpty(request)
     }
 
+    func deleteAccount(accessToken: String) async throws {
+        let response: AccountDeletionResponse = try await request(
+            path: "/functions/v1/delete-account",
+            method: "POST",
+            body: Optional<String>.none,
+            accessToken: accessToken
+        )
+        guard response.deleted else { throw APIError.invalidResponse }
+    }
+
     func fetchSubscriptions(accessToken: String) async throws -> [Subscription] {
         try await request(
             path: "/rest/v1/subscriptions?select=*&order=next_renewal_date.asc",
@@ -324,6 +334,10 @@ private struct AuthEnvelope: Decodable {
 
 private struct AuthorizationURLResponse: Decodable {
     let url: String
+}
+
+private struct AccountDeletionResponse: Decodable {
+    let deleted: Bool
 }
 
 private struct SignUpBody: Encodable {
