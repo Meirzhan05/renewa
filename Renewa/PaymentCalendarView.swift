@@ -6,6 +6,8 @@ struct PaymentCalendarView: View {
     @State private var appeared = false
     @State private var focusedMonth = Self.currentMonth
     @State private var selectedDate = Date.now.startOfDay
+    @State private var monthNavigationDirection: CalendarNavigationDirection = .forward
+    @Namespace private var selectedDayIndicator
 
     private static var currentMonth: Date {
         Calendar.current.date(from: Calendar.current.dateComponents([.calendar, .year, .month], from: .now)) ?? .now
@@ -95,9 +97,7 @@ struct PaymentCalendarView: View {
                 calendarCard
                     .renewaEntrance(appeared, delay: 0.12)
 
-                selectedDateSection
-                    .id(selectedDate)
-                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+                selectedDateContainer
                     .renewaEntrance(appeared, delay: 0.16, distance: 10)
             }
             .padding(.horizontal, 24)
@@ -110,15 +110,30 @@ struct PaymentCalendarView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(RenewaTheme.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
-        .animation(calendarAnimation, value: focusedMonth)
-        .animation(calendarAnimation, value: selectedDate)
         .onAppear {
             appeared = true
         }
     }
 
-    private var calendarAnimation: Animation? {
+    private var calendarAnimation: Animation {
         reduceMotion ? .easeOut(duration: 0.12) : .easeInOut(duration: 0.2)
+    }
+
+    private var monthTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .move(edge: monthNavigationDirection.insertionEdge).combined(with: .opacity),
+            removal: .move(edge: monthNavigationDirection.removalEdge).combined(with: .opacity)
+        )
+    }
+
+    private var selectedDateTransition: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .asymmetric(
+                insertion: .opacity.combined(with: .move(edge: .bottom)),
+                removal: .opacity
+            )
     }
 
     private var header: some View {
@@ -176,7 +191,7 @@ struct PaymentCalendarView: View {
             VStack(spacing: 18) {
                 monthNavigation
                 weekdayHeader
-                monthGrid
+                animatedMonthGrid
             }
         }
     }
@@ -189,10 +204,10 @@ struct PaymentCalendarView: View {
                 .font(.renewa(19, weight: .bold))
                 .foregroundStyle(RenewaTheme.ink)
                 .frame(maxWidth: .infinity)
+                .contentTransition(.opacity)
 
             Button("Today") {
-                focusedMonth = Self.currentMonth
-                selectedDate = Date.now.startOfDay
+                returnToToday()
             }
             .font(.renewa(13, weight: .bold))
             .foregroundStyle(RenewaTheme.sage)
@@ -205,11 +220,7 @@ struct PaymentCalendarView: View {
 
     private func monthButton(direction: Int, accessibilityLabel: String) -> some View {
         Button {
-            guard let month = calendar.date(byAdding: .month, value: direction, to: focusedMonthStart) else { return }
-            focusedMonth = month
-            if !calendar.isDate(selectedDate, equalTo: month, toGranularity: .month) {
-                selectedDate = month.startOfDay
-            }
+            changeMonth(by: direction)
         } label: {
             HeroIcon(.chevronRight, size: 16)
                 .foregroundStyle(RenewaTheme.ink)
@@ -247,6 +258,15 @@ struct PaymentCalendarView: View {
         }
     }
 
+    private var animatedMonthGrid: some View {
+        ZStack {
+            monthGrid
+                .id(focusedMonthStart)
+                .transition(monthTransition)
+        }
+        .clipped()
+    }
+
     private var gridColumns: [GridItem] {
         Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
     }
@@ -258,7 +278,7 @@ struct PaymentCalendarView: View {
         let isToday = calendar.isDateInToday(day)
 
         return Button {
-            selectedDate = day
+            select(day)
         } label: {
             VStack(spacing: 3) {
                 Text(day.formatted(.dateTime.day()))
@@ -269,7 +289,9 @@ struct PaymentCalendarView: View {
                 deadlineIndicator(count: deadlines.count, isSelected: isSelected)
             }
             .frame(height: 46)
-            .background(isSelected ? RenewaTheme.sage : .clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background {
+                selectedDayBackground(isSelected: isSelected)
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(isToday && !isSelected ? RenewaTheme.sage.opacity(0.75) : .clear, lineWidth: 1.5)
@@ -279,6 +301,23 @@ struct PaymentCalendarView: View {
         .accessibilityLabel(dayAccessibilityLabel(for: day, deadlines: deadlines))
         .accessibilityHint("Shows subscription payments due on this date")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    @ViewBuilder
+    private func selectedDayBackground(isSelected: Bool) -> some View {
+        if isSelected {
+            let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(RenewaTheme.sage)
+
+            if reduceMotion {
+                shape
+            } else {
+                shape.matchedGeometryEffect(
+                    id: "selected-calendar-day-\(focusedMonthStart.timeIntervalSinceReferenceDate)",
+                    in: selectedDayIndicator
+                )
+            }
+        }
     }
 
     @ViewBuilder
@@ -299,6 +338,14 @@ struct PaymentCalendarView: View {
             Color.clear
                 .frame(height: 5)
                 .accessibilityHidden(true)
+        }
+    }
+
+    private var selectedDateContainer: some View {
+        ZStack {
+            selectedDateSection
+                .id(selectedDate)
+                .transition(selectedDateTransition)
         }
     }
 
@@ -430,5 +477,50 @@ struct PaymentCalendarView: View {
         guard converted.count == deadlines.count else { return "\(dateText), \(paymentText), total unavailable" }
         let total = converted.reduce(0, +).currencyText(code: store.defaultCurrency)
         return "\(dateText), \(paymentText), \(total) due"
+    }
+
+    private func select(_ date: Date) {
+        guard !calendar.isDate(selectedDate, inSameDayAs: date) else { return }
+        withAnimation(calendarAnimation) {
+            selectedDate = calendar.startOfDay(for: date)
+        }
+    }
+
+    private func changeMonth(by offset: Int) {
+        guard let month = calendar.date(byAdding: .month, value: offset, to: focusedMonthStart) else { return }
+
+        withAnimation(calendarAnimation) {
+            monthNavigationDirection = offset > 0 ? .forward : .backward
+            focusedMonth = month
+            if !calendar.isDate(selectedDate, equalTo: month, toGranularity: .month) {
+                selectedDate = month.startOfDay
+            }
+        }
+    }
+
+    private func returnToToday() {
+        let today = Date.now.startOfDay
+        let todayMonth = Self.currentMonth
+
+        withAnimation(calendarAnimation) {
+            if !calendar.isDate(focusedMonthStart, equalTo: todayMonth, toGranularity: .month) {
+                monthNavigationDirection = todayMonth > focusedMonthStart ? .forward : .backward
+                focusedMonth = todayMonth
+            }
+            selectedDate = today
+        }
+    }
+}
+
+private enum CalendarNavigationDirection {
+    case forward
+    case backward
+
+    var insertionEdge: Edge {
+        self == .forward ? .trailing : .leading
+    }
+
+    var removalEdge: Edge {
+        self == .forward ? .leading : .trailing
     }
 }

@@ -11,7 +11,7 @@
 - [x] Animate tab changes with directional page movement and a moving active-tab accent, while respecting Reduce Motion.
 - [x] Remove the exchange-rate status title from the home-page spending summary.
 - [x] Replace the home-page avatar with a calendar shortcut to a Logo.dev-powered upcoming-payments view.
-- [x] Redesign the upcoming-payments destination as a navigable month calendar that projects active recurring subscription deadlines, supports selected-day payment details, and preserves accessible date labels.
+- [x] Redesign the upcoming-payments destination as a navigable month calendar that projects active recurring subscription deadlines, supports selected-day payment details, preserves accessible date labels, and animates month/date changes while honoring Reduce Motion.
 
 ## Subscription experience
 
