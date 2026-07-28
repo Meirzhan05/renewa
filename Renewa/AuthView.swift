@@ -141,13 +141,12 @@ struct AuthView: View {
                             )
                         }
                     } label: {
-                        HStack(spacing: 10) {
-                            if store.isBusy {
-                                ProgressView().tint(.white)
-                            }
-                            Text(createAccount ? "Create account" : "Sign in")
-                                .font(.renewa(17, weight: .semibold))
-                        }
+                        RenewaPrimaryActionLabel(
+                            title: createAccount ? "Create account" : "Sign in",
+                            pendingTitle: createAccount ? "Creating account…" : "Signing in…",
+                            isPending: store.isBusy
+                        )
+                        .font(.renewa(17, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .frame(height: 56)
                         .foregroundStyle(.white)

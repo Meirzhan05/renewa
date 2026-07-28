@@ -29,10 +29,15 @@ final class AppStore {
     var spendingSnapshots: [SpendingSnapshot] = []
     var insightReport: InsightReport?
     var isLoadingInsights = false
+    var isLoadingInsightReport = false
+    var isRefreshingInsights = false
+    var hasLoadedInsightsData = false
     var insightsErrorMessage: String?
     var errorMessage: String?
     var authenticationIssue: AuthenticationIssue?
     var isBusy = false
+    var isLoadingSubscriptions = false
+    var hasLoadedSubscriptions = false
     var isRefreshingExchangeRates = false
     var exchangeRateErrorMessage: String?
     private var exchangeRateBaseCurrency: String?
@@ -259,6 +264,15 @@ final class AppStore {
     }
 
     func refreshData() async throws {
+        let isInitialLoad = !hasLoadedSubscriptions
+        if isInitialLoad {
+            isLoadingSubscriptions = true
+        }
+        defer {
+            if isInitialLoad {
+                isLoadingSubscriptions = false
+            }
+        }
         let values: ([Subscription], UserProfile) = try await performAuthenticated { accessToken in
             async let subscriptionsRequest = self.client.fetchSubscriptions(accessToken: accessToken)
             async let profileRequest = self.client.fetchProfile(accessToken: accessToken)
@@ -266,13 +280,24 @@ final class AppStore {
         }
         subscriptions = values.0
         profile = values.1
+        hasLoadedSubscriptions = true
         await refreshExchangeRates()
     }
 
     func refreshSubscriptions() async throws {
+        let isInitialLoad = !hasLoadedSubscriptions
+        if isInitialLoad {
+            isLoadingSubscriptions = true
+        }
+        defer {
+            if isInitialLoad {
+                isLoadingSubscriptions = false
+            }
+        }
         subscriptions = try await performAuthenticated { accessToken in
             try await self.client.fetchSubscriptions(accessToken: accessToken)
         }
+        hasLoadedSubscriptions = true
         await refreshExchangeRates()
     }
 
@@ -369,9 +394,15 @@ final class AppStore {
 
     func loadInsights(force: Bool = false) async {
         guard session != nil else { return }
-        isLoadingInsights = true
-        insightsErrorMessage = nil
-        defer { isLoadingInsights = false }
+        let isInitialDataLoad = !hasLoadedInsightsData
+        if isInitialDataLoad {
+            isLoadingInsights = true
+        } else {
+            isRefreshingInsights = true
+        }
+        if insightReport == nil {
+            insightsErrorMessage = nil
+        }
         do {
             let snapshots = try await performAuthenticated { accessToken in
                 try await self.client.fetchSpendingSnapshots(accessToken: accessToken)
@@ -381,6 +412,9 @@ final class AppStore {
         } catch {
             insightsErrorMessage = "Your spending history is unavailable right now."
         }
+        hasLoadedInsightsData = true
+        isLoadingInsights = false
+        isLoadingInsightReport = true
         do {
             let response = try await performAuthenticated { accessToken in
                 try await self.client.refreshInsights(force: force, accessToken: accessToken)
@@ -391,6 +425,8 @@ final class AppStore {
                 insightsErrorMessage = "AI insights are unavailable right now. Your spending charts are still up to date."
             }
         }
+        isLoadingInsightReport = false
+        isRefreshingInsights = false
     }
 
     func convertedAmount(_ amount: Decimal, from sourceCurrency: String) -> Decimal? {
@@ -418,8 +454,6 @@ final class AppStore {
         let target = defaultCurrency.uppercased()
         let sourceCurrencies = Set(activeSubscriptions.map { $0.currency.uppercased() })
             .union(spendingSnapshots.map { $0.currency.uppercased() })
-        exchangeRateBaseCurrency = nil
-        exchangeRates = [:]
         exchangeRateErrorMessage = nil
         isRefreshingExchangeRates = true
         defer { isRefreshingExchangeRates = false }
@@ -502,7 +536,13 @@ final class AppStore {
         subscriptions = []
         spendingSnapshots = []
         insightReport = nil
+        isLoadingInsights = false
+        isLoadingInsightReport = false
+        isRefreshingInsights = false
+        hasLoadedInsightsData = false
         insightsErrorMessage = nil
+        isLoadingSubscriptions = false
+        hasLoadedSubscriptions = false
         exchangeRates = [:]
         exchangeRateBaseCurrency = nil
         exchangeRateErrorMessage = nil

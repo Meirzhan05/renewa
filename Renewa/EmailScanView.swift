@@ -145,15 +145,13 @@ struct EmailScanView: View {
         Button {
             Task { await action() }
         } label: {
-            HStack {
-                if isScanning {
-                    ProgressView().tint(.white)
-                } else {
-                    HeroIcon(.sparkles, style: .solid, size: 20)
-                }
-                Text(title)
-                    .font(.renewa(16, weight: .semibold))
-            }
+            RenewaPrimaryActionLabel(
+                title: title,
+                pendingTitle: "Scanning inbox…",
+                isPending: isScanning,
+                icon: .sparkles
+            )
+            .font(.renewa(16, weight: .semibold))
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
             .frame(height: 56)

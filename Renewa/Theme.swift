@@ -49,6 +49,87 @@ struct RenewaCard<Content: View>: View {
     }
 }
 
+struct RenewaSkeleton: View {
+    var width: CGFloat? = nil
+    var height: CGFloat
+    var cornerRadius: CGFloat = 10
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isPulsing = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(RenewaTheme.divider.opacity(0.58))
+            .frame(width: width, height: height)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+            .opacity(isPulsing ? 0.58 : 0.86)
+            .animation(
+                reduceMotion
+                    ? nil
+                    : .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
+                value: isPulsing
+            )
+            .accessibilityHidden(true)
+            .task(id: reduceMotion) {
+                isPulsing = false
+                guard !reduceMotion else { return }
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                isPulsing = true
+            }
+    }
+}
+
+struct RenewaDelayedSkeleton<Content: View>: View {
+    let accessibilityLabel: String
+    private let content: Content
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isVisible = false
+
+    init(
+        accessibilityLabel: String,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.accessibilityLabel = accessibilityLabel
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .opacity(isVisible ? 1 : 0)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityHidden(!isVisible)
+            .task {
+                isVisible = false
+                try? await Task.sleep(for: .milliseconds(250))
+                guard !Task.isCancelled else { return }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) {
+                    isVisible = true
+                }
+            }
+    }
+}
+
+struct RenewaPrimaryActionLabel: View {
+    let title: String
+    let pendingTitle: String
+    let isPending: Bool
+    var icon: HeroIconName?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if !isPending, let icon {
+                HeroIcon(icon, style: .solid, size: 20)
+            }
+            Text(isPending ? pendingTitle : title)
+                .contentTransition(.opacity)
+        }
+        .accessibilityLabel(isPending ? pendingTitle : title)
+    }
+}
+
 private struct RenewaEntranceModifier: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let isVisible: Bool

@@ -74,15 +74,13 @@ struct SubscriptionBrandPicker: View {
                 Button {
                     Task { await save() }
                 } label: {
-                    HStack(spacing: 10) {
-                        if isSaving {
-                            ProgressView().tint(.white)
-                        } else {
-                            HeroIcon(.checkCircle, style: .solid, size: 21)
-                        }
-                        Text(isSaving ? "Saving…" : "Use this logo")
-                            .font(.renewa(17, weight: .semibold))
-                    }
+                    RenewaPrimaryActionLabel(
+                        title: "Use this logo",
+                        pendingTitle: "Saving logo…",
+                        isPending: isSaving,
+                        icon: .checkCircle
+                    )
+                    .font(.renewa(17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 57)

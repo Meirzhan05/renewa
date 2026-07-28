@@ -2,6 +2,7 @@
 
 ## Navigation and visual system
 
+- [x] Replace generic loading spinners with warm, accessible skeletons for known content, progressive Insights refresh feedback, and explicit in-button action labels.
 - [x] Replace the app's interface icons with Heroicons. Add the selected SVGs as Xcode vector assets and use a consistent outlined/solid hierarchy; do not introduce a runtime web dependency.
 - [x] Fix the floating **Add** tab button: it should not conflict with the tab bar's layout, selection indicator, safe area, or sheet presentation. Verify opening and dismissing the add sheet on compact and large iPhones.
 - [x] Remove tab text labels, retaining clear accessibility labels and selected-state treatment for every icon.

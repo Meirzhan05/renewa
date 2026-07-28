@@ -325,11 +325,12 @@ private struct ProfileEditorView: View {
                             }
                         }
                     } label: {
-                        HStack(spacing: 9) {
-                            if store.isBusy { ProgressView().tint(.white) }
-                            Text("Save changes")
-                                .font(.renewa(16, weight: .semibold))
-                        }
+                        RenewaPrimaryActionLabel(
+                            title: "Save changes",
+                            pendingTitle: "Saving profile…",
+                            isPending: store.isBusy
+                        )
+                        .font(.renewa(16, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 55)
@@ -436,8 +437,9 @@ private struct CurrencyPickerView: View {
                                     .foregroundStyle(RenewaTheme.ink)
                                 Spacer()
                                 if savingCurrency == currency {
-                                    ProgressView()
-                                        .tint(RenewaTheme.sage)
+                                    Text("Saving…")
+                                        .font(.renewa(13, weight: .semibold))
+                                        .foregroundStyle(RenewaTheme.sage)
                                 } else if currency == store.defaultCurrency {
                                     HeroIcon(.checkCircle, style: .solid, size: 21)
                                         .foregroundStyle(RenewaTheme.sage)
@@ -574,11 +576,12 @@ private struct DeleteAccountConfirmationView: View {
                             }
                         }
                     } label: {
-                        HStack(spacing: 9) {
-                            if store.isBusy { ProgressView().tint(.white) }
-                            Text("Permanently delete account")
-                                .font(.renewa(16, weight: .semibold))
-                        }
+                        RenewaPrimaryActionLabel(
+                            title: "Permanently delete account",
+                            pendingTitle: "Deleting account…",
+                            isPending: store.isBusy
+                        )
+                        .font(.renewa(16, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 55)

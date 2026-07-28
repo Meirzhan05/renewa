@@ -37,11 +37,17 @@ struct InsightsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 header
-                commitmentCard
-                aiSummary
-                trendSection
-                categorySection
-                renewalSection
+                if isShowingInitialSkeleton {
+                    RenewaDelayedSkeleton(accessibilityLabel: "Loading insights") {
+                        InsightsLoadingSkeleton()
+                    }
+                } else {
+                    commitmentCard
+                    aiSummary
+                    trendSection
+                    categorySection
+                    renewalSection
+                }
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 30)
@@ -50,6 +56,10 @@ struct InsightsView: View {
         .background(RenewaTheme.background)
         .task { await store.loadInsights() }
         .onAppear { appeared = true }
+    }
+
+    private var isShowingInitialSkeleton: Bool {
+        store.isLoadingInsights && !store.hasLoadedInsightsData
     }
 
     private var header: some View {
@@ -62,6 +72,13 @@ struct InsightsView: View {
                     .foregroundStyle(RenewaTheme.muted)
             }
             Spacer()
+            if store.isRefreshingInsights {
+                Text("Updating…")
+                    .font(.renewa(13, weight: .semibold))
+                    .foregroundStyle(RenewaTheme.muted)
+                    .transition(.opacity)
+                    .accessibilityLabel("Updating insights")
+            }
             Button {
                 Task { await store.loadInsights(force: true) }
             } label: {
@@ -71,7 +88,7 @@ struct InsightsView: View {
                     .background(RenewaTheme.surface, in: Circle())
             }
             .buttonStyle(PressScaleStyle())
-            .disabled(store.isLoadingInsights)
+            .disabled(store.isLoadingInsights || store.isLoadingInsightReport || store.isRefreshingInsights)
             .accessibilityLabel("Refresh insights")
         }
         .padding(.top, 18)
@@ -106,6 +123,11 @@ struct InsightsView: View {
                             .foregroundStyle(RenewaTheme.sage)
                         Text(report.isAIGenerated ? "Renewa’s read" : "Your subscription snapshot")
                             .font(.renewa(16, weight: .bold))
+                        if store.isRefreshingInsights {
+                            Text("Updating…")
+                                .font(.renewa(12, weight: .semibold))
+                                .foregroundStyle(RenewaTheme.muted)
+                        }
                     }
                     Text(report.summary)
                         .font(.renewa(16))
@@ -123,14 +145,9 @@ struct InsightsView: View {
                 }
             }
             .renewaEntrance(appeared, delay: 0.12)
-        } else if store.isLoadingInsights {
-            RenewaCard {
-                HStack(spacing: 12) {
-                    ProgressView().tint(RenewaTheme.sage)
-                    Text("Reading your subscription patterns…")
-                        .font(.renewa(15))
-                        .foregroundStyle(RenewaTheme.muted)
-                }
+        } else if store.isLoadingInsightReport {
+            RenewaDelayedSkeleton(accessibilityLabel: "Reading your subscription patterns") {
+                InsightSummarySkeleton()
             }
         } else if let message = store.insightsErrorMessage {
             RenewaCard {
@@ -255,6 +272,59 @@ struct InsightsView: View {
             HStack(alignment: .top, spacing: 12) {
                 HeroIcon(icon, size: 24).foregroundStyle(RenewaTheme.muted)
                 Text(message).font(.renewa(14)).foregroundStyle(RenewaTheme.muted)
+            }
+        }
+    }
+}
+
+private struct InsightsLoadingSkeleton: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            RenewaCard {
+                VStack(alignment: .leading, spacing: 13) {
+                    RenewaSkeleton(width: 126, height: 14, cornerRadius: 6)
+                    RenewaSkeleton(width: 210, height: 46, cornerRadius: 12)
+                    RenewaSkeleton(width: 248, height: 14, cornerRadius: 6)
+                }
+            }
+
+            InsightSummarySkeleton()
+
+            InsightsChartSkeleton(titleWidth: 176, chartHeight: 170)
+            InsightsChartSkeleton(titleWidth: 132, chartHeight: 190)
+            InsightsChartSkeleton(titleWidth: 118, chartHeight: 154)
+        }
+    }
+}
+
+private struct InsightSummarySkeleton: View {
+    var body: some View {
+        RenewaCard {
+            VStack(alignment: .leading, spacing: 13) {
+                HStack(spacing: 9) {
+                    RenewaSkeleton(width: 21, height: 21, cornerRadius: 8)
+                    RenewaSkeleton(width: 132, height: 16, cornerRadius: 7)
+                }
+                RenewaSkeleton(height: 15, cornerRadius: 7)
+                RenewaSkeleton(width: 236, height: 15, cornerRadius: 7)
+                RenewaSkeleton(width: 178, height: 15, cornerRadius: 7)
+            }
+        }
+    }
+}
+
+private struct InsightsChartSkeleton: View {
+    let titleWidth: CGFloat
+    let chartHeight: CGFloat
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            RenewaSkeleton(width: titleWidth, height: 20, cornerRadius: 8)
+            RenewaCard {
+                VStack(spacing: 12) {
+                    RenewaSkeleton(height: chartHeight, cornerRadius: 18)
+                    RenewaSkeleton(width: 212, height: 12, cornerRadius: 6)
+                }
             }
         }
     }

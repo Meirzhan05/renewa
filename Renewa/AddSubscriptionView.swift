@@ -296,15 +296,13 @@ struct AddSubscriptionView: View {
             focusedField = nil
             Task { await save() }
         } label: {
-            HStack(spacing: 10) {
-                if isSaving {
-                    ProgressView().tint(.white)
-                } else {
-                    HeroIcon(.plus, style: .solid, size: 21)
-                }
-                Text(isSaving ? "Adding…" : "Add subscription")
-                    .font(.renewa(17, weight: .semibold))
-            }
+            RenewaPrimaryActionLabel(
+                title: "Add subscription",
+                pendingTitle: "Adding subscription…",
+                isPending: isSaving,
+                icon: .plus
+            )
+            .font(.renewa(17, weight: .semibold))
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
             .frame(height: 57)

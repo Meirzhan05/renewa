@@ -250,7 +250,15 @@ struct OverviewView: View {
             Text("All subscriptions")
                 .font(.renewa(20, weight: .bold))
 
-            if store.activeSubscriptions.isEmpty {
+            if store.isLoadingSubscriptions && !store.hasLoadedSubscriptions {
+                RenewaDelayedSkeleton(accessibilityLabel: "Loading subscriptions") {
+                    VStack(spacing: 20) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            SubscriptionRowSkeleton()
+                        }
+                    }
+                }
+            } else if store.activeSubscriptions.isEmpty {
                 ContentUnavailableView {
                     Label {
                         Text("No subscriptions yet")
@@ -500,6 +508,20 @@ struct SubscriptionRow: View {
             Text(subscription.price.currencyText(code: subscription.currency))
                 .font(.renewa(17, weight: .medium))
                 .foregroundStyle(RenewaTheme.ink)
+        }
+    }
+}
+
+private struct SubscriptionRowSkeleton: View {
+    var body: some View {
+        HStack(spacing: 16) {
+            RenewaSkeleton(width: 56, height: 56, cornerRadius: 18)
+            VStack(alignment: .leading, spacing: 8) {
+                RenewaSkeleton(width: 132, height: 18, cornerRadius: 7)
+                RenewaSkeleton(width: 84, height: 14, cornerRadius: 6)
+            }
+            Spacer()
+            RenewaSkeleton(width: 54, height: 18, cornerRadius: 7)
         }
     }
 }

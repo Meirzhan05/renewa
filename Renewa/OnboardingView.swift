@@ -54,16 +54,13 @@ struct OnboardingView: View {
                     }
                 }
             } label: {
-                HStack(spacing: 10) {
-                    if store.isBusy {
-                        ProgressView().tint(.white)
-                    }
-                    Text(step == 2 ? "Finish setup" : "Continue")
-                        .font(.renewa(17, weight: .semibold))
-                    if step < 2 {
-                        HeroIcon(.chevronRight, size: 19)
-                    }
-                }
+                RenewaPrimaryActionLabel(
+                    title: step == 2 ? "Finish setup" : "Continue",
+                    pendingTitle: "Finishing setup…",
+                    isPending: store.isBusy,
+                    icon: step < 2 ? .chevronRight : nil
+                )
+                .font(.renewa(17, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .frame(height: 58)
