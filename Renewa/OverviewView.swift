@@ -162,7 +162,7 @@ struct OverviewView: View {
                             }
                         }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressScaleStyle())
             }
         }
         .padding(4)

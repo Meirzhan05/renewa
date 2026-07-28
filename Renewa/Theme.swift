@@ -29,8 +29,9 @@ struct PressScaleStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .opacity(configuration.isPressed ? 0.86 : 1)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.945 : 1)
+            .opacity(configuration.isPressed ? 0.76 : 1)
+            .brightness(configuration.isPressed ? -0.025 : 0)
             .animation(reduceMotion ? nil : RenewaMotion.quick, value: configuration.isPressed)
     }
 }

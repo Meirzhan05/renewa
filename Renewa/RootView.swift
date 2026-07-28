@@ -42,6 +42,7 @@ struct RootView: View {
         }
         .animation(reduceMotion ? .easeOut(duration: 0.12) : RenewaMotion.gentle, value: store.state)
         .tint(RenewaTheme.sage)
+        .buttonStyle(PressScaleStyle())
         .alert(
             "Something went wrong",
             isPresented: Binding(
