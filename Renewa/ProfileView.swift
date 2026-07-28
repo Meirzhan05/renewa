@@ -7,6 +7,7 @@ struct ProfileView: View {
     @State private var showingProfileEditor = false
     @State private var showingCurrencyPicker = false
     @State private var showingAbout = false
+    @State private var showingSignOutConfirmation = false
     @State private var showingDeletionConfirmation = false
     @State private var confirmationMessage: String?
 
@@ -60,7 +61,7 @@ struct ProfileView: View {
                         value: nil,
                         tint: RenewaTheme.ink
                     ) {
-                        Task { await store.signOut() }
+                        showingSignOutConfirmation = true
                     }
                 }
                 .renewaEntrance(appeared, delay: 0.2)
@@ -138,6 +139,14 @@ struct ProfileView: View {
             DeleteAccountConfirmationView()
                 .presentationDetents([.large])
                 .presentationCornerRadius(30)
+        }
+        .alert("Sign out?", isPresented: $showingSignOutConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Sign out", role: .destructive) {
+                Task { await store.signOut() }
+            }
+        } message: {
+            Text("You’ll need to sign in again to access your subscriptions.")
         }
         .onAppear {
             appeared = true
