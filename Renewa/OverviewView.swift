@@ -287,7 +287,7 @@ struct OverviewView: View {
                     if !removingSubscriptionIDs.contains(subscription.id) {
                         SubscriptionRow(subscription: subscription)
                             .renewaEntrance(appeared, delay: 0.34 + Double(index) * 0.045, distance: 10)
-                            .transition(.subscriptionRemoval)
+                            .transition(subscriptionRemovalTransition)
                             .contextMenu {
                                 Button {
                                     subscriptionForBrandSelection = subscription
@@ -335,7 +335,7 @@ struct OverviewView: View {
                     SubscriptionRow(subscription: subscription, statusText: subscription.status.title)
                         .opacity(0.58)
                         .renewaEntrance(appeared, delay: 0.4 + Double(index) * 0.045, distance: 10)
-                        .transition(.subscriptionRemoval)
+                        .transition(subscriptionRemovalTransition)
                         .contextMenu {
                             Button {
                                 subscriptionForBrandSelection = subscription
@@ -366,7 +366,11 @@ struct OverviewView: View {
     private var removalAnimation: Animation {
         reduceMotion
             ? .easeOut(duration: 0.16)
-            : .spring(response: 0.46, dampingFraction: 0.9)
+            : .spring(response: 0.4, dampingFraction: 0.94)
+    }
+
+    private var subscriptionRemovalTransition: AnyTransition {
+        reduceMotion ? .opacity : .subscriptionRemoval
     }
 
     private func remove(_ subscription: Subscription) {
@@ -545,23 +549,16 @@ private struct SubscriptionRemovalEffect: ViewModifier {
     let progress: CGFloat
 
     func body(content: Content) -> some View {
-        let dismissal = min(progress * 1.35, 1)
+        let settleProgress = min(progress / 0.28, 1)
+        let collapseProgress = max((progress - 0.28) / 0.72, 0)
 
         content
-            .opacity(1 - dismissal)
+            .opacity(1 - (0.12 * settleProgress) - (0.88 * collapseProgress))
             .scaleEffect(
-                x: 1 - (0.035 * progress),
-                y: max(0.01, 1 - (0.92 * progress)),
-                anchor: .trailing
+                x: 1 - (0.02 * settleProgress),
+                y: max(0.01, 1 - (0.98 * collapseProgress)),
+                anchor: .center
             )
-            .rotation3DEffect(
-                .degrees(Double(5 * progress)),
-                axis: (x: 0, y: 1, z: 0),
-                anchor: .trailing,
-                perspective: 0.45
-            )
-            .offset(x: 68 * progress, y: -3 * progress)
-            .blur(radius: 1.25 * progress)
     }
 }
 
@@ -572,11 +569,11 @@ private struct SubscriptionRecoveryEffect: ViewModifier {
         content
             .opacity(1 - progress)
             .scaleEffect(
-                x: 1 - (0.025 * progress),
-                y: 1 - (0.14 * progress),
-                anchor: .trailing
+                x: 1 - (0.01 * progress),
+                y: 1 - (0.06 * progress),
+                anchor: .center
             )
-            .offset(x: 42 * progress)
+            .offset(x: 14 * progress)
     }
 }
 
