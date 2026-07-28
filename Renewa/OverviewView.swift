@@ -7,6 +7,8 @@ struct OverviewView: View {
     @State private var appeared = false
     @State private var removingSubscriptionIDs = Set<UUID>()
     @State private var removalNotice: RemovalNotice?
+    @State private var removalFeedbackCount = 0
+    @State private var removalSuccessFeedbackCount = 0
     @State private var subscriptionForBrandSelection: Subscription?
     @Namespace private var periodSelection
 
@@ -81,6 +83,8 @@ struct OverviewView: View {
             }
         }
         .animation(removalAnimation, value: removalNotice)
+        .sensoryFeedback(.impact(weight: .medium), trigger: removalFeedbackCount)
+        .sensoryFeedback(.success, trigger: removalSuccessFeedbackCount)
         .refreshable {
             do {
                 try await store.refreshData()
@@ -362,19 +366,20 @@ struct OverviewView: View {
     private var removalAnimation: Animation {
         reduceMotion
             ? .easeOut(duration: 0.16)
-            : .spring(response: 0.42, dampingFraction: 0.86)
+            : .spring(response: 0.46, dampingFraction: 0.9)
     }
 
     private func remove(_ subscription: Subscription) {
         guard !removingSubscriptionIDs.contains(subscription.id) else { return }
 
+        removalFeedbackCount += 1
         withAnimation(removalAnimation) {
             _ = removingSubscriptionIDs.insert(subscription.id)
         }
 
         Task {
             if !reduceMotion {
-                try? await Task.sleep(for: .milliseconds(280))
+                try? await Task.sleep(for: .milliseconds(220))
             }
 
             let wasRemoved = await store.remove(subscription)
@@ -391,6 +396,7 @@ struct OverviewView: View {
 
     private func presentRemovalNotice(for subscription: Subscription) {
         let notice = RemovalNotice(subscriptionName: subscription.name)
+        removalSuccessFeedbackCount += 1
         withAnimation(removalAnimation) {
             removalNotice = notice
         }
@@ -405,23 +411,32 @@ struct OverviewView: View {
     }
 
     private func removalToast(_ notice: RemovalNotice) -> some View {
-        HStack(spacing: 10) {
-            HeroIcon(.checkCircle, style: .solid, size: 20)
-                .foregroundStyle(RenewaTheme.sage)
-            Text("\(notice.subscriptionName) removed")
-                .font(.renewa(15, weight: .semibold))
-                .foregroundStyle(RenewaTheme.ink)
+        HStack(spacing: 12) {
+            HeroIcon(.checkCircle, style: .solid, size: 17)
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(RenewaTheme.sage, in: Circle())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Subscription removed")
+                    .font(.renewa(14, weight: .bold))
+                    .foregroundStyle(RenewaTheme.ink)
+                Text(notice.subscriptionName)
+                    .font(.renewa(13, weight: .medium))
+                    .foregroundStyle(RenewaTheme.muted)
+                    .lineLimit(1)
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
-        .frame(height: 52)
+        .frame(height: 60)
         .background(.ultraThinMaterial, in: Capsule())
         .overlay {
             Capsule()
                 .stroke(.white.opacity(0.72), lineWidth: 1)
         }
         .shadow(color: .black.opacity(0.1), radius: 14, y: 5)
-        .accessibilityLabel("\(notice.subscriptionName) removed")
+        .accessibilityLabel("Subscription removed: \(notice.subscriptionName)")
     }
 
     private var categoryTotals: [(SubscriptionCategory, Decimal)] {
@@ -530,19 +545,48 @@ private struct SubscriptionRemovalEffect: ViewModifier {
     let progress: CGFloat
 
     func body(content: Content) -> some View {
+        let dismissal = min(progress * 1.35, 1)
+
+        content
+            .opacity(1 - dismissal)
+            .scaleEffect(
+                x: 1 - (0.035 * progress),
+                y: max(0.01, 1 - (0.92 * progress)),
+                anchor: .trailing
+            )
+            .rotation3DEffect(
+                .degrees(Double(5 * progress)),
+                axis: (x: 0, y: 1, z: 0),
+                anchor: .trailing,
+                perspective: 0.45
+            )
+            .offset(x: 68 * progress, y: -3 * progress)
+            .blur(radius: 1.25 * progress)
+    }
+}
+
+private struct SubscriptionRecoveryEffect: ViewModifier {
+    let progress: CGFloat
+
+    func body(content: Content) -> some View {
         content
             .opacity(1 - progress)
-            .scaleEffect(x: 1 - (0.08 * progress), y: 1 - (0.2 * progress), anchor: .trailing)
-            .rotationEffect(.degrees(Double(4 * progress)), anchor: .trailing)
-            .offset(x: 92 * progress)
-            .blur(radius: 2 * progress)
+            .scaleEffect(
+                x: 1 - (0.025 * progress),
+                y: 1 - (0.14 * progress),
+                anchor: .trailing
+            )
+            .offset(x: 42 * progress)
     }
 }
 
 private extension AnyTransition {
     static var subscriptionRemoval: AnyTransition {
         .asymmetric(
-            insertion: .opacity.combined(with: .move(edge: .leading)),
+            insertion: .modifier(
+                active: SubscriptionRecoveryEffect(progress: 1),
+                identity: SubscriptionRecoveryEffect(progress: 0)
+            ),
             removal: .modifier(
                 active: SubscriptionRemovalEffect(progress: 1),
                 identity: SubscriptionRemovalEffect(progress: 0)

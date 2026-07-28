@@ -19,7 +19,7 @@
 - [x] Present subscription logos as contained soft-squircle brand stamps that match the app's soft card design.
 - [x] Let people confirm or clear a reviewed brand logo while adding a subscription or from a subscription's context menu.
 - [x] Convert subscription prices, totals, and category insights when the preferred currency changes, while preserving original amounts.
-- [x] Redesign subscription removal with an immediate card-dismiss animation, failure recovery, and completion feedback.
+- [x] Redesign subscription removal with a tactile tuck-and-collapse dismissal, failure recovery, and clear completion feedback.
 
 ## Authentication and onboarding
 
