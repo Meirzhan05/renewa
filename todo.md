@@ -31,3 +31,8 @@
 - [x] Simplify the profile screen by removing non-actionable account-storage and similar informational sections.
 - [x] Make the profile editable: display name, avatar, preferred currency, and other relevant preferences. Persist changes to the user's Supabase profile and provide clear save/error feedback.
 - [x] Add an avatar picker with a safe default placeholder and a path for future Supabase Storage upload support.
+
+## Insights
+
+- [x] Add AI-backed, explainable spending insights with cached server reports and deterministic fallback.
+- [x] Add category, upcoming-renewal, and persisted monthly-spending graphs to Insights.

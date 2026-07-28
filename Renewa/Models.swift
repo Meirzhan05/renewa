@@ -187,6 +187,58 @@ struct EmailScanResult: Codable {
     let canceled: Int
 }
 
+struct SpendingSnapshot: Identifiable, Codable, Hashable {
+    let id: UUID
+    let periodStart: Date
+    let currency: String
+    let monthlyTotal: Decimal
+    let categoryTotals: [String: Decimal]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case periodStart = "period_start"
+        case currency
+        case monthlyTotal = "monthly_total"
+        case categoryTotals = "category_totals"
+    }
+}
+
+struct InsightCard: Codable, Hashable, Identifiable {
+    let title: String
+    let body: String
+    let subscriptionIDs: [String]
+    let eventIDs: [String]
+
+    var id: String { "\(title)|\(body)" }
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case body
+        case subscriptionIDs = "subscription_ids"
+        case eventIDs = "event_ids"
+    }
+}
+
+struct InsightReport: Codable, Hashable {
+    let summary: String
+    let cards: [InsightCard]
+    let generatedAt: Date
+    let isAIGenerated: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case summary
+        case cards
+        case generatedAt = "generated_at"
+        case isAIGenerated = "is_ai_generated"
+    }
+}
+
+struct InsightRefreshResponse: Codable {
+    let report: InsightReport?
+    let cached: Bool
+    let fallback: Bool
+}
+
 extension Date {
     var startOfDay: Date { Calendar.current.startOfDay(for: self) }
 }

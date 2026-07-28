@@ -28,3 +28,6 @@ verify_jwt = false
 
 [functions.email-scan]
 verify_jwt = true
+
+[functions.insights-refresh]
+verify_jwt = true

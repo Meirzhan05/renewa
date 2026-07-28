@@ -163,6 +163,24 @@ struct SupabaseClient {
         )
     }
 
+    func fetchSpendingSnapshots(accessToken: String) async throws -> [SpendingSnapshot] {
+        try await request(
+            path: "/rest/v1/monthly_spend_snapshots?select=id,period_start,currency,monthly_total,category_totals&order=period_start.asc",
+            method: "GET",
+            body: Optional<String>.none,
+            accessToken: accessToken
+        )
+    }
+
+    func refreshInsights(force: Bool, accessToken: String) async throws -> InsightRefreshResponse {
+        try await request(
+            path: "/functions/v1/insights-refresh",
+            method: "POST",
+            body: ["force": force],
+            accessToken: accessToken
+        )
+    }
+
     func mailAuthorizationURL(provider: String, accessToken: String) async throws -> URL {
         let response: AuthorizationURLResponse = try await request(
             path: "/functions/v1/mail-oauth-start",

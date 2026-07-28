@@ -21,6 +21,10 @@ final class AppStore {
     var session: Session?
     var profile: UserProfile?
     var subscriptions: [Subscription] = []
+    var spendingSnapshots: [SpendingSnapshot] = []
+    var insightReport: InsightReport?
+    var isLoadingInsights = false
+    var insightsErrorMessage: String?
     var errorMessage: String?
     var isBusy = false
     var isRefreshingExchangeRates = false
@@ -312,6 +316,32 @@ final class AppStore {
         return result
     }
 
+    func loadInsights(force: Bool = false) async {
+        guard session != nil else { return }
+        isLoadingInsights = true
+        insightsErrorMessage = nil
+        defer { isLoadingInsights = false }
+        do {
+            let snapshots = try await performAuthenticated { accessToken in
+                try await self.client.fetchSpendingSnapshots(accessToken: accessToken)
+            }
+            spendingSnapshots = snapshots
+            await refreshExchangeRates()
+        } catch {
+            insightsErrorMessage = "Your spending history is unavailable right now."
+        }
+        do {
+            let response = try await performAuthenticated { accessToken in
+                try await self.client.refreshInsights(force: force, accessToken: accessToken)
+            }
+            insightReport = response.report
+        } catch {
+            if insightReport == nil {
+                insightsErrorMessage = "AI insights are unavailable right now. Your spending charts are still up to date."
+            }
+        }
+    }
+
     func convertedAmount(_ amount: Decimal, from sourceCurrency: String) -> Decimal? {
         let source = sourceCurrency.uppercased()
         let target = defaultCurrency.uppercased()
@@ -329,9 +359,14 @@ final class AppStore {
         convertedAmount(subscription.monthlyCost, from: subscription.currency)
     }
 
+    func convertedMonthlyCost(for snapshot: SpendingSnapshot) -> Decimal? {
+        convertedAmount(snapshot.monthlyTotal, from: snapshot.currency)
+    }
+
     private func refreshExchangeRates() async {
         let target = defaultCurrency.uppercased()
         let sourceCurrencies = Set(activeSubscriptions.map { $0.currency.uppercased() })
+            .union(spendingSnapshots.map { $0.currency.uppercased() })
         exchangeRateBaseCurrency = nil
         exchangeRates = [:]
         exchangeRateErrorMessage = nil
@@ -414,6 +449,9 @@ final class AppStore {
         session = nil
         profile = nil
         subscriptions = []
+        spendingSnapshots = []
+        insightReport = nil
+        insightsErrorMessage = nil
         exchangeRates = [:]
         exchangeRateBaseCurrency = nil
         exchangeRateErrorMessage = nil
