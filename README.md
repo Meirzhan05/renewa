@@ -17,8 +17,9 @@ All account, profile, and subscription screens use Supabase data. If the backend
 - Postgres schema, indexes, trigger-maintained profiles, grants, and row-level security
 - Read-only Gmail and Microsoft Graph OAuth using the server authorization-code flow
 - AES-GCM encryption for provider tokens at rest
-- Authenticated Edge Function that retrieves likely billing messages and uses the OpenAI Responses API with strict Structured Outputs
-- Idempotent event ingestion and automatic add/cancel updates
+- Authenticated, resumable inbox-discovery jobs with Gmail history and Microsoft delta synchronization
+- Metadata-first billing selection and per-message DeepSeek-compatible structured extraction with runtime validation
+- Idempotent event ingestion plus editable, review-first add/update/cancel proposals
 - Canceled-subscription history and live-currency converted spending totals
 - Logo.dev brand logos with an accessible initial-and-category fallback for every other subscription
 
@@ -96,11 +97,13 @@ For Microsoft:
 
 ## AI and privacy design
 
-The iOS binary never receives mail-provider refresh tokens or the OpenAI key. Edge Functions hold provider credentials, refresh access server-side, pre-filter likely billing mail, truncate message content, treat email bodies as untrusted, and request strict structured output. The API request sets `store: false`. Detected events are confidence-gated at `0.72`, deduplicated, and auditable in `detected_billing_events`.
+The iOS binary never receives mail-provider refresh tokens or the DeepSeek key. The authenticated `email-scan` Function creates durable user-owned jobs and returns immediately; background work is resumable through persisted job state. Gmail scans advance from a mailbox history ID and Microsoft scans advance from an opaque Inbox delta link only after successful processing.
 
-`store: false` disables Responses API application-state storage, but default API abuse-monitoring retention may still apply. Organizations handling sensitive mail should review OpenAI data controls and eligibility for Zero Data Retention before production.
+Renewa evaluates bounded message metadata and snippets first, retrieves full content only for likely billing messages, sanitizes and truncates that content, and processes one message per constrained extraction request. Raw bodies and raw model payloads are never persisted by Renewa. The model has no tools and cannot change subscriptions. Runtime validation, source-message fingerprints, and deterministic merchant reconciliation produce pending candidates; additions, updates, reactivations, and cancellations require explicit user confirmation.
 
-Before shipping, add a privacy policy, account/data deletion, provider disconnection and token revocation UI, App Store privacy disclosures, rate limiting, monitoring, and representative extraction evals. Mail access is sensitive; keep the requested scopes read-only and minimal.
+The configured model endpoint is DeepSeek-compatible Chat Completions in JSON response mode. Renewa's non-retention of raw content does not control the AI provider's own processing or abuse-monitoring practices. Review the provider's current data terms, regional requirements, and production privacy agreement before deployment.
+
+Users can inspect redacted connection state, disconnect an inbox, trigger best-effort Google token revocation, and clear discovery history without removing confirmed subscriptions. Microsoft does not expose an equivalent delegated refresh-token revocation endpoint to this app, so disconnect deletes Renewa's encrypted credential and prevents further access. Before public release, complete the privacy policy, App Store privacy disclosure, provider verification, representative multilingual extraction evaluation, and production rate/latency monitoring. See [EMAIL_DISCOVERY_SETUP.md](supabase/EMAIL_DISCOVERY_SETUP.md).
 
 ## Project map
 
@@ -115,12 +118,16 @@ Renewa/                         SwiftUI client
   InsightsView.swift            Insight activation, summaries, and visualizations
   InsightsPresentationState.swift
                                 Testable Insights evidence and completeness states
-  EmailScanView.swift           OAuth and AI scan UX
+  EmailScanView.swift           OAuth, scan progress, connection controls, and review UX
+  EmailDiscoveryPresentationState.swift
+                                Testable scan and candidate presentation rules
 RenewaTests/                    XCTest coverage for client presentation logic
 supabase/
   migrations/                   Database, grants, RLS, and triggers
   functions/mail-oauth-*        Gmail/Microsoft authorization flow
-  functions/email-scan          Mail retrieval, AI extraction, and reconciliation
+  functions/email-scan          Durable coordination, incremental mail retrieval, extraction, and review
+  functions/_shared/email-discovery.ts
+                                Pure filtering, minimization, validation, and matching rules
 ```
 
 ## Subscription brand logos

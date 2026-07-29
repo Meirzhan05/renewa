@@ -45,3 +45,10 @@
 - [x] Add AI-backed, explainable spending insights with cached server reports and deterministic fallback.
 - [x] Add category, upcoming-renewal, and persisted monthly-spending graphs to Insights.
 - [x] Replace the empty Insights dashboard with a guided activation state and distinguish history-building, quiet-renewal, unavailable-conversion, and service-failure states.
+
+## Inbox discovery
+
+- [x] Replace synchronous bulk email extraction with resumable per-inbox jobs, Gmail history cursors, Microsoft delta links, metadata-first filtering, and per-message runtime-validated AI extraction.
+- [x] Keep AI proposals review-first: let people correct, confirm, or ignore detected additions and changes before subscriptions are mutated.
+- [x] Show redacted connection health and scan progress, and support disconnect, best-effort token revocation, and scan-history cleanup.
+- [x] Add backend extraction fixtures and iOS presentation tests for candidate validation, prompt-injection boundaries, idempotency, progress, and confirmation eligibility.

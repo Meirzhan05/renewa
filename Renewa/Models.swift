@@ -180,11 +180,183 @@ struct UserProfile: Codable, Equatable {
     }
 }
 
-struct EmailScanResult: Codable {
+enum EmailScanAggregateStatus: String, Codable {
+    case idle
+    case queued
+    case running
+    case completed
+    case partial
+    case failed
+}
+
+enum EmailScanStage: String, Codable {
+    case idle
+    case queued
+    case fetching
+    case filtering
+    case extracting
+    case reviewReady = "review_ready"
+    case completed
+    case failed
+}
+
+enum EmailCandidateAction: String, Codable {
+    case add
+    case update
+    case cancel
+    case review
+
+    var title: String {
+        switch self {
+        case .add: "New subscription"
+        case .update: "Subscription update"
+        case .cancel: "Cancellation"
+        case .review: "Needs a match"
+        }
+    }
+}
+
+enum EmailCandidateReviewStatus: String, Codable {
+    case pending
+    case confirmed
+    case ignored
+}
+
+struct EmailConnectionSummary: Identifiable, Codable, Hashable {
+    let id: UUID
+    let provider: String
+    let redactedEmail: String?
+    let lastScannedAt: Date?
+    let health: String
+    let scanStatus: String
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case provider
+        case redactedEmail = "redacted_email"
+        case lastScannedAt = "last_scanned_at"
+        case health
+        case scanStatus = "scan_status"
+    }
+
+    var providerTitle: String { provider.capitalized }
+}
+
+struct EmailSubscriptionCandidate: Identifiable, Codable, Hashable {
+    let id: UUID
+    let matchedSubscriptionID: UUID?
+    let suggestedAction: EmailCandidateAction
+    let reviewStatus: EmailCandidateReviewStatus
+    let merchantName: String
+    let amount: Decimal?
+    let currency: String?
+    let billingCycle: BillingCycle?
+    let renewalDate: Date?
+    let category: SubscriptionCategory
+    let eventType: String
+    let confidence: Double
+    let evidence: String
+    let validationIssues: [String]
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case matchedSubscriptionID = "matched_subscription_id"
+        case suggestedAction = "suggested_action"
+        case reviewStatus = "review_status"
+        case merchantName = "merchant_name"
+        case amount
+        case currency
+        case billingCycle = "billing_cycle"
+        case renewalDate = "renewal_date"
+        case category
+        case eventType = "event_type"
+        case confidence
+        case evidence
+        case validationIssues = "validation_issues"
+        case createdAt = "created_at"
+    }
+
+    var displayAmount: String {
+        guard let amount, let currency else { return "Amount needs review" }
+        return amount.currencyText(code: currency)
+    }
+}
+
+struct EmailScanStatus: Codable, Equatable {
+    let scanID: UUID?
+    let status: EmailScanAggregateStatus
+    let stage: EmailScanStage
+    let connectionCount: Int
     let scanned: Int
+    let candidateMessages: Int
     let detected: Int
-    let added: Int
-    let canceled: Int
+    let validationFailures: Int?
+    let pendingCount: Int
+    let candidates: [EmailSubscriptionCandidate]
+    let connections: [EmailConnectionSummary]
+    let errors: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case scanID = "scan_id"
+        case status
+        case stage
+        case connectionCount = "connection_count"
+        case scanned
+        case candidateMessages = "candidate_messages"
+        case detected
+        case validationFailures = "validation_failures"
+        case pendingCount = "pending_count"
+        case candidates
+        case connections
+        case errors
+    }
+
+    var isActive: Bool {
+        status == .queued || status == .running
+    }
+}
+
+struct EmailCandidateEdits: Equatable {
+    var merchantName: String
+    var amount: Decimal?
+    var currency: String
+    var billingCycle: BillingCycle
+    var renewalDate: Date
+    var category: SubscriptionCategory
+
+    init(candidate: EmailSubscriptionCandidate) {
+        merchantName = candidate.merchantName
+        amount = candidate.amount
+        currency = candidate.currency ?? "USD"
+        billingCycle = candidate.billingCycle ?? .monthly
+        renewalDate = candidate.renewalDate ?? Calendar.current.date(byAdding: .month, value: 1, to: .now) ?? .now
+        category = candidate.category
+    }
+}
+
+struct EmailCandidateDecisionResponse: Codable {
+    let candidateID: UUID
+    let reviewStatus: EmailCandidateReviewStatus
+    let appliedSubscriptionID: UUID?
+    let idempotent: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case candidateID = "candidate_id"
+        case reviewStatus = "review_status"
+        case appliedSubscriptionID = "applied_subscription_id"
+        case idempotent
+    }
+}
+
+struct EmailDisconnectResponse: Codable {
+    let disconnected: Bool
+    let remoteRevoked: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case disconnected
+        case remoteRevoked = "remote_revoked"
+    }
 }
 
 struct SpendingSnapshot: Identifiable, Codable, Hashable {
@@ -253,15 +425,16 @@ extension Decimal {
         formatter.numberStyle = .currency
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.currencyCode = code
-        formatter.currencySymbol = [
-            "USD": "$",
-            "EUR": "€",
-            "GBP": "£",
-            "KZT": "₸",
-            "CAD": "CA$",
-            "AUD": "A$",
-            "JPY": "¥"
-        ][code] ?? code
+        formatter.currencySymbol =
+            [
+                "USD": "$",
+                "EUR": "€",
+                "GBP": "£",
+                "KZT": "₸",
+                "CAD": "CA$",
+                "AUD": "A$",
+                "JPY": "¥",
+            ][code] ?? code
         formatter.maximumFractionDigits = 2
         return formatter.string(from: self as NSDecimalNumber) ?? "$0"
     }

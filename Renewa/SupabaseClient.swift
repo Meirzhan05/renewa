@@ -164,13 +164,60 @@ struct SupabaseClient {
         try await performEmpty(request)
     }
 
-    func scanEmail(accessToken: String) async throws -> EmailScanResult {
+    func startEmailScan(accessToken: String) async throws -> EmailScanStatus {
         try await request(
             path: "/functions/v1/email-scan",
             method: "POST",
-            body: ["days": 365],
+            body: EmailScanRequest(action: "start", days: 365, scanID: nil),
             accessToken: accessToken
         )
+    }
+
+    func emailScanStatus(scanID: UUID?, accessToken: String) async throws -> EmailScanStatus {
+        try await request(
+            path: "/functions/v1/email-scan",
+            method: "POST",
+            body: EmailScanRequest(action: "status", days: nil, scanID: scanID),
+            accessToken: accessToken
+        )
+    }
+
+    func reviewEmailCandidate(
+        id: UUID,
+        decision: EmailCandidateDecision,
+        edits: EmailCandidateEdits?,
+        accessToken: String
+    ) async throws -> EmailCandidateDecisionResponse {
+        try await request(
+            path: "/functions/v1/email-scan",
+            method: "POST",
+            body: EmailCandidateReviewRequest(
+                action: "review",
+                candidateID: id,
+                decision: decision.rawValue,
+                edits: edits.map(CandidateEditBody.init)
+            ),
+            accessToken: accessToken
+        )
+    }
+
+    func disconnectEmailConnection(id: UUID, accessToken: String) async throws -> EmailDisconnectResponse {
+        try await request(
+            path: "/functions/v1/email-scan",
+            method: "POST",
+            body: EmailDisconnectRequest(action: "disconnect", connectionID: id),
+            accessToken: accessToken
+        )
+    }
+
+    func clearEmailScanHistory(accessToken: String) async throws {
+        let response: EmailHistoryCleanupResponse = try await request(
+            path: "/functions/v1/email-scan",
+            method: "POST",
+            body: ["action": "clear_history"],
+            accessToken: accessToken
+        )
+        guard response.cleared else { throw APIError.invalidResponse }
     }
 
     func fetchSpendingSnapshots(accessToken: String) async throws -> [SpendingSnapshot] {
@@ -243,7 +290,8 @@ struct SupabaseClient {
 
     private func makeRequest(path: String, method: String, accessToken: String?) throws -> URLRequest {
         guard let baseURL = configuration.supabaseURL,
-              let url = URL(string: path, relativeTo: baseURL) else {
+            let url = URL(string: path, relativeTo: baseURL)
+        else {
             throw APIError.notConfigured
         }
         var request = URLRequest(url: url)
@@ -260,7 +308,8 @@ struct SupabaseClient {
         guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         guard 200..<300 ~= response.statusCode else {
             let envelope = try? Self.decoder.decode(ErrorEnvelope.self, from: data)
-            let message = envelope?.message ?? envelope?.errorDescription
+            let message =
+                envelope?.message ?? envelope?.errorDescription
                 ?? HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
             throw APIError.server(status: response.statusCode, message: message)
         }
@@ -339,6 +388,87 @@ private struct AuthorizationURLResponse: Decodable {
 
 private struct AccountDeletionResponse: Decodable {
     let deleted: Bool
+}
+
+enum EmailCandidateDecision: String, Equatable {
+    case confirm
+    case ignore
+}
+
+private struct EmailScanRequest: Encodable {
+    let action: String
+    let days: Int?
+    let scanID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case days
+        case scanID = "scan_id"
+    }
+}
+
+private struct EmailCandidateReviewRequest: Encodable {
+    let action: String
+    let candidateID: UUID
+    let decision: String
+    let edits: CandidateEditBody?
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case candidateID = "candidate_id"
+        case decision
+        case edits
+    }
+}
+
+private struct CandidateEditBody: Encodable {
+    let merchantName: String
+    let amount: Decimal?
+    let currency: String
+    let billingCycle: BillingCycle
+    let renewalDate: String
+    let category: SubscriptionCategory
+
+    init(_ edits: EmailCandidateEdits) {
+        merchantName = edits.merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
+        amount = edits.amount
+        currency = edits.currency.uppercased()
+        billingCycle = edits.billingCycle
+        renewalDate = Self.dayFormatter.string(from: edits.renewalDate)
+        category = edits.category
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case merchantName = "merchant_name"
+        case amount
+        case currency
+        case billingCycle = "billing_cycle"
+        case renewalDate = "renewal_date"
+        case category
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .iso8601)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+}
+
+private struct EmailDisconnectRequest: Encodable {
+    let action: String
+    let connectionID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case connectionID = "connection_id"
+    }
+}
+
+private struct EmailHistoryCleanupResponse: Decodable {
+    let cleared: Bool
 }
 
 private struct SignUpBody: Encodable {

@@ -28,6 +28,10 @@ final class AppStore {
     var subscriptions: [Subscription] = []
     var spendingSnapshots: [SpendingSnapshot] = []
     var insightReport: InsightReport?
+    var emailScanStatus: EmailScanStatus?
+    var isLoadingEmailDiscovery = false
+    var isReviewingEmailCandidate = false
+    var emailCandidatePendingID: UUID?
     var isLoadingInsights = false
     var isLoadingInsightReport = false
     var isRefreshingInsights = false
@@ -64,7 +68,8 @@ final class AppStore {
 
     var displayName: String {
         if let displayName = profile?.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !displayName.isEmpty {
+            !displayName.isEmpty
+        {
             return displayName
         }
         if let localPart = session?.user.email?.split(separator: "@").first {
@@ -96,14 +101,14 @@ final class AppStore {
             state = .configurationRequired
             return
         }
-#if DEBUG
-        if ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] == "registration" {
-            keychain.clear()
-            session = nil
-            state = .signedOut
-            return
-        }
-#endif
+        #if DEBUG
+            if ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] == "registration" {
+                keychain.clear()
+                session = nil
+                state = .signedOut
+                return
+            }
+        #endif
         do {
             guard let data = try keychain.load() else {
                 if let credentials = AppConfiguration.current.localDebugCredentials {
@@ -155,11 +160,13 @@ final class AppStore {
                     )
                     return false
                 }
-                guard let created = try await client.signUp(
-                    email: email,
-                    password: password,
-                    displayName: trimmedName
-                ) else {
+                guard
+                    let created = try await client.signUp(
+                        email: email,
+                        password: password,
+                        displayName: trimmedName
+                    )
+                else {
                     authenticationIssue = AuthenticationIssue(
                         title: "Confirm your email",
                         message: "We sent a confirmation link to \(email). Open it, then return here to sign in."
@@ -197,7 +204,8 @@ final class AppStore {
             return false
         }
         if let message = components.queryItems?.first(where: { $0.name == "error_description" })?.value
-            ?? components.queryItems?.first(where: { $0.name == "error" })?.value {
+            ?? components.queryItems?.first(where: { $0.name == "error" })?.value
+        {
             authenticationIssue = AuthenticationIssue(
                 title: "Google sign-in didn’t finish",
                 message: message.humanReadableAuthenticationMessage
@@ -384,12 +392,133 @@ final class AppStore {
         }
     }
 
-    func scanEmail() async throws -> EmailScanResult {
-        let result = try await performAuthenticated { accessToken in
-            try await self.client.scanEmail(accessToken: accessToken)
+    func loadEmailDiscovery() async {
+        guard session != nil else { return }
+        isLoadingEmailDiscovery = emailScanStatus == nil
+        defer { isLoadingEmailDiscovery = false }
+        do {
+            let status = try await performAuthenticated { accessToken in
+                try await self.client.emailScanStatus(scanID: nil, accessToken: accessToken)
+            }
+            withAnimation(RenewaMotion.quick) {
+                emailScanStatus = status
+            }
+            if status.isActive {
+                await pollEmailScan(id: status.scanID)
+            }
+        } catch {
+            reportAuthenticatedOperationError(error)
         }
-        try await refreshSubscriptions()
-        return result
+    }
+
+    func startEmailScan() async -> Bool {
+        guard session != nil else { return false }
+        errorMessage = nil
+        do {
+            let status = try await performAuthenticated { accessToken in
+                try await self.client.startEmailScan(accessToken: accessToken)
+            }
+            withAnimation(RenewaMotion.standard) {
+                emailScanStatus = status
+            }
+            await pollEmailScan(id: status.scanID)
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
+    func reviewEmailCandidate(
+        _ candidate: EmailSubscriptionCandidate,
+        decision: EmailCandidateDecision,
+        edits: EmailCandidateEdits? = nil
+    ) async -> Bool {
+        guard session != nil else { return false }
+        isReviewingEmailCandidate = true
+        emailCandidatePendingID = candidate.id
+        defer {
+            isReviewingEmailCandidate = false
+            emailCandidatePendingID = nil
+        }
+        do {
+            _ = try await performAuthenticated { accessToken in
+                try await self.client.reviewEmailCandidate(
+                    id: candidate.id,
+                    decision: decision,
+                    edits: edits,
+                    accessToken: accessToken
+                )
+            }
+            let status = try await performAuthenticated { accessToken in
+                try await self.client.emailScanStatus(
+                    scanID: self.emailScanStatus?.scanID,
+                    accessToken: accessToken
+                )
+            }
+            withAnimation(RenewaMotion.standard) {
+                emailScanStatus = status
+            }
+            if decision == .confirm {
+                try await refreshSubscriptions()
+            }
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
+    func disconnectEmailConnection(_ connection: EmailConnectionSummary) async -> Bool {
+        guard session != nil else { return false }
+        do {
+            _ = try await performAuthenticated { accessToken in
+                try await self.client.disconnectEmailConnection(id: connection.id, accessToken: accessToken)
+            }
+            await loadEmailDiscovery()
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
+    func clearEmailScanHistory() async -> Bool {
+        guard session != nil else { return false }
+        do {
+            try await performAuthenticated { accessToken in
+                try await self.client.clearEmailScanHistory(accessToken: accessToken)
+            }
+            await loadEmailDiscovery()
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
+    private func pollEmailScan(id: UUID?) async {
+        guard let id else { return }
+        for _ in 0..<120 {
+            guard !Task.isCancelled else { return }
+            do {
+                try await Task.sleep(for: .seconds(1))
+                let status = try await performAuthenticated { accessToken in
+                    try await self.client.emailScanStatus(scanID: id, accessToken: accessToken)
+                }
+                withAnimation(RenewaMotion.quick) {
+                    emailScanStatus = status
+                }
+                if !status.isActive {
+                    return
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                reportAuthenticatedOperationError(error)
+                return
+            }
+        }
     }
 
     func loadInsights(force: Bool = false) async {
@@ -436,7 +565,8 @@ final class AppStore {
             return amount
         }
         guard exchangeRateBaseCurrency == target,
-              let rate = exchangeRates[source] else {
+            let rate = exchangeRates[source]
+        else {
             return nil
         }
         return amount * rate
@@ -536,6 +666,10 @@ final class AppStore {
         subscriptions = []
         spendingSnapshots = []
         insightReport = nil
+        emailScanStatus = nil
+        isLoadingEmailDiscovery = false
+        isReviewingEmailCandidate = false
+        emailCandidatePendingID = nil
         isLoadingInsights = false
         isLoadingInsightReport = false
         isRefreshingInsights = false
@@ -677,13 +811,15 @@ final class AppStore {
 private extension Error {
     var isAuthorizationFailure: Bool {
         guard let apiError = self as? APIError,
-              case let .server(status, _) = apiError else { return false }
+            case let .server(status, _) = apiError
+        else { return false }
         return status == 401
     }
 
     var isTerminalRefreshFailure: Bool {
         guard let apiError = self as? APIError,
-              case let .server(status, _) = apiError else { return false }
+            case let .server(status, _) = apiError
+        else { return false }
         return [400, 401, 403].contains(status)
     }
 }
