@@ -34,3 +34,6 @@ verify_jwt = true
 
 [functions.delete-account]
 verify_jwt = true
+
+[edge_runtime]
+policy = "per_worker"

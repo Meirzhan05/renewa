@@ -1,14 +1,20 @@
 import { adminClient } from "../_shared/supabase.ts";
 import { encryptJSON, sha256 } from "../_shared/crypto.ts";
-import { exchangeCode, providerEmail, Provider } from "../_shared/oauth.ts";
+import { exchangeCode, Provider, providerEmail } from "../_shared/oauth.ts";
 
 Deno.serve(async (request) => {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const oauthError = url.searchParams.get("error");
-  if (oauthError) return Response.redirect(`renewa://mail-connected?error=${encodeURIComponent(oauthError)}`);
-  if (!code || !state) return new Response("Missing authorization response", { status: 400 });
+  if (oauthError) {
+    return Response.redirect(
+      `renewa://mail-connected?error=${encodeURIComponent(oauthError)}`,
+    );
+  }
+  if (!code || !state) {
+    return new Response("Missing authorization response", { status: 400 });
+  }
 
   try {
     const admin = adminClient();
@@ -18,7 +24,9 @@ Deno.serve(async (request) => {
       .select("user_id,provider,expires_at")
       .eq("state_hash", hash)
       .maybeSingle();
-    if (error || !record || new Date(record.expires_at) < new Date()) throw new Error("OAuth state expired");
+    if (error || !record || new Date(record.expires_at) < new Date()) {
+      throw new Error("OAuth state expired");
+    }
     await admin.from("oauth_states").delete().eq("state_hash", hash);
 
     const provider = record.provider as Provider;
@@ -31,11 +39,16 @@ Deno.serve(async (request) => {
       encrypted_tokens: await encryptJSON(tokens),
       token_expires_at: new Date(tokens.expires_at * 1000).toISOString(),
       scopes: tokens.scope?.split(" ") ?? [],
+      last_error: null,
     }, { onConflict: "user_id,provider" });
     if (saveError) throw saveError;
     return Response.redirect(`renewa://mail-connected?provider=${provider}`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Connection failed";
-    return Response.redirect(`renewa://mail-connected?error=${encodeURIComponent(message)}`);
+    const message = error instanceof Error
+      ? error.message
+      : "Connection failed";
+    return Response.redirect(
+      `renewa://mail-connected?error=${encodeURIComponent(message)}`,
+    );
   }
 });
