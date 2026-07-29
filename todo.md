@@ -52,3 +52,4 @@
 - [x] Keep AI proposals review-first: let people correct, confirm, or ignore detected additions and changes before subscriptions are mutated.
 - [x] Show redacted connection health and scan progress, and support disconnect, best-effort token revocation, and scan-history cleanup.
 - [x] Add backend extraction fixtures and iOS presentation tests for candidate validation, prompt-injection boundaries, idempotency, progress, and confirmation eligibility.
+- [x] Harden OAuth token-expiry validation and deploy the inbox-discovery migration plus mail OAuth and scan Functions to the linked Supabase project.
