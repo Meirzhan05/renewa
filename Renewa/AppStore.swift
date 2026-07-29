@@ -469,6 +469,53 @@ final class AppStore {
         }
     }
 
+    func suppressEmailCandidate(_ candidate: EmailSubscriptionCandidate) async -> Bool {
+        guard session != nil else { return false }
+        isReviewingEmailCandidate = true
+        emailCandidatePendingID = candidate.id
+        defer {
+            isReviewingEmailCandidate = false
+            emailCandidatePendingID = nil
+        }
+        do {
+            _ = try await performAuthenticated { accessToken in
+                try await self.client.suppressEmailCandidate(id: candidate.id, accessToken: accessToken)
+            }
+            let status = try await performAuthenticated { accessToken in
+                try await self.client.emailScanStatus(
+                    scanID: self.emailScanStatus?.scanID,
+                    accessToken: accessToken
+                )
+            }
+            withAnimation(RenewaMotion.standard) {
+                emailScanStatus = status
+            }
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
+    func unsuppressEmailMerchant(_ merchant: EmailMerchantSuppression) async -> Bool {
+        guard session != nil else { return false }
+        isReviewingEmailCandidate = true
+        defer { isReviewingEmailCandidate = false }
+        do {
+            try await performAuthenticated { accessToken in
+                try await self.client.unsuppressEmailMerchant(
+                    canonicalMerchantKey: merchant.canonicalMerchantKey,
+                    accessToken: accessToken
+                )
+            }
+            await loadEmailDiscovery()
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
     func disconnectEmailConnection(_ connection: EmailConnectionSummary) async -> Bool {
         guard session != nil else { return false }
         do {

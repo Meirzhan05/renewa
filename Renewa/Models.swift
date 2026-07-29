@@ -283,6 +283,25 @@ struct EmailSubscriptionCandidate: Identifiable, Codable, Hashable {
     }
 }
 
+struct EmailMerchantSuppression: Identifiable, Codable, Hashable {
+    let canonicalMerchantKey: String
+    let createdAt: Date
+
+    var id: String { canonicalMerchantKey }
+
+    var merchantTitle: String {
+        canonicalMerchantKey
+            .split(separator: "-")
+            .map { $0.capitalized }
+            .joined(separator: " ")
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case canonicalMerchantKey = "canonical_merchant_key"
+        case createdAt = "created_at"
+    }
+}
+
 struct EmailScanStatus: Codable, Equatable {
     let scanID: UUID?
     let status: EmailScanAggregateStatus
@@ -294,6 +313,7 @@ struct EmailScanStatus: Codable, Equatable {
     let validationFailures: Int?
     let pendingCount: Int
     let candidates: [EmailSubscriptionCandidate]
+    let suppressedMerchants: [EmailMerchantSuppression]
     let connections: [EmailConnectionSummary]
     let errors: [String]
 
@@ -308,6 +328,7 @@ struct EmailScanStatus: Codable, Equatable {
         case validationFailures = "validation_failures"
         case pendingCount = "pending_count"
         case candidates
+        case suppressedMerchants = "suppressed_merchants"
         case connections
         case errors
     }

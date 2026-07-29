@@ -11,6 +11,7 @@ import {
   BillingEvent,
   brandIDForMerchant,
   buildExtractionMessages,
+  canCreateLifecycleCandidate,
   candidateConfirmationIssues,
   canonicalMerchantKey,
   classifyCandidateAction,
@@ -485,7 +486,8 @@ async function processConnectionJob(
         "Later current renewal evidence was found.",
       );
       if (lifecycle.supportingEventID !== savedEvent.id) continue;
-      if (await merchantIsSuppressed(admin, userID, key)) {
+      const suppressed = await merchantIsSuppressed(admin, userID, key);
+      if (!canCreateLifecycleCandidate(lifecycle, suppressed)) {
         await resolvePendingDiscoveryCandidates(
           admin,
           userID,
@@ -667,6 +669,7 @@ async function scanStatus(
   userID: string,
   requestedBatchID: string | null,
 ): Promise<Record<string, unknown>> {
+  await reconcilePendingCandidates(admin, userID);
   let batchID = requestedBatchID;
   if (!batchID) {
     const { data: latest, error } = await admin
@@ -691,6 +694,7 @@ async function scanStatus(
       detected: 0,
       pending_count: 0,
       candidates: [],
+      suppressed_merchants: await merchantSuppressions(admin, userID),
       connections: await connectionSummaries(admin, userID),
       errors: [],
     };
@@ -746,12 +750,84 @@ async function scanStatus(
     validation_failures: sum(runs, "validation_failures"),
     pending_count: pendingCandidates.length,
     candidates: candidates ?? [],
+    suppressed_merchants: await merchantSuppressions(admin, userID),
     connections: await connectionSummaries(admin, userID),
     errors: uniqueStrings([
       ...runs.map((run) => run.error_message),
       ...(jobs ?? []).map((job) => job.error_message),
     ]),
   };
+}
+
+async function merchantSuppressions(
+  admin: AdminClient,
+  userID: string,
+): Promise<Array<Record<string, unknown>>> {
+  const { data, error } = await admin
+    .from("merchant_discovery_suppressions")
+    .select("canonical_merchant_key,created_at")
+    .eq("user_id", userID)
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return (data ?? []).map((suppression) => ({
+    canonical_merchant_key: suppression.canonical_merchant_key,
+    created_at: suppression.created_at,
+  }));
+}
+
+async function reconcilePendingCandidates(
+  admin: AdminClient,
+  userID: string,
+): Promise<void> {
+  const { data: candidates, error } = await admin
+    .from("subscription_candidates")
+    .select("id,canonical_merchant_key,event_type")
+    .eq("user_id", userID)
+    .eq("review_status", "pending")
+    .limit(200);
+  if (error) throw error;
+
+  const lifecycleByMerchant = new Map<
+    string,
+    Awaited<ReturnType<typeof merchantLifecycle>>
+  >();
+  const suppressionByMerchant = new Map<string, boolean>();
+  for (const candidate of candidates ?? []) {
+    const merchantKey = candidate.canonical_merchant_key;
+    let lifecycle = lifecycleByMerchant.get(merchantKey);
+    if (!lifecycle) {
+      lifecycle = await merchantLifecycle(admin, userID, merchantKey);
+      lifecycleByMerchant.set(merchantKey, lifecycle);
+    }
+    if (candidate.event_type === "canceled") {
+      if (lifecycle.state === "current") {
+        await resolveCandidateForLifecycle(
+          admin,
+          userID,
+          candidate,
+          "Later current renewal evidence was found.",
+        );
+      }
+      continue;
+    }
+    let suppressed = suppressionByMerchant.get(merchantKey);
+    if (suppressed === undefined) {
+      suppressed = await merchantIsSuppressed(admin, userID, merchantKey);
+      suppressionByMerchant.set(merchantKey, suppressed);
+    }
+    if (suppressed || lifecycle.state !== "current") {
+      await resolveCandidateForLifecycle(
+        admin,
+        userID,
+        candidate,
+        suppressed
+          ? "You chose not to receive discovery suggestions for this merchant."
+          : lifecycleResolutionReason(
+            lifecycle.state === "ended" ? "ended" : "uncertain",
+          ),
+      );
+    }
+  }
 }
 
 async function reviewCandidate(

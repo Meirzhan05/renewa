@@ -80,7 +80,8 @@ export type MerchantLifecycle = {
     | "explicit_future_renewal"
     | "projected_current_renewal"
     | "no_paid_recurring_event"
-    | "renewal_window_elapsed";
+    | "renewal_window_elapsed"
+    | "conflicting_dates";
   supportingEventID: string | null;
 };
 
@@ -318,6 +319,20 @@ export function reconcileMerchantLifecycle(
   }
 
   if (
+    latestPaidRecurring.event_date &&
+    latestPaidRecurring.renewal_date &&
+    isValidISODate(latestPaidRecurring.event_date) &&
+    isValidISODate(latestPaidRecurring.renewal_date) &&
+    latestPaidRecurring.renewal_date < latestPaidRecurring.event_date
+  ) {
+    return {
+      state: "uncertain",
+      reason: "conflicting_dates",
+      supportingEventID: latestPaidRecurring.id ?? null,
+    };
+  }
+
+  if (
     latestPaidRecurring.renewal_date &&
     isValidISODate(latestPaidRecurring.renewal_date) &&
     latestPaidRecurring.renewal_date >= today
@@ -343,6 +358,13 @@ export function reconcileMerchantLifecycle(
     reason: "renewal_window_elapsed",
     supportingEventID: latestPaidRecurring.id ?? null,
   };
+}
+
+export function canCreateLifecycleCandidate(
+  lifecycle: MerchantLifecycle,
+  suppressed: boolean,
+): boolean {
+  return lifecycle.state === "current" && !suppressed;
 }
 
 export function candidateConfirmationIssues(input: {

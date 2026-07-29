@@ -7,8 +7,9 @@ Renewa's inbox discovery is an authenticated, read-only, review-first pipeline:
 3. Gmail bootstraps a bounded mailbox window and then advances with `historyId`; Microsoft uses an Inbox messages `deltaLink`.
 4. Bounded metadata and snippets select likely billing messages before any full body is retrieved.
 5. One sanitized, truncated message is sent to the configured DeepSeek-compatible JSON extractor.
-6. Runtime validation and deterministic merchant reconciliation create a pending candidate.
-7. Only an authenticated user confirmation applies an addition, update, or cancellation.
+6. Runtime validation and deterministic merchant lifecycle reconciliation classify evidence as current, explicitly ended, or uncertain before a pending candidate is created.
+7. Historical or uncertain receipts remain non-actionable; a later cancellation supersedes earlier receipt evidence.
+8. Only an authenticated user confirmation applies an addition, update, or cancellation. A person can suppress future discovery suggestions for an unused merchant without changing a subscription.
 
 Raw bodies and raw model responses are not stored. OAuth credentials remain encrypted in `email_connections`, which has no authenticated-client table privileges.
 
@@ -49,6 +50,9 @@ The first production release is deliberately on-demand. Starting or checking sca
 - Confirm Gmail OAuth verification for `gmail.readonly` and Microsoft delegated `Mail.Read`.
 - Verify two connected providers create two jobs under one batch and a single-provider failure yields a partial result.
 - Re-run a scan and confirm provider cursors advance without duplicate candidates.
+- Confirm an old receipt followed by a later cancellation does not appear as an add candidate, and that a recent annual receipt remains current until its projected renewal.
+- Confirm “I don’t use this” resolves pending non-cancellation candidates for a merchant and prevents future proposals without changing subscriptions.
+- Confirm incremental scans remain Inbox-focused; do not treat the absence of a cancellation email as lifecycle proof.
 - Confirm malformed JSON, wrong message IDs, impossible dates, unsupported currencies, and prompt-injection text never create actionable candidates.
 - Confirm another authenticated user cannot read or review a candidate through RLS or Function ownership checks.
 - Confirm repeated confirmation is idempotent and an ignored candidate never changes a subscription.

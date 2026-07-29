@@ -7,6 +7,7 @@ struct EmailScanView: View {
     @State private var webSession: ASWebAuthenticationSession?
     @State private var appeared = false
     @State private var reviewCandidate: EmailSubscriptionCandidate?
+    @State private var suppressionCandidate: EmailSubscriptionCandidate?
     @State private var disconnectTarget: EmailConnectionSummary?
     @State private var showingClearConfirmation = false
 
@@ -35,6 +36,10 @@ struct EmailScanView: View {
                     reviewSection
                         .renewaEntrance(appeared, delay: 0.16)
                 }
+                if let suppressed = store.emailScanStatus?.suppressedMerchants, !suppressed.isEmpty {
+                    suppressionSection(suppressed)
+                        .renewaEntrance(appeared, delay: 0.18)
+                }
                 if let errors = store.emailScanStatus?.errors, !errors.isEmpty {
                     errorSection(errors)
                 }
@@ -55,6 +60,25 @@ struct EmailScanView: View {
             EmailCandidateReviewSheet(candidate: candidate)
                 .presentationDetents([.large])
                 .presentationCornerRadius(30)
+        }
+        .confirmationDialog(
+            "Stop suggestions from \(suppressionCandidate?.merchantName ?? "this service")?",
+            isPresented: Binding(
+                get: { suppressionCandidate != nil },
+                set: { if !$0 { suppressionCandidate = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: suppressionCandidate
+        ) { candidate in
+            Button("I don’t use this", role: .destructive) {
+                suppressionCandidate = nil
+                Task { _ = await store.suppressEmailCandidate(candidate) }
+            }
+            Button("Keep reviewing", role: .cancel) {
+                suppressionCandidate = nil
+            }
+        } message: { candidate in
+            Text("Renewa will stop suggesting \(candidate.merchantName) from inbox evidence. This does not cancel or change any subscription.")
         }
         .confirmationDialog(
             "Disconnect this inbox?",
@@ -303,16 +327,27 @@ struct EmailScanView: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button("Ignore") {
-                        Task {
-                            _ = await store.reviewEmailCandidate(candidate, decision: .ignore)
+                    if EmailDiscoveryPresentationState.canSuppress(candidate) {
+                        Button("Not using this") {
+                            suppressionCandidate = candidate
                         }
+                        .font(.renewa(13, weight: .semibold))
+                        .foregroundStyle(RenewaTheme.muted)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(RenewaTheme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    } else {
+                        Button("Ignore") {
+                            Task {
+                                _ = await store.reviewEmailCandidate(candidate, decision: .ignore)
+                            }
+                        }
+                        .font(.renewa(14, weight: .semibold))
+                        .foregroundStyle(RenewaTheme.muted)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                        .background(RenewaTheme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     }
-                    .font(.renewa(14, weight: .semibold))
-                    .foregroundStyle(RenewaTheme.muted)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 44)
-                    .background(RenewaTheme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                     Button("Review") {
                         reviewCandidate = candidate
@@ -327,6 +362,36 @@ struct EmailScanView: View {
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private func suppressionSection(_ suppressions: [EmailMerchantSuppression]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Paused suggestions")
+                    .font(.renewa(19, weight: .bold))
+                Text("Resume a merchant whenever you want to see it in discovery again.")
+                    .font(.renewa(13))
+                    .foregroundStyle(RenewaTheme.muted)
+            }
+
+            ForEach(suppressions) { merchant in
+                RenewaCard {
+                    HStack(spacing: 12) {
+                        HeroIcon(.rectangleStack, size: 20)
+                            .foregroundStyle(RenewaTheme.muted)
+                        Text(merchant.merchantTitle)
+                            .font(.renewa(15, weight: .semibold))
+                        Spacer()
+                        Button("Resume") {
+                            Task { _ = await store.unsuppressEmailMerchant(merchant) }
+                        }
+                        .font(.renewa(13, weight: .semibold))
+                        .foregroundStyle(RenewaTheme.sage)
+                        .disabled(store.isReviewingEmailCandidate)
+                    }
+                }
+            }
+        }
     }
 
     private func errorSection(_ errors: [String]) -> some View {
@@ -349,7 +414,9 @@ struct EmailScanView: View {
 
     private var privacyNote: some View {
         Label {
-            Text("Read-only access. Full content is retrieved only for likely billing mail, processed transiently, and never stored by Renewa.")
+            Text(
+                "Read-only, best-effort inbox evidence. Full content is retrieved only for likely billing mail, processed transiently, and never stored. Missing mail never proves a service is active or ended."
+            )
         } icon: {
             HeroIcon(.lockClosed, size: 20)
         }

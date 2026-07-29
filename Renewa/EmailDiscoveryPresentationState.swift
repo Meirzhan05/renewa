@@ -58,7 +58,11 @@ struct EmailDiscoveryPresentationState: Equatable {
         }
         return connectionCount == 0
             ? "Mail access stays read-only and can be disconnected anytime."
-            : "Only likely billing messages are sent for structured extraction."
+            : "Only current renewal evidence enters your review queue."
+    }
+
+    static func canSuppress(_ candidate: EmailSubscriptionCandidate) -> Bool {
+        candidate.eventType != "canceled" && candidate.suggestedAction != .cancel
     }
 
     static func confirmationIssues(

@@ -79,6 +79,16 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
+    func test_unusedServiceSuppression_isUnavailableForCancellation() {
+        XCTAssertTrue(EmailDiscoveryPresentationState.canSuppress(makeCandidate()))
+        XCTAssertFalse(
+            EmailDiscoveryPresentationState.canSuppress(
+                makeCandidate(action: .cancel, eventType: "canceled", matchedSubscriptionID: UUID())
+            )
+        )
+    }
+
+    @MainActor
     private func makeStatus(
         status: EmailScanAggregateStatus,
         stage: EmailScanStage = .idle,
@@ -109,6 +119,7 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             validationFailures: 0,
             pendingCount: pendingCount,
             candidates: [],
+            suppressedMerchants: [],
             connections: connections,
             errors: errors
         )

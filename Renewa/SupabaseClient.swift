@@ -201,6 +201,34 @@ struct SupabaseClient {
         )
     }
 
+    func suppressEmailCandidate(
+        id: UUID,
+        accessToken: String
+    ) async throws -> EmailCandidateDecisionResponse {
+        try await request(
+            path: "/functions/v1/email-scan",
+            method: "POST",
+            body: EmailCandidateSuppressRequest(action: "suppress", candidateID: id),
+            accessToken: accessToken
+        )
+    }
+
+    func unsuppressEmailMerchant(
+        canonicalMerchantKey: String,
+        accessToken: String
+    ) async throws {
+        let response: EmailMerchantUnsuppressionResponse = try await request(
+            path: "/functions/v1/email-scan",
+            method: "POST",
+            body: EmailMerchantUnsuppressionRequest(
+                action: "unsuppress",
+                canonicalMerchantKey: canonicalMerchantKey
+            ),
+            accessToken: accessToken
+        )
+        guard response.unsuppressed else { throw APIError.invalidResponse }
+    }
+
     func disconnectEmailConnection(id: UUID, accessToken: String) async throws -> EmailDisconnectResponse {
         try await request(
             path: "/functions/v1/email-scan",
@@ -419,6 +447,30 @@ private struct EmailCandidateReviewRequest: Encodable {
         case decision
         case edits
     }
+}
+
+private struct EmailCandidateSuppressRequest: Encodable {
+    let action: String
+    let candidateID: UUID
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case candidateID = "candidate_id"
+    }
+}
+
+private struct EmailMerchantUnsuppressionRequest: Encodable {
+    let action: String
+    let canonicalMerchantKey: String
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case canonicalMerchantKey = "canonical_merchant_key"
+    }
+}
+
+private struct EmailMerchantUnsuppressionResponse: Decodable {
+    let unsuppressed: Bool
 }
 
 private struct CandidateEditBody: Encodable {

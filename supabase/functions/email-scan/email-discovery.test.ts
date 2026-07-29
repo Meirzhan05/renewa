@@ -1,5 +1,6 @@
 import {
   buildExtractionMessages,
+  canCreateLifecycleCandidate,
   candidateConfirmationIssues,
   candidateSignalScore,
   canonicalMerchantKey,
@@ -274,5 +275,101 @@ Deno.test("trial messages never establish paid current lifecycle", () => {
   assert(
     lifecycle.state === "uncertain",
     "Expected trial to require review evidence.",
+  );
+});
+
+Deno.test("source time orders late cancellation even when extraction order differs", () => {
+  const lifecycle = reconcileMerchantLifecycle([
+    {
+      id: "cancellation",
+      event_type: "canceled",
+      amount: null,
+      currency: null,
+      billing_cycle: null,
+      event_date: "2026-04-10",
+      renewal_date: null,
+      source_received_at: "2026-04-10T10:00:00Z",
+    },
+    {
+      id: "receipt",
+      event_type: "renewed",
+      amount: 15,
+      currency: "USD",
+      billing_cycle: "monthly",
+      event_date: "2026-04-01",
+      renewal_date: "2026-05-01",
+      source_received_at: "2026-04-01T10:00:00Z",
+    },
+  ], "2026-04-11");
+  assert(
+    lifecycle.state === "ended",
+    "Expected source timestamps to control ordering.",
+  );
+});
+
+Deno.test("later renewal reactivates lifecycle after an earlier cancellation", () => {
+  const lifecycle = reconcileMerchantLifecycle([
+    {
+      id: "cancel",
+      event_type: "canceled",
+      amount: null,
+      currency: null,
+      billing_cycle: null,
+      event_date: "2026-01-20",
+      renewal_date: null,
+      source_received_at: "2026-01-20T10:00:00Z",
+    },
+    {
+      id: "renewal",
+      event_type: "renewed",
+      amount: 20,
+      currency: "USD",
+      billing_cycle: "monthly",
+      event_date: "2026-02-01",
+      renewal_date: "2026-03-01",
+      source_received_at: "2026-02-01T10:00:00Z",
+    },
+  ], "2026-02-02");
+  assert(
+    lifecycle.state === "current",
+    "Expected later paid renewal to be current.",
+  );
+});
+
+Deno.test("merchant suppression blocks an otherwise current candidate", () => {
+  const lifecycle = reconcileMerchantLifecycle([
+    {
+      id: "current",
+      event_type: "renewed",
+      amount: 9,
+      currency: "USD",
+      billing_cycle: "monthly",
+      event_date: "2026-07-20",
+      renewal_date: "2026-08-20",
+      source_received_at: "2026-07-20T10:00:00Z",
+    },
+  ], "2026-07-29");
+  assert(
+    !canCreateLifecycleCandidate(lifecycle, true),
+    "Expected suppression to block candidate.",
+  );
+});
+
+Deno.test("conflicting event and renewal dates remain uncertain", () => {
+  const lifecycle = reconcileMerchantLifecycle([
+    {
+      id: "conflict",
+      event_type: "renewed",
+      amount: 9,
+      currency: "USD",
+      billing_cycle: "monthly",
+      event_date: "2026-07-20",
+      renewal_date: "2026-07-10",
+      source_received_at: "2026-07-20T10:00:00Z",
+    },
+  ], "2026-07-21");
+  assert(
+    lifecycle.state === "uncertain" && lifecycle.reason === "conflicting_dates",
+    "Expected contradictory dates to stay non-actionable.",
   );
 });
