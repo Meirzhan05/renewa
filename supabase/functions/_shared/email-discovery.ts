@@ -60,6 +60,30 @@ export type ExtractionValidation = {
 
 export type CandidateAction = "add" | "update" | "cancel" | "review";
 
+export type MerchantLifecycleState = "current" | "ended" | "uncertain";
+
+export type MerchantLifecycleEvent = {
+  id?: string;
+  event_type: BillingEventType;
+  amount: number | null;
+  currency: string | null;
+  billing_cycle: BillingCycle | null;
+  event_date: string | null;
+  renewal_date: string | null;
+  source_received_at: string;
+};
+
+export type MerchantLifecycle = {
+  state: MerchantLifecycleState;
+  reason:
+    | "explicit_ending"
+    | "explicit_future_renewal"
+    | "projected_current_renewal"
+    | "no_paid_recurring_event"
+    | "renewal_window_elapsed";
+  supportingEventID: string | null;
+};
+
 const strongBillingSignals = [
   "subscription",
   "renewal",
@@ -257,6 +281,68 @@ export function classifyCandidateAction(
   }
   if (event.amount !== null && event.currency !== null) return "add";
   return "review";
+}
+
+export function reconcileMerchantLifecycle(
+  events: MerchantLifecycleEvent[],
+  today = isoToday(),
+): MerchantLifecycle {
+  const ordered = [...events].sort((left, right) =>
+    timestamp(left.source_received_at) - timestamp(right.source_received_at)
+  );
+  const latestEnding = latestEvent(
+    ordered,
+    (event) => event.event_type === "canceled",
+  );
+  const latestPaidRecurring = latestEvent(ordered, isPaidRecurringEvent);
+
+  if (
+    latestEnding &&
+    (!latestPaidRecurring ||
+      timestamp(latestEnding.source_received_at) >=
+        timestamp(latestPaidRecurring.source_received_at))
+  ) {
+    return {
+      state: "ended",
+      reason: "explicit_ending",
+      supportingEventID: latestEnding.id ?? null,
+    };
+  }
+
+  if (!latestPaidRecurring) {
+    return {
+      state: "uncertain",
+      reason: "no_paid_recurring_event",
+      supportingEventID: null,
+    };
+  }
+
+  if (
+    latestPaidRecurring.renewal_date &&
+    isValidISODate(latestPaidRecurring.renewal_date) &&
+    latestPaidRecurring.renewal_date >= today
+  ) {
+    return {
+      state: "current",
+      reason: "explicit_future_renewal",
+      supportingEventID: latestPaidRecurring.id ?? null,
+    };
+  }
+
+  const projectedRenewal = projectedRenewalDate(latestPaidRecurring);
+  if (projectedRenewal && projectedRenewal >= today) {
+    return {
+      state: "current",
+      reason: "projected_current_renewal",
+      supportingEventID: latestPaidRecurring.id ?? null,
+    };
+  }
+
+  return {
+    state: "uncertain",
+    reason: "renewal_window_elapsed",
+    supportingEventID: latestPaidRecurring.id ?? null,
+  };
 }
 
 export function candidateConfirmationIssues(input: {
@@ -490,6 +576,65 @@ function isISODate(value: string): boolean {
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.valueOf()) &&
     date.toISOString().slice(0, 10) === value;
+}
+
+function isValidISODate(value: string): boolean {
+  return isISODate(value);
+}
+
+function isPaidRecurringEvent(event: MerchantLifecycleEvent): boolean {
+  return (event.event_type === "created" || event.event_type === "renewed" ||
+    event.event_type === "price_changed") &&
+    event.amount !== null && event.amount > 0 && event.currency !== null &&
+    /^[A-Z]{3}$/.test(event.currency) && event.billing_cycle !== null;
+}
+
+function latestEvent<T>(
+  events: T[],
+  matches: (event: T) => boolean,
+): T | null {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (matches(events[index])) return events[index];
+  }
+  return null;
+}
+
+function projectedRenewalDate(event: MerchantLifecycleEvent): string | null {
+  if (!event.billing_cycle) return null;
+  const sourceDate = isValidISODate(event.event_date ?? "")
+    ? event.event_date!
+    : event.source_received_at.slice(0, 10);
+  if (!isValidISODate(sourceDate)) return null;
+  const date = new Date(`${sourceDate}T00:00:00Z`);
+  if (event.billing_cycle === "weekly") {
+    date.setUTCDate(date.getUTCDate() + 7);
+  } else if (event.billing_cycle === "monthly") {
+    addUTCMonths(date, 1);
+  } else if (event.billing_cycle === "quarterly") {
+    addUTCMonths(date, 3);
+  } else {
+    addUTCMonths(date, 12);
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function addUTCMonths(date: Date, months: number): void {
+  const day = date.getUTCDate();
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  date.setUTCDate(Math.min(day, lastDay));
+}
+
+function isoToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function timestamp(value: string): number {
+  const parsed = new Date(value).valueOf();
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function unique(values: string[]): string[] {

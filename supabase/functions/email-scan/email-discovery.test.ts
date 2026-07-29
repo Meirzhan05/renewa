@@ -4,6 +4,7 @@ import {
   candidateSignalScore,
   canonicalMerchantKey,
   classifyCandidateAction,
+  reconcileMerchantLifecycle,
   redactEmailAddress,
   reviewTransitionResult,
   sanitizeMailContent,
@@ -186,5 +187,92 @@ Deno.test("connection addresses are redacted", () => {
   assert(
     redactEmailAddress("person@example.com") === "pe••••@example.com",
     "address should be redacted",
+  );
+});
+
+Deno.test("later cancellation makes an earlier receipt ended", () => {
+  const lifecycle = reconcileMerchantLifecycle([
+    {
+      id: "receipt",
+      event_type: "renewed",
+      amount: 12,
+      currency: "USD",
+      billing_cycle: "monthly",
+      event_date: "2026-01-04",
+      renewal_date: "2026-02-04",
+      source_received_at: "2026-01-04T10:00:00Z",
+    },
+    {
+      id: "cancellation",
+      event_type: "canceled",
+      amount: null,
+      currency: null,
+      billing_cycle: null,
+      event_date: "2026-01-20",
+      renewal_date: null,
+      source_received_at: "2026-01-20T10:00:00Z",
+    },
+  ], "2026-01-21");
+  assert(lifecycle.state === "ended", "Expected cancellation to win.");
+  assert(
+    lifecycle.supportingEventID === "cancellation",
+    "Expected cancellation evidence.",
+  );
+});
+
+Deno.test("annual receipt remains current until its projected renewal", () => {
+  const lifecycle = reconcileMerchantLifecycle([
+    {
+      id: "annual",
+      event_type: "renewed",
+      amount: 120,
+      currency: "USD",
+      billing_cycle: "yearly",
+      event_date: "2025-08-01",
+      renewal_date: null,
+      source_received_at: "2025-08-01T10:00:00Z",
+    },
+  ], "2026-07-29");
+  assert(
+    lifecycle.state === "current",
+    "Expected annual service to remain current.",
+  );
+});
+
+Deno.test("old receipt without a current renewal becomes uncertain", () => {
+  const lifecycle = reconcileMerchantLifecycle([
+    {
+      id: "old",
+      event_type: "renewed",
+      amount: 12,
+      currency: "USD",
+      billing_cycle: "monthly",
+      event_date: "2026-01-04",
+      renewal_date: null,
+      source_received_at: "2026-01-04T10:00:00Z",
+    },
+  ], "2026-07-29");
+  assert(
+    lifecycle.state === "uncertain",
+    "Expected old receipt to stay non-actionable.",
+  );
+});
+
+Deno.test("trial messages never establish paid current lifecycle", () => {
+  const lifecycle = reconcileMerchantLifecycle([
+    {
+      id: "trial",
+      event_type: "trial_ending",
+      amount: null,
+      currency: null,
+      billing_cycle: "monthly",
+      event_date: "2026-07-20",
+      renewal_date: "2026-08-20",
+      source_received_at: "2026-07-20T10:00:00Z",
+    },
+  ], "2026-07-29");
+  assert(
+    lifecycle.state === "uncertain",
+    "Expected trial to require review evidence.",
   );
 });
