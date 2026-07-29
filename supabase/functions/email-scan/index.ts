@@ -17,6 +17,7 @@ import {
   isLikelyBillingCandidate,
   MailMessage,
   MailMetadata,
+  reconcileMerchantLifecycle,
   redactEmailAddress,
   reviewTransitionResult,
   SubscriptionCategory,
@@ -97,6 +98,19 @@ Deno.serve(async (request) => {
       }
       case "review":
         return json(await reviewCandidate(admin, user.id, body));
+      case "suppress":
+        return json(await suppressCandidate(admin, user.id, body));
+      case "unsuppress":
+        return json(
+          await unsuppressMerchant(
+            admin,
+            user.id,
+            requiredString(
+              body.canonical_merchant_key,
+              "canonical_merchant_key",
+            ),
+          ),
+        );
       case "connections":
         return json({ connections: await connectionSummaries(admin, user.id) });
       case "disconnect":
@@ -383,6 +397,7 @@ async function processConnectionJob(
   const likely = providerBatch.metadata
     .filter(isLikelyBillingCandidate)
     .slice(0, maximumCandidateMessages);
+  const metadataByID = new Map(likely.map((item) => [item.id, item]));
   await updateRun(admin, runID, {
     candidate_messages: likely.length,
     stage: "extracting",
@@ -412,6 +427,11 @@ async function processConnectionJob(
     if (!extraction.event) continue;
 
     const event = extraction.event;
+    const sourceReceivedAt = metadataByID.get(event.message_id)?.received_at;
+    if (!sourceReceivedAt) {
+      validationFailures += 1;
+      continue;
+    }
     const key = canonicalMerchantKey(event.merchant_name);
     const matched = uniqueSubscriptionMatch(
       subscriptions ?? [],
@@ -420,12 +440,6 @@ async function processConnectionJob(
       provider,
     );
     const matchedID = typeof matched?.id === "string" ? matched.id : null;
-    const action = classifyCandidateAction(event, matchedID);
-    const validationIssues = semanticValidationIssues(
-      event,
-      action,
-      matched?.status ?? null,
-    );
     const providerMessageFingerprint = await sha256(
       `${provider}:${event.message_id}`,
     );
@@ -445,10 +459,11 @@ async function processConnectionJob(
         billing_cycle: event.billing_cycle,
         event_date: event.event_date,
         renewal_date: event.renewal_date,
+        source_received_at: sourceReceivedAt,
         confidence: event.confidence,
         evidence: event.evidence.slice(0, 280),
         validation_state: "valid",
-        validation_issues: validationIssues,
+        validation_issues: [],
         schema_version: extractionSchemaVersion,
         model_identifier: modelIdentifier(),
       }, {
@@ -459,6 +474,57 @@ async function processConnectionJob(
       .maybeSingle();
     if (eventError) throw eventError;
     if (!savedEvent) continue;
+
+    const lifecycle = await merchantLifecycle(admin, userID, key);
+    let action: ReturnType<typeof classifyCandidateAction> | null = null;
+    if (lifecycle.state === "current") {
+      await resolveStaleCancellationCandidates(
+        admin,
+        userID,
+        key,
+        "Later current renewal evidence was found.",
+      );
+      if (lifecycle.supportingEventID !== savedEvent.id) continue;
+      if (await merchantIsSuppressed(admin, userID, key)) {
+        await resolvePendingDiscoveryCandidates(
+          admin,
+          userID,
+          key,
+          "You chose not to receive discovery suggestions for this merchant.",
+        );
+        continue;
+      }
+      action = classifyCandidateAction(event, matchedID);
+    } else {
+      await resolvePendingDiscoveryCandidates(
+        admin,
+        userID,
+        key,
+        lifecycleResolutionReason(lifecycle.state),
+      );
+      const matchedStatus = typeof matched?.status === "string"
+        ? matched.status
+        : null;
+      if (
+        lifecycle.state !== "ended" ||
+        lifecycle.supportingEventID !== savedEvent.id ||
+        event.event_type !== "canceled" || matchedStatus !== "active"
+      ) {
+        continue;
+      }
+      action = "cancel";
+    }
+    const validationIssues = semanticValidationIssues(
+      event,
+      action,
+      matched?.status ?? null,
+    );
+    const { error: validationUpdateError } = await admin
+      .from("detected_billing_events")
+      .update({ validation_issues: validationIssues })
+      .eq("id", savedEvent.id)
+      .eq("user_id", userID);
+    if (validationUpdateError) throw validationUpdateError;
 
     const { error: candidateError } = await admin.from(
       "subscription_candidates",
@@ -507,6 +573,93 @@ async function processConnectionJob(
     completed_at: now,
     error_message: null,
   });
+}
+
+async function merchantLifecycle(
+  admin: AdminClient,
+  userID: string,
+  merchantKey: string,
+) {
+  const { data, error } = await admin
+    .from("detected_billing_events")
+    .select(
+      "id,event_type,amount,currency,billing_cycle,event_date,renewal_date,source_received_at",
+    )
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", merchantKey)
+    .order("source_received_at", { ascending: true });
+  if (error) throw error;
+  return reconcileMerchantLifecycle((data ?? []).map((event) => ({
+    id: String(event.id),
+    event_type: event.event_type,
+    amount: numberOrNull(event.amount),
+    currency: stringOrNull(event.currency),
+    billing_cycle: event.billing_cycle as BillingCycle | null,
+    event_date: stringOrNull(event.event_date),
+    renewal_date: stringOrNull(event.renewal_date),
+    source_received_at: String(event.source_received_at),
+  })));
+}
+
+async function merchantIsSuppressed(
+  admin: AdminClient,
+  userID: string,
+  merchantKey: string,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from("merchant_discovery_suppressions")
+    .select("canonical_merchant_key")
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", merchantKey)
+    .maybeSingle();
+  if (error) throw error;
+  return data !== null;
+}
+
+async function resolvePendingDiscoveryCandidates(
+  admin: AdminClient,
+  userID: string,
+  merchantKey: string,
+  reason: string,
+): Promise<void> {
+  const { error } = await admin.from("subscription_candidates")
+    .update({
+      review_status: "ignored",
+      system_resolution_reason: reason,
+      system_resolved_at: new Date().toISOString(),
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", merchantKey)
+    .eq("review_status", "pending")
+    .neq("event_type", "canceled");
+  if (error) throw error;
+}
+
+async function resolveStaleCancellationCandidates(
+  admin: AdminClient,
+  userID: string,
+  merchantKey: string,
+  reason: string,
+): Promise<void> {
+  const { error } = await admin.from("subscription_candidates")
+    .update({
+      review_status: "ignored",
+      system_resolution_reason: reason,
+      system_resolved_at: new Date().toISOString(),
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", merchantKey)
+    .eq("review_status", "pending")
+    .eq("event_type", "canceled");
+  if (error) throw error;
+}
+
+function lifecycleResolutionReason(state: "ended" | "uncertain"): string {
+  return state === "ended"
+    ? "Later ending evidence was found for this merchant."
+    : "Current renewal evidence is unavailable for this merchant.";
 }
 
 async function scanStatus(
@@ -652,6 +805,28 @@ async function reviewCandidate(
     };
   }
 
+  const lifecycleAction = resolvedCandidateAction(candidate);
+  const lifecycle = await merchantLifecycle(
+    admin,
+    userID,
+    candidate.canonical_merchant_key,
+  );
+  const suppressed = lifecycleAction !== "cancel" &&
+    await merchantIsSuppressed(admin, userID, candidate.canonical_merchant_key);
+  const stale = lifecycleAction === "cancel"
+    ? lifecycle.state !== "ended"
+    : lifecycle.state !== "current" || suppressed;
+  if (stale) {
+    const reason = suppressed
+      ? "You chose not to receive discovery suggestions for this merchant."
+      : lifecycleAction === "cancel"
+      ? "Later current renewal evidence was found."
+      : lifecycle.state === "ended"
+      ? lifecycleResolutionReason("ended")
+      : lifecycleResolutionReason("uncertain");
+    return await resolveCandidateForLifecycle(admin, userID, candidate, reason);
+  }
+
   const edits = isRecord(body.edits) ? body.edits as CandidateEdits : {};
   const merchantName = normalizedMerchantEdit(
     edits.merchant_name,
@@ -665,13 +840,7 @@ async function reviewCandidate(
   const renewalDate = edits.renewal_date ?? candidate.renewal_date;
   const category =
     (edits.category ?? candidate.category) as SubscriptionCategory;
-  const action = candidate.suggested_action === "review"
-    ? candidate.event_type === "canceled"
-      ? "review"
-      : candidate.matched_subscription_id
-      ? "update"
-      : "add"
-    : candidate.suggested_action;
+  const action = lifecycleAction;
   const issues = candidateConfirmationIssues({
     action,
     merchantName,
@@ -765,6 +934,110 @@ async function reviewCandidate(
     applied_subscription_id: appliedSubscriptionID,
     idempotent: false,
   };
+}
+
+async function suppressCandidate(
+  admin: AdminClient,
+  userID: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const candidateID = requiredString(body.candidate_id, "candidate_id");
+  const { data: candidate, error } = await admin
+    .from("subscription_candidates")
+    .select(
+      "id,review_status,event_type,suggested_action,canonical_merchant_key",
+    )
+    .eq("id", candidateID)
+    .eq("user_id", userID)
+    .maybeSingle();
+  if (error) throw error;
+  if (!candidate) throw new Error("Candidate not found");
+  if (candidate.review_status !== "pending") {
+    return {
+      candidate_id: candidate.id,
+      review_status: candidate.review_status,
+      idempotent: true,
+    };
+  }
+  if (
+    candidate.event_type === "canceled" ||
+    candidate.suggested_action === "cancel"
+  ) {
+    throw new Error("Candidate cannot be suppressed");
+  }
+  const merchantKey = candidate.canonical_merchant_key;
+  const { error: suppressionError } = await admin.from(
+    "merchant_discovery_suppressions",
+  ).upsert({
+    user_id: userID,
+    canonical_merchant_key: merchantKey,
+    reason: "unused",
+  }, { onConflict: "user_id,canonical_merchant_key" });
+  if (suppressionError) throw suppressionError;
+  await resolvePendingDiscoveryCandidates(
+    admin,
+    userID,
+    merchantKey,
+    "You chose not to receive discovery suggestions for this merchant.",
+  );
+  return {
+    candidate_id: candidate.id,
+    review_status: "ignored",
+    suppressed: true,
+    idempotent: false,
+  };
+}
+
+async function unsuppressMerchant(
+  admin: AdminClient,
+  userID: string,
+  merchantKey: string,
+): Promise<Record<string, unknown>> {
+  if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(merchantKey)) {
+    throw new Error("Invalid canonical_merchant_key");
+  }
+  const { error } = await admin.from("merchant_discovery_suppressions")
+    .delete()
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", merchantKey);
+  if (error) throw error;
+  return { canonical_merchant_key: merchantKey, unsuppressed: true };
+}
+
+async function resolveCandidateForLifecycle(
+  admin: AdminClient,
+  userID: string,
+  candidate: Record<string, unknown>,
+  reason: string,
+): Promise<Record<string, unknown>> {
+  const { error } = await admin.from("subscription_candidates")
+    .update({
+      review_status: "ignored",
+      system_resolution_reason: reason,
+      system_resolved_at: new Date().toISOString(),
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq("id", candidate.id)
+    .eq("user_id", userID)
+    .eq("review_status", "pending");
+  if (error) throw error;
+  return {
+    candidate_id: candidate.id,
+    review_status: "ignored",
+    system_resolution_reason: reason,
+    idempotent: false,
+  };
+}
+
+function resolvedCandidateAction(
+  candidate: Record<string, unknown>,
+): ReturnType<typeof classifyCandidateAction> {
+  const suggestedAction = String(candidate.suggested_action);
+  if (suggestedAction !== "review") {
+    return suggestedAction as ReturnType<typeof classifyCandidateAction>;
+  }
+  if (candidate.event_type === "canceled") return "review";
+  return candidate.matched_subscription_id ? "update" : "add";
 }
 
 async function connectionSummaries(
@@ -1357,6 +1630,15 @@ function requiredString(value: unknown, name: string): string {
 
 function optionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function normalizedMerchantEdit(value: unknown, fallback: unknown): string {
