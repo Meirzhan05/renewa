@@ -75,13 +75,21 @@ Deno.serve(async (request) => {
   }
 
   try {
-    const user = await authenticatedUser(request);
     const admin = adminClient();
     const body = await request.json().catch(() => ({})) as Record<
       string,
       unknown
     >;
     const action = typeof body.action === "string" ? body.action : "start";
+
+    if (action === "automatic") {
+      if (request.headers.get("x-renewa-monitor-secret") !== mustEnv("INBOX_MONITOR_SECRET")) {
+        return json({ message: "Invalid monitor secret" }, 401);
+      }
+      return json(await runAutomaticScans(admin));
+    }
+
+    const user = await authenticatedUser(request);
 
     switch (action) {
       case "start": {
@@ -149,6 +157,7 @@ async function startScan(
   admin: AdminClient,
   userID: string,
   days: number,
+  connectionIDs?: string[],
 ): Promise<Record<string, unknown>> {
   const { data: activeJob, error: activeError } = await admin
     .from("email_scan_jobs")
@@ -183,13 +192,14 @@ async function startScan(
     };
   }
 
-  const { data: connections, error: connectionError } = await admin
+  let connectionsQuery = admin
     .from("email_connections")
     .select(
       "id,user_id,provider,email,encrypted_tokens,last_scanned_at,created_at",
     )
-    .eq("user_id", userID)
-    .order("created_at", { ascending: true });
+    .eq("user_id", userID);
+  if (connectionIDs?.length) connectionsQuery = connectionsQuery.in("id", connectionIDs);
+  const { data: connections, error: connectionError } = await connectionsQuery.order("created_at", { ascending: true });
   if (connectionError) throw connectionError;
   if (!connections || connections.length === 0) {
     throw new Error("Connect Google or Microsoft before scanning.");
@@ -244,6 +254,30 @@ async function startScan(
     errors: [],
     reused: false,
   };
+}
+
+async function runAutomaticScans(admin: AdminClient): Promise<Record<string, unknown>> {
+  const dueBefore = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data: connections, error } = await admin.from("email_connections")
+    .select("id,user_id,created_at,last_automatic_scan_at")
+    .eq("automatic_monitoring_enabled", true)
+    .or(`last_automatic_scan_at.is.null,last_automatic_scan_at.lte.${dueBefore}`)
+    .limit(100);
+  if (error) throw error;
+  const groups = new Map<string, string[]>();
+  for (const connection of connections ?? []) {
+    const list = groups.get(String(connection.user_id)) ?? [];
+    list.push(String(connection.id));
+    groups.set(String(connection.user_id), list);
+  }
+  let queued = 0;
+  for (const [userID, connectionIDs] of groups) {
+    const started = await startScan(admin, userID, 1, connectionIDs);
+    if (!started.reused) queued += connectionIDs.length;
+    scheduleUserJobs(admin, userID, typeof started.scan_id === "string" ? started.scan_id : null);
+    await admin.from("email_connections").update({ last_automatic_scan_at: new Date().toISOString() }).in("id", connectionIDs);
+  }
+  return { queued_connections: queued, monitored_users: groups.size };
 }
 
 function scheduleUserJobs(

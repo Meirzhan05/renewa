@@ -107,6 +107,8 @@ Users can mark a suggested merchant as “I don’t use this” to suppress futu
 
 Inbox Intelligence stores only validated billing facts, compact evidence summaries, user-reviewed merchant aliases, and aggregate quality outcomes. Raw email bodies and raw model payloads remain transient. A second advisory model pass is reserved for configured merchant-identity ambiguity and never receives tools, subscription IDs, or mutation authority; its result cannot bypass review.
 
+During onboarding, people can explicitly connect Google or Microsoft to run a bounded historical discovery scan. Connected inboxes then use daily incremental monitoring through their existing provider cursor; see [EMAIL_DISCOVERY_SETUP.md](supabase/EMAIL_DISCOVERY_SETUP.md) for the required server-only scheduler setup and opt-out/disconnect behavior.
+
 ## Project map
 
 ```text

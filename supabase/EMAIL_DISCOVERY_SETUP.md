@@ -43,7 +43,31 @@ supabase functions deploy mail-oauth-callback --no-verify-jwt
 supabase functions deploy email-scan
 ```
 
-The first production release is deliberately on-demand. Starting or checking scan status resumes retryable user-owned jobs. If automatic retry without an active client becomes necessary, add a separately authenticated scheduled worker in a later change rather than exposing service-role processing through this client Function.
+## Daily automatic monitoring
+
+After a person explicitly connects an inbox during onboarding, Renewa performs the first bounded historical scan and enables daily incremental monitoring for that connection. The daily monitor only follows the existing Gmail history or Microsoft delta cursor; it does not re-run the historical scan or inspect full content unless a new message passes billing-signal filtering.
+
+Set a random server-only `INBOX_MONITOR_SECRET` for the `email-scan` Edge Function. Then use the Supabase Dashboard SQL Editor to enable `pg_cron` and `pg_net`, store the same value in Vault as `INBOX_MONITOR_SECRET`, and schedule a daily call. Keep the secret out of the iOS app and migrations.
+
+```sql
+select cron.schedule(
+  'renewa-inbox-monitor-daily',
+  '15 3 * * *',
+  $$
+  select net.http_post(
+    url := 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/email-scan',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-renewa-monitor-secret',
+      (select decrypted_secret from vault.decrypted_secrets where name = 'INBOX_MONITOR_SECRET')
+    ),
+    body := '{"action":"automatic"}'::jsonb
+  );
+  $$
+);
+```
+
+The monitor is protected by its server-only secret. It processes up to 100 due connections per run, marks each processed connection with `last_automatic_scan_at`, and starts durable jobs; the existing retry/cursor logic handles transient provider failures. Disconnecting an inbox stops all future monitoring. Users can still run a manual scan at any time.
 
 ## Operational checks
 

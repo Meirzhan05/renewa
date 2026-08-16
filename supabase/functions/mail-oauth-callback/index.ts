@@ -40,6 +40,7 @@ Deno.serve(async (request) => {
       token_expires_at: new Date(tokens.expires_at * 1000).toISOString(),
       scopes: tokens.scope?.split(" ") ?? [],
       last_error: null,
+      automatic_monitoring_enabled: true,
     }, { onConflict: "user_id,provider" });
     if (saveError) throw saveError;
     return Response.redirect(`renewa://mail-connected?provider=${provider}`);

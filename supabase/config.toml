@@ -27,7 +27,7 @@ verify_jwt = true
 verify_jwt = false
 
 [functions.email-scan]
-verify_jwt = true
+verify_jwt = false
 
 [functions.insights-refresh]
 verify_jwt = true

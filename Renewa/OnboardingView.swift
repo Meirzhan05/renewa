@@ -1,3 +1,4 @@
+import AuthenticationServices
 import SwiftUI
 
 struct OnboardingView: View {
@@ -8,6 +9,9 @@ struct OnboardingView: View {
     @State private var currency = "USD"
     @State private var avatar: ProfileAvatar = .sage
     @State private var initialized = false
+    @State private var webSession: ASWebAuthenticationSession?
+    @State private var isConnectingInbox = false
+    @State private var inboxConnected = false
 
     private let currencyOptions = ["USD", "EUR", "GBP", "KZT", "CAD", "AUD", "JPY"]
 
@@ -92,12 +96,77 @@ struct OnboardingView: View {
     }
 
     private var discovery: some View {
-        onboardingPage(
-            icon: .sparkles,
-            eyebrow: "INBOX INTELLIGENCE",
-            title: "Find subscriptions hiding in your email.",
-            description: "Connect an inbox later to detect receipts, renewals, price changes, and cancellations with read-only access."
-        )
+        VStack(alignment: .leading, spacing: 24) {
+            Spacer()
+            ZStack {
+                RoundedRectangle(cornerRadius: 32, style: .continuous)
+                    .fill(RenewaTheme.sage)
+                    .frame(width: 116, height: 116)
+                    .rotationEffect(.degrees(-5))
+                HeroIcon(.envelope, style: .solid, size: 54)
+                    .foregroundStyle(.white)
+            }
+            Text("INBOX INTELLIGENCE")
+                .font(.renewa(13, weight: .bold))
+                .tracking(1.4)
+                .foregroundStyle(RenewaTheme.sage)
+            Text("Find the subscriptions you already have.")
+                .font(.renewa(32, weight: .bold))
+            Text("Connect an inbox to run one private historical scan. Afterward, Renewa checks new mail once a day for billing changes. You can pause or disconnect anytime.")
+                .font(.renewa(16))
+                .foregroundStyle(RenewaTheme.muted)
+                .lineSpacing(4)
+            HStack(spacing: 12) {
+                inboxButton("Google", provider: "google", mark: "G")
+                inboxButton("Microsoft", provider: "microsoft", mark: "M")
+            }
+            if inboxConnected {
+                Label("Inbox connected — your first scan is running.", systemImage: "checkmark.circle.fill")
+                    .font(.renewa(14, weight: .semibold))
+                    .foregroundStyle(RenewaTheme.sage)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 26)
+        .padding(.vertical, 38)
+    }
+
+    private func inboxButton(_ title: String, provider: String, mark: String) -> some View {
+        Button {
+            Task { await connectInbox(provider) }
+        } label: {
+            HStack(spacing: 7) {
+                Text(mark).font(.system(size: 16, weight: .bold, design: .rounded))
+                Text("Connect \(title)")
+            }
+            .font(.renewa(14, weight: .semibold))
+            .frame(maxWidth: .infinity)
+            .frame(height: 50)
+            .background(RenewaTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(PressScaleStyle())
+        .disabled(isConnectingInbox)
+    }
+
+    private func connectInbox(_ provider: String) async {
+        do {
+            isConnectingInbox = true
+            let url = try await store.emailAuthorizationURL(provider: provider)
+            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "renewa") { callbackURL, error in
+                Task { @MainActor in
+                    defer { isConnectingInbox = false; webSession = nil }
+                    if let error { store.errorMessage = error.localizedDescription; return }
+                    guard callbackURL != nil else { return }
+                    inboxConnected = await store.startEmailScan()
+                }
+            }
+            session.presentationContextProvider = OAuthPresentationContext.shared
+            webSession = session
+            session.start()
+        } catch {
+            isConnectingInbox = false
+            store.errorMessage = error.localizedDescription
+        }
     }
 
     private var personalization: some View {
