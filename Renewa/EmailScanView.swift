@@ -30,6 +30,10 @@ struct EmailScanView: View {
                     .renewaEntrance(appeared, delay: 0.02)
                 scanHero
                     .renewaEntrance(appeared, delay: 0.08)
+                if let runs = store.emailScanStatus?.runs, !runs.isEmpty {
+                    scanTimeline(runs)
+                        .renewaEntrance(appeared, delay: 0.1)
+                }
                 connectionSection
                     .renewaEntrance(appeared, delay: 0.12)
                 if !pendingCandidates.isEmpty {
@@ -183,7 +187,7 @@ struct EmailScanView: View {
                     Task { _ = await store.startEmailScan() }
                 } label: {
                     RenewaPrimaryActionLabel(
-                        title: presentation.connectionCount == 1 ? "Scan connected inbox" : "Scan connected inboxes",
+                        title: presentation.status == .failed ? "Try scan again" : presentation.connectionCount == 1 ? "Scan connected inbox" : "Scan connected inboxes",
                         pendingTitle: "Scanning privately…",
                         isPending: presentation.isScanning,
                         icon: .sparkles
@@ -203,6 +207,34 @@ struct EmailScanView: View {
         .frame(minHeight: 330)
         .shadow(color: RenewaTheme.sage.opacity(0.13), radius: 18, y: 10)
         .accessibilityElement(children: .contain)
+    }
+
+    private func scanTimeline(_ runs: [EmailScanRunProgress]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Scan progress")
+                .font(.renewa(19, weight: .bold))
+            ForEach(runs) { run in
+                RenewaCard {
+                    HStack(alignment: .top, spacing: 12) {
+                        HeroIcon(run.error == nil ? .envelope : .exclamationTriangle, size: 20)
+                            .foregroundStyle(run.error == nil ? RenewaTheme.sage : RenewaTheme.coral)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(run.provider.capitalized) · \(run.stageTitle)")
+                                .font(.renewa(15, weight: .bold))
+                            if let error = run.error {
+                                Text(error)
+                                    .font(.renewa(13))
+                                    .foregroundStyle(RenewaTheme.coral)
+                            } else {
+                                Text("\(run.scanned) messages checked · \(run.candidateMessages) billing candidates · \(run.detected) discoveries")
+                                    .font(.renewa(13))
+                                    .foregroundStyle(RenewaTheme.muted)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var connectionSection: some View {

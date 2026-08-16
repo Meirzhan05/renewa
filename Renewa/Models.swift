@@ -336,6 +336,7 @@ struct EmailScanStatus: Codable, Equatable {
     let connections: [EmailConnectionSummary]
     let errors: [String]
     let withheldAmbiguities: Int?
+    let runs: [EmailScanRunProgress]?
 
     enum CodingKeys: String, CodingKey {
         case scanID = "scan_id"
@@ -352,10 +353,39 @@ struct EmailScanStatus: Codable, Equatable {
         case connections
         case errors
         case withheldAmbiguities = "withheld_ambiguities"
+        case runs
     }
 
     var isActive: Bool {
         status == .queued || status == .running
+    }
+}
+
+struct EmailScanRunProgress: Codable, Hashable, Identifiable {
+    let provider: String
+    let status: String
+    let stage: String
+    let scanned: Int
+    let candidateMessages: Int
+    let detected: Int
+    let error: String?
+
+    var id: String { provider }
+    enum CodingKeys: String, CodingKey {
+        case provider, status, stage, scanned, detected, error
+        case candidateMessages = "candidate_messages"
+    }
+
+    var stageTitle: String {
+        switch stage {
+        case "fetching": "Checking messages"
+        case "filtering": "Finding billing signals"
+        case "extracting": "Analyzing likely billing email"
+        case "review_ready": "Ready for review"
+        case "completed": "Finished"
+        case "failed": "Couldn’t finish"
+        default: status == "queued" ? "Waiting to start" : "Preparing scan"
+        }
     }
 }
 

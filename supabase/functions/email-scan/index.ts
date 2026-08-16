@@ -745,6 +745,7 @@ async function scanStatus(
       detected: 0,
       pending_count: 0,
       candidates: [],
+      runs: [],
       suppressed_merchants: await merchantSuppressions(admin, userID),
       connections: await connectionSummaries(admin, userID),
       errors: [],
@@ -763,7 +764,7 @@ async function scanStatus(
 
   const { data: jobs, error: jobsError } = await admin
     .from("email_scan_jobs")
-    .select("status,error_message")
+    .select("scan_run_id,status,error_message")
     .eq("user_id", userID)
     .eq("batch_id", batchID);
   if (jobsError) throw jobsError;
@@ -800,6 +801,18 @@ async function scanStatus(
     detected: sum(runs, "events_detected"),
     validation_failures: sum(runs, "validation_failures"),
     pending_count: pendingCandidates.length,
+    runs: runs.map((run) => {
+      const job = (jobs ?? []).find((item) => item.scan_run_id === run.id);
+      return {
+        provider: run.provider,
+        status: job?.status ?? run.status,
+        stage: run.stage,
+        scanned: run.messages_scanned,
+        candidate_messages: run.candidate_messages,
+        detected: run.events_detected,
+        error: job?.error_message ?? run.error_message ?? null,
+      };
+    }),
     candidates: (candidates ?? []).map((candidate) => ({
       ...candidate,
       evidence_events: [{
