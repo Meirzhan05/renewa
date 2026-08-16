@@ -179,7 +179,7 @@ final class AppStore {
             }
             try persistSession()
             try await refreshData()
-            state = authenticatedDestination
+            state = createAccount ? .onboarding : authenticatedDestination
             return true
         } catch {
             authenticationIssue = authenticationIssue(for: error, creatingAccount: createAccount)
