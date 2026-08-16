@@ -43,6 +43,11 @@ struct EmailScanView: View {
                 if let errors = store.emailScanStatus?.errors, !errors.isEmpty {
                     errorSection(errors)
                 }
+                if let withheld = store.emailScanStatus?.withheldAmbiguities, withheld > 0 {
+                    Label("\(withheld) email event\(withheld == 1 ? "" : "s") was kept for safety because the service identity was unclear.", systemImage: "shield.lefthalf.filled")
+                        .font(.renewa(13, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                }
                 privacyNote
                     .renewaEntrance(appeared, delay: 0.2)
             }
@@ -490,6 +495,7 @@ private struct EmailCandidateReviewSheet: View {
 
     @State private var edits: EmailCandidateEdits
     @State private var amountText: String
+    @State private var correctionReason = ""
 
     init(candidate: EmailSubscriptionCandidate) {
         self.candidate = candidate
@@ -519,6 +525,21 @@ private struct EmailCandidateReviewSheet: View {
                         Text(candidate.evidence)
                             .font(.renewa(14))
                             .foregroundStyle(RenewaTheme.muted)
+                        if let events = candidate.evidenceEvents, !events.isEmpty {
+                            Divider()
+                            Text("Why we found this")
+                                .font(.renewa(14, weight: .bold))
+                            ForEach(events) { event in
+                                Text("\(event.eventType.capitalized) · \(event.receivedAt.formatted(date: .abbreviated, time: .omitted))")
+                                    .font(.renewa(13))
+                                    .foregroundStyle(RenewaTheme.muted)
+                            }
+                        }
+                        if let reason = candidate.resolutionReason {
+                            Text(reason.replacingOccurrences(of: "_", with: " ").capitalized)
+                                .font(.renewa(12, weight: .medium))
+                                .foregroundStyle(RenewaTheme.sage)
+                        }
                     }
 
                     RenewaCard {
@@ -578,12 +599,23 @@ private struct EmailCandidateReviewSheet: View {
                         .foregroundStyle(RenewaTheme.coral)
                     }
 
+                    Picker("Anything to correct?", selection: $correctionReason) {
+                        Text("No correction").tag("")
+                        Text("Wrong service").tag("wrong_merchant")
+                        Text("Wrong amount").tag("wrong_amount")
+                        Text("Wrong billing cycle").tag("wrong_cycle")
+                        Text("Not a subscription").tag("not_a_subscription")
+                        Text("Other").tag("other")
+                    }
+                    .font(.renewa(14, weight: .medium))
+
                     Button {
                         Task {
                             let confirmed = await store.reviewEmailCandidate(
                                 candidate,
                                 decision: .confirm,
-                                edits: normalizedEdits
+                                edits: normalizedEdits,
+                                correctionReason: correctionReason.isEmpty ? nil : correctionReason
                             )
                             if confirmed { dismiss() }
                         }

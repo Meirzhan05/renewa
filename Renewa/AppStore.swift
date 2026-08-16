@@ -432,7 +432,8 @@ final class AppStore {
     func reviewEmailCandidate(
         _ candidate: EmailSubscriptionCandidate,
         decision: EmailCandidateDecision,
-        edits: EmailCandidateEdits? = nil
+        edits: EmailCandidateEdits? = nil,
+        correctionReason: String? = nil
     ) async -> Bool {
         guard session != nil else { return false }
         isReviewingEmailCandidate = true
@@ -447,6 +448,7 @@ final class AppStore {
                     id: candidate.id,
                     decision: decision,
                     edits: edits,
+                    correctionReason: correctionReason,
                     accessToken: accessToken
                 )
             }

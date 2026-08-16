@@ -6,10 +6,12 @@ import {
   canonicalMerchantKey,
   classifyCandidateAction,
   reconcileMerchantLifecycle,
+  resolveMerchantIdentity,
   redactEmailAddress,
   reviewTransitionResult,
   sanitizeMailContent,
   validateExtractionEnvelope,
+  validateMerchantAdjudication,
 } from "../_shared/email-discovery.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -257,6 +259,18 @@ Deno.test("old receipt without a current renewal becomes uncertain", () => {
     lifecycle.state === "uncertain",
     "Expected old receipt to stay non-actionable.",
   );
+});
+
+Deno.test("reviewed aliases resolve without guessing", () => {
+  const resolved = resolveMerchantIdentity({ merchant_name: "Netflix.com", sender_domain: "mail.netflix.com", canonical_merchant_key: "netflix-com", aliases: [{ alias_key: "netflix-com", canonical_merchant_key: "netflix" }], known_keys: ["netflix"] });
+  assert(resolved.state === "resolved" && resolved.canonical_merchant_key === "netflix", "reviewed alias should resolve");
+  const ambiguous = resolveMerchantIdentity({ merchant_name: "Apple", sender_domain: null, canonical_merchant_key: "apple", aliases: [{ alias_key: "apple", canonical_merchant_key: "icloud" }, { alias_key: "apple", canonical_merchant_key: "apple-music" }], known_keys: ["apple"] });
+  assert(ambiguous.state === "ambiguous", "competing aliases must abstain");
+});
+
+Deno.test("adjudication cannot reference unsubmitted evidence", () => {
+  assert(validateMerchantAdjudication({ decision: "same_merchant", explanation: "same", evidence_keys: ["a"] }, ["a"]) !== null, "submitted evidence should validate");
+  assert(validateMerchantAdjudication({ decision: "same_merchant", explanation: "same", evidence_keys: ["secret"] }, ["a"]) === null, "unsubmitted evidence must reject");
 });
 
 Deno.test("trial messages never establish paid current lifecycle", () => {

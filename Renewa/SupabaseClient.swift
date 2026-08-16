@@ -186,6 +186,7 @@ struct SupabaseClient {
         id: UUID,
         decision: EmailCandidateDecision,
         edits: EmailCandidateEdits?,
+        correctionReason: String? = nil,
         accessToken: String
     ) async throws -> EmailCandidateDecisionResponse {
         try await request(
@@ -195,7 +196,8 @@ struct SupabaseClient {
                 action: "review",
                 candidateID: id,
                 decision: decision.rawValue,
-                edits: edits.map(CandidateEditBody.init)
+                edits: edits.map(CandidateEditBody.init),
+                correctionReason: correctionReason
             ),
             accessToken: accessToken
         )
@@ -440,12 +442,14 @@ private struct EmailCandidateReviewRequest: Encodable {
     let candidateID: UUID
     let decision: String
     let edits: CandidateEditBody?
+    let correctionReason: String?
 
     enum CodingKeys: String, CodingKey {
         case action
         case candidateID = "candidate_id"
         case decision
         case edits
+        case correctionReason = "correction_reason"
     }
 }
 

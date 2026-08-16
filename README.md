@@ -105,6 +105,8 @@ The configured model endpoint is DeepSeek-compatible Chat Completions in JSON re
 
 Users can mark a suggested merchant as “I don’t use this” to suppress future discovery proposals without canceling or changing a confirmed subscription; suppression is reversible through the authenticated API. Incremental evidence is best-effort and Inbox-focused after the bounded initial scan, so absence of a message never proves that a service is active or ended. Users can also inspect redacted connection state, disconnect an inbox, trigger best-effort Google token revocation, and clear discovery history without removing confirmed subscriptions. Microsoft does not expose an equivalent delegated refresh-token revocation endpoint to this app, so disconnect deletes Renewa's encrypted credential and prevents further access. Before public release, complete the privacy policy, App Store privacy disclosure, provider verification, representative multilingual extraction evaluation, and production rate/latency monitoring. See [EMAIL_DISCOVERY_SETUP.md](supabase/EMAIL_DISCOVERY_SETUP.md).
 
+Inbox Intelligence stores only validated billing facts, compact evidence summaries, user-reviewed merchant aliases, and aggregate quality outcomes. Raw email bodies and raw model payloads remain transient. A second advisory model pass is reserved for configured merchant-identity ambiguity and never receives tools, subscription IDs, or mutation authority; its result cannot bypass review.
+
 ## Project map
 
 ```text

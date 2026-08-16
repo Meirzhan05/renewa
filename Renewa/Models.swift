@@ -257,6 +257,8 @@ struct EmailSubscriptionCandidate: Identifiable, Codable, Hashable {
     let confidence: Double
     let evidence: String
     let validationIssues: [String]
+    let resolutionReason: String?
+    let evidenceEvents: [EmailEvidenceEvent]?
     let createdAt: Date
 
     enum CodingKeys: String, CodingKey {
@@ -274,12 +276,29 @@ struct EmailSubscriptionCandidate: Identifiable, Codable, Hashable {
         case confidence
         case evidence
         case validationIssues = "validation_issues"
+        case resolutionReason = "resolution_reason"
+        case evidenceEvents = "evidence_events"
         case createdAt = "created_at"
     }
 
     var displayAmount: String {
         guard let amount, let currency else { return "Amount needs review" }
         return amount.currencyText(code: currency)
+    }
+}
+
+struct EmailEvidenceEvent: Codable, Hashable, Identifiable {
+    let eventType: String
+    let merchantName: String
+    let receivedAt: Date
+    let evidence: String
+
+    var id: String { "\(eventType)|\(merchantName)|\(receivedAt.timeIntervalSince1970)" }
+    enum CodingKeys: String, CodingKey {
+        case eventType = "event_type"
+        case merchantName = "merchant_name"
+        case receivedAt = "received_at"
+        case evidence
     }
 }
 
@@ -316,6 +335,7 @@ struct EmailScanStatus: Codable, Equatable {
     let suppressedMerchants: [EmailMerchantSuppression]
     let connections: [EmailConnectionSummary]
     let errors: [String]
+    let withheldAmbiguities: Int?
 
     enum CodingKeys: String, CodingKey {
         case scanID = "scan_id"
@@ -331,6 +351,7 @@ struct EmailScanStatus: Codable, Equatable {
         case suppressedMerchants = "suppressed_merchants"
         case connections
         case errors
+        case withheldAmbiguities = "withheld_ambiguities"
     }
 
     var isActive: Bool {

@@ -20,6 +20,7 @@ import {
   MailMetadata,
   reconcileMerchantLifecycle,
   redactEmailAddress,
+  resolveMerchantIdentity,
   reviewTransitionResult,
   SubscriptionCategory,
   tintForCategory,
@@ -409,6 +410,11 @@ async function processConnectionJob(
     .select("id,name,source_key,canonical_merchant_key,brand_id,status")
     .eq("user_id", userID);
   if (subscriptionsError) throw subscriptionsError;
+  const { data: reviewedAliases, error: aliasError } = await admin
+    .from("reviewed_merchant_aliases")
+    .select("alias_key,canonical_merchant_key")
+    .eq("user_id", userID);
+  if (aliasError) throw aliasError;
 
   let detected = 0;
   let validationFailures = 0;
@@ -434,10 +440,21 @@ async function processConnectionJob(
       continue;
     }
     const key = canonicalMerchantKey(event.merchant_name);
+    const identity = resolveMerchantIdentity({
+      merchant_name: event.merchant_name,
+      sender_domain: senderDomain(metadataByID.get(event.message_id)?.sender ?? ""),
+      canonical_merchant_key: key,
+      aliases: (reviewedAliases ?? []) as Array<{ alias_key: string; canonical_merchant_key: string }>,
+      known_keys: [...new Set([key, ...(subscriptions ?? []).map((item) => String(item.canonical_merchant_key ?? "")).filter(Boolean)])],
+    });
+    if (identity.state !== "resolved") {
+      await updateRun(admin, runID, { withheld_ambiguities: 1 });
+      continue;
+    }
     const matched = uniqueSubscriptionMatch(
       subscriptions ?? [],
       event.merchant_name,
-      key,
+        identity.canonical_merchant_key,
       provider,
     );
     const matchedID = typeof matched?.id === "string" ? matched.id : null;
@@ -454,7 +471,7 @@ async function processConnectionJob(
         provider_message_id: providerMessageFingerprint,
         event_type: event.event_type,
         merchant_name: event.merchant_name,
-        canonical_merchant_key: key,
+        canonical_merchant_key: identity.canonical_merchant_key,
         amount: event.amount,
         currency: event.currency,
         billing_cycle: event.billing_cycle,
@@ -476,22 +493,30 @@ async function processConnectionJob(
     if (eventError) throw eventError;
     if (!savedEvent) continue;
 
-    const lifecycle = await merchantLifecycle(admin, userID, key);
+    const lifecycle = await merchantLifecycle(admin, userID, identity.canonical_merchant_key);
+    const bundleID = await upsertEvidenceBundle(
+      admin,
+      userID,
+      identity.canonical_merchant_key,
+      lifecycle,
+      savedEvent.id,
+      identity.reason,
+    );
     let action: ReturnType<typeof classifyCandidateAction> | null = null;
     if (lifecycle.state === "current") {
       await resolveStaleCancellationCandidates(
         admin,
         userID,
-        key,
+        identity.canonical_merchant_key,
         "Later current renewal evidence was found.",
       );
       if (lifecycle.supportingEventID !== savedEvent.id) continue;
-      const suppressed = await merchantIsSuppressed(admin, userID, key);
+      const suppressed = await merchantIsSuppressed(admin, userID, identity.canonical_merchant_key);
       if (!canCreateLifecycleCandidate(lifecycle, suppressed)) {
         await resolvePendingDiscoveryCandidates(
           admin,
           userID,
-          key,
+          identity.canonical_merchant_key,
           "You chose not to receive discovery suggestions for this merchant.",
         );
         continue;
@@ -501,7 +526,7 @@ async function processConnectionJob(
       await resolvePendingDiscoveryCandidates(
         admin,
         userID,
-        key,
+        identity.canonical_merchant_key,
         lifecycleResolutionReason(lifecycle.state),
       );
       const matchedStatus = typeof matched?.status === "string"
@@ -537,7 +562,9 @@ async function processConnectionJob(
       matched_subscription_id: matchedID,
       suggested_action: action,
       merchant_name: event.merchant_name,
-      canonical_merchant_key: key,
+      canonical_merchant_key: identity.canonical_merchant_key,
+      evidence_bundle_id: bundleID,
+      resolution_reason: identity.reason,
       amount: event.amount,
       currency: event.currency,
       billing_cycle: event.billing_cycle,
@@ -601,6 +628,30 @@ async function merchantLifecycle(
     renewal_date: stringOrNull(event.renewal_date),
     source_received_at: String(event.source_received_at),
   })));
+}
+
+async function upsertEvidenceBundle(
+  admin: AdminClient,
+  userID: string,
+  merchantKey: string,
+  lifecycle: ReturnType<typeof reconcileMerchantLifecycle>,
+  eventID: string,
+  resolutionReason: string,
+): Promise<string> {
+  const { data: bundle, error } = await admin.from("merchant_evidence_bundles")
+    .upsert({
+      user_id: userID,
+      canonical_merchant_key: merchantKey,
+      lifecycle_state: lifecycle.state,
+      resolution_reason: resolutionReason,
+      supporting_event_id: lifecycle.supportingEventID,
+    }, { onConflict: "user_id,canonical_merchant_key" })
+    .select("id")
+    .single();
+  if (error || !bundle) throw error ?? new Error("Could not save evidence bundle");
+  const { error: linkError } = await admin.from("merchant_evidence_bundle_events").upsert({ bundle_id: bundle.id, event_id: eventID, user_id: userID }, { onConflict: "bundle_id,event_id" });
+  if (linkError) throw linkError;
+  return String(bundle.id);
 }
 
 async function merchantIsSuppressed(
@@ -749,7 +800,15 @@ async function scanStatus(
     detected: sum(runs, "events_detected"),
     validation_failures: sum(runs, "validation_failures"),
     pending_count: pendingCandidates.length,
-    candidates: candidates ?? [],
+    candidates: (candidates ?? []).map((candidate) => ({
+      ...candidate,
+      evidence_events: [{
+        event_type: candidate.event_type,
+        merchant_name: candidate.merchant_name,
+        received_at: candidate.created_at,
+        evidence: candidate.evidence,
+      }],
+    })),
     suppressed_merchants: await merchantSuppressions(admin, userID),
     connections: await connectionSummaries(admin, userID),
     errors: uniqueStrings([
@@ -874,6 +933,7 @@ async function reviewCandidate(
         "pending",
       );
     if (ignoreError) throw ignoreError;
+    await recordReviewOutcome(admin, userID, candidate, "ignored", body, null);
     return {
       candidate_id: candidate.id,
       review_status: "ignored",
@@ -997,6 +1057,21 @@ async function reviewCandidate(
       "pending",
     );
   if (candidateError) throw candidateError;
+  await recordReviewOutcome(
+    admin,
+    userID,
+    candidate,
+    action === "cancel" ? "canceled" : editsDiffer(candidate, { merchantName, amount, currency, billingCycle, renewalDate, category }) ? "corrected" : "confirmed",
+    body,
+    { merchant_name: merchantName, amount, currency, billing_cycle: billingCycle, renewal_date: renewalDate, category },
+  );
+  if (action !== "cancel") {
+    const aliasKey = canonicalMerchantKey(candidate.merchant_name);
+    const canonicalKey = canonicalMerchantKey(merchantName);
+    if (aliasKey !== canonicalKey) {
+      await admin.from("reviewed_merchant_aliases").upsert({ user_id: userID, alias_key: aliasKey, canonical_merchant_key: canonicalKey }, { onConflict: "user_id,alias_key" });
+    }
+  }
   const { error: eventError } = await admin.from("detected_billing_events")
     .update({
       applied: true,
@@ -1010,6 +1085,27 @@ async function reviewCandidate(
     applied_subscription_id: appliedSubscriptionID,
     idempotent: false,
   };
+}
+
+function editsDiffer(candidate: Record<string, unknown>, value: Record<string, unknown>): boolean {
+  return Object.entries(value).some(([key, item]) => String(candidate[key] ?? "") !== String(item ?? ""));
+}
+
+async function recordReviewOutcome(
+  admin: AdminClient,
+  userID: string,
+  candidate: Record<string, unknown>,
+  outcome: "confirmed" | "corrected" | "ignored" | "suppressed" | "canceled",
+  body: Record<string, unknown>,
+  appliedFields: Record<string, unknown> | null,
+): Promise<void> {
+  const reason = typeof body.correction_reason === "string" && ["wrong_merchant", "wrong_amount", "wrong_cycle", "not_a_subscription", "other"].includes(body.correction_reason) ? body.correction_reason : null;
+  const { error } = await admin.from("subscription_candidate_review_outcomes").insert({
+    user_id: userID, candidate_id: candidate.id, outcome, correction_reason: reason,
+    proposed_fields: { merchant_name: candidate.merchant_name, amount: candidate.amount, currency: candidate.currency, billing_cycle: candidate.billing_cycle, renewal_date: candidate.renewal_date },
+    applied_fields: appliedFields ?? {},
+  });
+  if (error) throw error;
 }
 
 async function suppressCandidate(
@@ -1620,6 +1716,11 @@ function isMicrosoftGraphURL(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function senderDomain(value: string): string | null {
+  const match = value.toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})/);
+  return match?.[1] ?? null;
 }
 
 async function mapWithConcurrency<T, R>(
