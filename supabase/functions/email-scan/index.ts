@@ -51,7 +51,18 @@ type ProviderBatch = {
   metadata: MailMetadata[];
   cursorKind: SyncState["cursor_kind"];
   cursorValue: string;
+  continuation: string | null;
   fullMessage: (metadata: MailMetadata) => Promise<MailMessage>;
+};
+
+type ScanJob = {
+  id: string;
+  batch_id: string;
+  scan_run_id: string;
+  connection_id: string;
+  attempts: number;
+  page_number: number;
+  provider_continuation: string | null;
 };
 
 type CandidateEdits = {
@@ -63,8 +74,8 @@ type CandidateEdits = {
   category?: SubscriptionCategory;
 };
 
-const maximumBootstrapMessages = 500;
-const maximumCandidateMessages = 40;
+const maximumMessagesPerHistoricalPage = 100;
+const maximumIncrementalMessages = 500;
 const extractionSchemaVersion = "billing-event-v1";
 
 Deno.serve(async (request) => {
@@ -82,9 +93,15 @@ Deno.serve(async (request) => {
     >;
     const action = typeof body.action === "string" ? body.action : "start";
 
-    if (action === "automatic") {
+    if (action === "automatic" || action === "continue") {
       if (request.headers.get("x-renewa-monitor-secret") !== mustEnv("INBOX_MONITOR_SECRET")) {
         return json({ message: "Invalid monitor secret" }, 401);
+      }
+      if (action === "continue") {
+        const userID = requiredString(body.user_id, "user_id");
+        const batchID = requiredString(body.batch_id, "batch_id");
+        scheduleUserJobs(admin, userID, batchID);
+        return json({ status: "processing" }, 202);
       }
       return json(await runAutomaticScans(admin));
     }
@@ -232,6 +249,8 @@ async function startScan(
       batch_id: batchID,
       scan_run_id: run.id,
       connection_id: connection.id,
+      page_number: 1,
+      provider_continuation: null,
       status: "queued",
       error_message: null,
     };
@@ -319,7 +338,7 @@ async function processUserJobs(
 
   let query = admin
     .from("email_scan_jobs")
-    .select("id,batch_id,scan_run_id,connection_id,attempts")
+    .select("id,batch_id,scan_run_id,connection_id,attempts,page_number,provider_continuation")
     .eq("user_id", userID)
     .eq("status", "queued")
     .lte("available_at", new Date().toISOString())
@@ -329,7 +348,8 @@ async function processUserJobs(
   const { data: jobs, error } = await query;
   if (error) throw error;
 
-  for (const job of jobs ?? []) {
+  let needsFollowup = false;
+  for (const job of (jobs ?? []) as ScanJob[]) {
     const { data: claimed, error: claimError } = await admin
       .from("email_scan_jobs")
       .update({
@@ -346,12 +366,15 @@ async function processUserJobs(
     if (!claimed) continue;
 
     try {
-      await processConnectionJob(
+      const queuedNextPage = await processConnectionJob(
         admin,
         userID,
         job.scan_run_id,
         job.connection_id,
+        job.page_number,
+        job.provider_continuation,
       );
+      needsFollowup = needsFollowup || queuedNextPage;
       await admin.from("email_scan_jobs").update({
         status: "completed",
         completed_at: new Date().toISOString(),
@@ -378,6 +401,7 @@ async function processUserJobs(
       }).eq("id", job.scan_run_id);
     }
   }
+  if (needsFollowup && batchID) queueWorkerContinuation(userID, batchID);
 }
 
 async function processConnectionJob(
@@ -385,7 +409,9 @@ async function processConnectionJob(
   userID: string,
   runID: string,
   connectionID: string,
-): Promise<void> {
+  pageNumber: number,
+  providerContinuation: string | null,
+): Promise<boolean> {
   const { data: connection, error: connectionError } = await admin
     .from("email_connections")
     .select(
@@ -420,22 +446,24 @@ async function processConnectionJob(
   if (syncError) throw syncError;
 
   const providerBatch = provider === "google"
-    ? await fetchGmailBatch(tokens.access_token, storedSync as SyncState | null)
+    ? await fetchGmailBatch(
+      tokens.access_token,
+      storedSync as SyncState | null,
+      providerContinuation,
+    )
     : await fetchMicrosoftBatch(
       tokens.access_token,
       storedSync as SyncState | null,
+      providerContinuation,
     );
 
   await updateRun(admin, runID, {
     stage: "filtering",
-    messages_scanned: providerBatch.metadata.length,
   });
   const likely = providerBatch.metadata
-    .filter(isLikelyBillingCandidate)
-    .slice(0, maximumCandidateMessages);
+    .filter(isLikelyBillingCandidate);
   const metadataByID = new Map(likely.map((item) => [item.id, item]));
   await updateRun(admin, runID, {
-    candidate_messages: likely.length,
     stage: "extracting",
   });
 
@@ -613,6 +641,34 @@ async function processConnectionJob(
     detected += 1;
   }
 
+  const runMetrics = await addRunMetrics(admin, runID, {
+    messages_scanned: providerBatch.metadata.length,
+    candidate_messages: likely.length,
+    events_detected: detected,
+    validation_failures: validationFailures,
+  });
+
+  if (providerBatch.continuation) {
+    const { error: nextJobError } = await admin.from("email_scan_jobs").upsert({
+      user_id: userID,
+      batch_id: (await scanRunBatchID(admin, runID)),
+      scan_run_id: runID,
+      connection_id: connectionID,
+      page_number: pageNumber + 1,
+      provider_continuation: providerBatch.continuation,
+      status: "queued",
+      error_message: null,
+    }, { onConflict: "scan_run_id,page_number", ignoreDuplicates: true });
+    if (nextJobError) throw nextJobError;
+    await updateRun(admin, runID, {
+      status: "running",
+      stage: "queued",
+      completed_at: null,
+      error_message: null,
+    });
+    return true;
+  }
+
   const now = new Date().toISOString();
   const { error: saveSyncError } = await admin.from("mail_sync_states").upsert({
     connection_id: connection.id,
@@ -630,12 +686,11 @@ async function processConnectionJob(
   }).eq("id", connection.id);
   await updateRun(admin, runID, {
     status: "completed",
-    stage: detected > 0 ? "review_ready" : "completed",
-    events_detected: detected,
-    validation_failures: validationFailures,
+    stage: runMetrics.events_detected > 0 ? "review_ready" : "completed",
     completed_at: now,
     error_message: null,
   });
+  return false;
 }
 
 async function merchantLifecycle(
@@ -1386,28 +1441,34 @@ async function clearScanHistory(
 async function fetchGmailBatch(
   accessToken: string,
   sync: SyncState | null,
+  continuation: string | null,
 ): Promise<ProviderBatch> {
   let messageIDs: string[] = [];
   let cursorValue = "";
-  if (sync?.cursor_kind === "gmail_history") {
+  let nextPageToken: string | null = null;
+  if (continuation !== null || !sync) {
+    const bootstrap = await gmailMailboxPage(accessToken, continuation);
+    messageIDs = bootstrap.messageIDs;
+    cursorValue = bootstrap.historyID;
+    nextPageToken = bootstrap.nextPageToken;
+  } else if (sync.cursor_kind === "gmail_history") {
     try {
       const history = await gmailHistory(accessToken, sync.cursor_value);
       messageIDs = history.messageIDs;
       cursorValue = history.historyID;
     } catch (error) {
       if (!errorMessage(error, "").includes("cursor expired")) throw error;
-      const bootstrap = await gmailBootstrap(accessToken, 30);
+      const bootstrap = await gmailRecentPage(accessToken, 30);
       messageIDs = bootstrap.messageIDs;
       cursorValue = bootstrap.historyID;
     }
-  } else {
-    const bootstrap = await gmailBootstrap(accessToken, 365);
-    messageIDs = bootstrap.messageIDs;
-    cursorValue = bootstrap.historyID;
   }
 
   const metadata = await mapWithConcurrency(
-    [...new Set(messageIDs)].slice(0, maximumBootstrapMessages),
+    [...new Set(messageIDs)].slice(
+      0,
+      nextPageToken === null ? maximumIncrementalMessages : maximumMessagesPerHistoricalPage,
+    ),
     6,
     (id) => fetchGmailMetadata(accessToken, id),
   );
@@ -1415,33 +1476,23 @@ async function fetchGmailBatch(
     metadata,
     cursorKind: "gmail_history",
     cursorValue,
+    continuation: nextPageToken,
     fullMessage: (item) => fetchGmailFullMessage(accessToken, item),
   };
 }
 
-async function gmailBootstrap(
+async function gmailMailboxPage(
   accessToken: string,
-  days: number,
-): Promise<{ messageIDs: string[]; historyID: string }> {
-  const messageIDs: string[] = [];
-  let pageToken: string | null = null;
-  do {
-    const params = new URLSearchParams({
-      maxResults: "100",
-      q: `newer_than:${days}d`,
-    });
-    if (pageToken) params.set("pageToken", pageToken);
-    const response = await providerFetch(
-      `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
-      accessToken,
-      "Gmail could not be read. Reconnect your inbox.",
-    );
-    const payload = await response.json();
-    messageIDs.push(
-      ...(payload.messages ?? []).map((message: { id: string }) => message.id),
-    );
-    pageToken = payload.nextPageToken ?? null;
-  } while (pageToken && messageIDs.length < maximumBootstrapMessages);
+  pageToken: string | null,
+): Promise<{ messageIDs: string[]; historyID: string; nextPageToken: string | null }> {
+  const params = new URLSearchParams({ maxResults: String(maximumMessagesPerHistoricalPage) });
+  if (pageToken) params.set("pageToken", pageToken);
+  const response = await providerFetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
+    accessToken,
+    "Gmail could not be read. Reconnect your inbox.",
+  );
+  const payload = await response.json();
 
   const profile = await providerFetch(
     "https://gmail.googleapis.com/gmail/v1/users/me/profile",
@@ -1449,7 +1500,37 @@ async function gmailBootstrap(
     "Gmail profile could not be read.",
   );
   const profilePayload = await profile.json();
-  return { messageIDs, historyID: String(profilePayload.historyId) };
+  return {
+    messageIDs: (payload.messages ?? []).map((message: { id: string }) => message.id),
+    historyID: String(profilePayload.historyId),
+    nextPageToken: typeof payload.nextPageToken === "string" ? payload.nextPageToken : null,
+  };
+}
+
+async function gmailRecentPage(
+  accessToken: string,
+  days: number,
+): Promise<{ messageIDs: string[]; historyID: string }> {
+  const params = new URLSearchParams({
+    maxResults: String(maximumIncrementalMessages),
+    q: `newer_than:${days}d`,
+  });
+  const response = await providerFetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
+    accessToken,
+    "Gmail could not be read. Reconnect your inbox.",
+  );
+  const payload = await response.json();
+  const profile = await providerFetch(
+    "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+    accessToken,
+    "Gmail profile could not be read.",
+  );
+  const profilePayload = await profile.json();
+  return {
+    messageIDs: (payload.messages ?? []).map((message: { id: string }) => message.id),
+    historyID: String(profilePayload.historyId),
+  };
 }
 
 async function gmailHistory(
@@ -1483,7 +1564,7 @@ async function gmailHistory(
     }
     historyID = String(payload.historyId ?? historyID);
     pageToken = payload.nextPageToken ?? null;
-  } while (pageToken && messageIDs.length < maximumBootstrapMessages);
+  } while (pageToken && messageIDs.length < maximumIncrementalMessages);
   return { messageIDs, historyID };
 }
 
@@ -1535,7 +1616,11 @@ async function fetchGmailFullMessage(
 async function fetchMicrosoftBatch(
   accessToken: string,
   sync: SyncState | null,
+  continuation: string | null,
 ): Promise<ProviderBatch> {
+  if (continuation !== null || !sync) {
+    return await fetchMicrosoftMailboxPage(accessToken, continuation);
+  }
   try {
     return await fetchMicrosoftBatchAttempt(accessToken, sync);
   } catch (error) {
@@ -1543,7 +1628,7 @@ async function fetchMicrosoftBatch(
       sync?.cursor_kind === "microsoft_delta" &&
       errorMessage(error, "").includes("cursor expired")
     ) {
-      return await fetchMicrosoftBatchAttempt(accessToken, null);
+      return await fetchMicrosoftMailboxPage(accessToken, null);
     }
     throw error;
   }
@@ -1553,23 +1638,13 @@ async function fetchMicrosoftBatchAttempt(
   accessToken: string,
   sync: SyncState | null,
 ): Promise<ProviderBatch> {
-  const since = new Date(Date.now() - 365 * 86_400_000).toISOString();
   let nextURL: string;
   if (
     sync?.cursor_kind === "microsoft_delta" &&
     isMicrosoftGraphURL(sync.cursor_value)
   ) {
     nextURL = sync.cursor_value;
-  } else {
-    const params = new URLSearchParams({
-      "$select": "id,subject,from,receivedDateTime,bodyPreview",
-      "$filter": `receivedDateTime ge ${since}`,
-      "$orderby": "receivedDateTime desc",
-      "$top": "100",
-    });
-    nextURL =
-      `https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?${params}`;
-  }
+  } else throw new Error("Microsoft synchronization cursor is unavailable.");
 
   const metadata: MailMetadata[] = [];
   let deltaLink: string | null = null;
@@ -1606,9 +1681,55 @@ async function fetchMicrosoftBatchAttempt(
   }
 
   return {
-    metadata: metadata.slice(0, maximumBootstrapMessages),
+    metadata: metadata.slice(0, maximumIncrementalMessages),
     cursorKind: "microsoft_delta",
     cursorValue: deltaLink,
+    continuation: null,
+    fullMessage: (item) => fetchMicrosoftFullMessage(accessToken, item),
+  };
+}
+
+async function fetchMicrosoftMailboxPage(
+  accessToken: string,
+  continuation: string | null,
+): Promise<ProviderBatch> {
+  const params = new URLSearchParams({
+    "$select": "id,subject,from,receivedDateTime,bodyPreview",
+    "$top": String(maximumMessagesPerHistoricalPage),
+  });
+  const nextURL = continuation && isMicrosoftGraphURL(continuation)
+    ? continuation
+    : `https://graph.microsoft.com/v1.0/me/messages/delta?${params}`;
+  const response = await providerFetch(
+    nextURL,
+    accessToken,
+    "Microsoft mail could not be read. Reconnect your inbox.",
+  );
+  const payload = await response.json();
+  const metadata = (payload.value ?? []).flatMap((message: Record<string, unknown>) => {
+    if (message["@removed"] || typeof message.id !== "string") return [];
+    return [{
+      id: message.id,
+      subject: typeof message.subject === "string" ? message.subject : "",
+      sender: typeof (message.from as { emailAddress?: { address?: unknown } } | undefined)?.emailAddress?.address === "string"
+        ? (message.from as { emailAddress: { address: string } }).emailAddress.address
+        : "",
+      received_at: typeof message.receivedDateTime === "string" ? message.receivedDateTime : new Date().toISOString(),
+      snippet: typeof message.bodyPreview === "string" ? message.bodyPreview : "",
+    } satisfies MailMetadata];
+  });
+  const next = typeof payload["@odata.nextLink"] === "string" && isMicrosoftGraphURL(payload["@odata.nextLink"])
+    ? payload["@odata.nextLink"]
+    : null;
+  const delta = typeof payload["@odata.deltaLink"] === "string" && isMicrosoftGraphURL(payload["@odata.deltaLink"])
+    ? payload["@odata.deltaLink"]
+    : "";
+  if (!next && !delta) throw new Error("Microsoft mailbox cursor was not returned.");
+  return {
+    metadata,
+    cursorKind: "microsoft_delta",
+    cursorValue: delta,
+    continuation: next,
     fullMessage: (item) => fetchMicrosoftFullMessage(accessToken, item),
   };
 }
@@ -1800,6 +1921,59 @@ async function updateRun(
     runID,
   );
   if (error) throw error;
+}
+
+async function addRunMetrics(
+  admin: AdminClient,
+  runID: string,
+  additions: {
+    messages_scanned: number;
+    candidate_messages: number;
+    events_detected: number;
+    validation_failures: number;
+  },
+): Promise<{ events_detected: number }> {
+  const { data: run, error: readError } = await admin
+    .from("email_scan_runs")
+    .select("messages_scanned,candidate_messages,events_detected,validation_failures")
+    .eq("id", runID)
+    .single();
+  if (readError || !run) throw readError ?? new Error("Scan run not found");
+  const next = {
+    messages_scanned: Number(run.messages_scanned ?? 0) + additions.messages_scanned,
+    candidate_messages: Number(run.candidate_messages ?? 0) + additions.candidate_messages,
+    events_detected: Number(run.events_detected ?? 0) + additions.events_detected,
+    validation_failures: Number(run.validation_failures ?? 0) + additions.validation_failures,
+  };
+  await updateRun(admin, runID, next);
+  return { events_detected: next.events_detected };
+}
+
+async function scanRunBatchID(admin: AdminClient, runID: string): Promise<string> {
+  const { data, error } = await admin.from("email_scan_runs")
+    .select("batch_id")
+    .eq("id", runID)
+    .single();
+  if (error || !data?.batch_id) throw error ?? new Error("Scan batch not found");
+  return String(data.batch_id);
+}
+
+function queueWorkerContinuation(userID: string, batchID: string): void {
+  const endpoint = `${mustEnv("SUPABASE_URL")}/functions/v1/email-scan`;
+  const work = fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-renewa-monitor-secret": mustEnv("INBOX_MONITOR_SECRET"),
+    },
+    body: JSON.stringify({ action: "continue", user_id: userID, batch_id: batchID }),
+  }).then((response) => {
+    if (!response.ok) throw new Error(`Could not continue mailbox scan (${response.status})`);
+  }).catch((error) => console.error("mailbox scan continuation failed", safeErrorMessage(error)));
+  const runtime = (globalThis as unknown as {
+    EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void };
+  }).EdgeRuntime;
+  if (runtime) runtime.waitUntil(work);
 }
 
 function aggregateStage(

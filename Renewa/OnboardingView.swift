@@ -112,7 +112,7 @@ struct OnboardingView: View {
                 .foregroundStyle(RenewaTheme.sage)
             Text("Find the subscriptions you already have.")
                 .font(.renewa(32, weight: .bold))
-            Text("Connect an inbox to run one private historical scan. Afterward, Renewa checks new mail once a day for billing changes. You can disconnect anytime.")
+            Text("Connect an inbox to privately scan your existing mailbox. Afterward, Renewa checks new mail once a day for billing changes. You can disconnect anytime.")
                 .font(.renewa(16))
                 .foregroundStyle(RenewaTheme.muted)
                 .lineSpacing(4)

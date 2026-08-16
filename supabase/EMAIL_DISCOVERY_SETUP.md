@@ -45,7 +45,7 @@ supabase functions deploy email-scan
 
 ## Daily automatic monitoring
 
-After a person explicitly connects an inbox during onboarding, Renewa performs the first bounded historical scan and enables daily incremental monitoring for that connection. The daily monitor only follows the existing Gmail history or Microsoft delta cursor; it does not re-run the historical scan or inspect full content unless a new message passes billing-signal filtering.
+After a person explicitly connects an inbox during onboarding, Renewa processes the existing inbox in resumable pages and then enables daily incremental monitoring for that connection. The daily monitor only follows the established Gmail history or Microsoft delta cursor; it does not re-run the historical scan or inspect full content unless a new message passes billing-signal filtering.
 
 Set a random server-only `INBOX_MONITOR_SECRET` for the `email-scan` Edge Function. Then use the Supabase Dashboard SQL Editor to enable `pg_cron` and `pg_net`, store the same value in Vault as `INBOX_MONITOR_SECRET`, and schedule a daily call. Keep the secret out of the iOS app and migrations.
 
