@@ -179,7 +179,12 @@ final class AppStore {
             }
             try persistSession()
             try await refreshData()
-            state = createAccount ? .onboarding : authenticatedDestination
+            if createAccount {
+                await requireOnboarding()
+                state = .onboarding
+            } else {
+                state = authenticatedDestination
+            }
             return true
         } catch {
             authenticationIssue = authenticationIssue(for: error, creatingAccount: createAccount)
@@ -818,6 +823,27 @@ final class AppStore {
 
     private var authenticatedDestination: LaunchState {
         profile?.onboardingCompleted == false ? .onboarding : .ready
+    }
+
+    private func requireOnboarding() async {
+        guard let currentProfile = profile else { return }
+        let name = currentProfile.displayName
+            ?? session?.user.email?.split(separator: "@").first.map(String.init)
+            ?? "Renewa member"
+        do {
+            profile = try await performAuthenticated { accessToken in
+                try await self.client.updateProfile(
+                    id: currentProfile.id,
+                    displayName: name,
+                    defaultCurrency: currentProfile.defaultCurrency,
+                    avatarKey: currentProfile.avatarKey,
+                    onboardingCompleted: false,
+                    accessToken: accessToken
+                )
+            }
+        } catch {
+            profile?.onboardingCompleted = false
+        }
     }
 
     private func saveProfile(

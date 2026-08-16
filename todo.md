@@ -28,7 +28,7 @@
 - [x] Replace generic authentication alerts with clear inline sign-in and sign-up error states, including guidance for incorrect credentials, email confirmation, existing accounts, weak passwords, throttling, connectivity, and Google OAuth failures.
 - [x] Add a required Confirm Password field and inline mismatch validation to registration. Keep the display-name field required.
 - [x] Add Google account sign-in with Supabase OAuth and native PKCE. Keep Apple visual-only until an Apple Developer account and Sign in with Apple entitlement are configured.
-- [x] Add a first-run onboarding flow immediately after successful registration. It should introduce the app, request the minimum useful preferences, and finish at the dashboard.
+- [x] Add a first-run onboarding flow immediately after successful registration. It should introduce the app, request the minimum useful preferences, require an explicit inbox-scan or not-now choice, and finish at the dashboard.
 - [x] Refresh expiring Supabase JWTs before authenticated work and on foreground activation, with serialized refresh-token use and one retry after a 401.
 
 ## Profile and preferences

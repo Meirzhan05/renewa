@@ -12,6 +12,7 @@ struct OnboardingView: View {
     @State private var webSession: ASWebAuthenticationSession?
     @State private var isConnectingInbox = false
     @State private var inboxConnected = false
+    @State private var inboxDecisionMade = false
 
     private let currencyOptions = ["USD", "EUR", "GBP", "KZT", "CAD", "AUD", "JPY"]
 
@@ -35,9 +36,9 @@ struct OnboardingView: View {
             TabView(selection: $step) {
                 introduction
                     .tag(0)
-                discovery
-                    .tag(1)
                 personalization
+                    .tag(1)
+                discovery
                     .tag(2)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
@@ -71,8 +72,8 @@ struct OnboardingView: View {
                 .background(RenewaTheme.ink, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
             }
             .buttonStyle(PressScaleStyle())
-            .disabled(store.isBusy || (step == 2 && displayName.trimmed.count < 2))
-            .opacity(step == 2 && displayName.trimmed.count < 2 ? 0.48 : 1)
+            .disabled(store.isBusy || (step == 1 && displayName.trimmed.count < 2) || (step == 2 && !inboxDecisionMade))
+            .opacity((step == 1 && displayName.trimmed.count < 2) || (step == 2 && !inboxDecisionMade) ? 0.48 : 1)
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
         }
@@ -110,9 +111,9 @@ struct OnboardingView: View {
                 .font(.renewa(13, weight: .bold))
                 .tracking(1.4)
                 .foregroundStyle(RenewaTheme.sage)
-            Text("Find the subscriptions you already have.")
+            Text("Would you like us to scan your inbox?")
                 .font(.renewa(32, weight: .bold))
-            Text("Connect an inbox to privately scan your existing mailbox. Afterward, Renewa checks new mail once a day for billing changes. You can disconnect anytime.")
+            Text("Choose an inbox to privately scan your existing mail for subscriptions. Afterward, Renewa checks new mail once a day for billing changes. Or you can choose not now.")
                 .font(.renewa(16))
                 .foregroundStyle(RenewaTheme.muted)
                 .lineSpacing(4)
@@ -124,6 +125,18 @@ struct OnboardingView: View {
                 Label("Inbox connected — your first scan is running.", systemImage: "checkmark.circle.fill")
                     .font(.renewa(14, weight: .semibold))
                     .foregroundStyle(RenewaTheme.sage)
+            }
+            if !inboxConnected {
+                Button {
+                    inboxDecisionMade = true
+                } label: {
+                    Text(inboxDecisionMade ? "You can connect an inbox later" : "Not now")
+                        .font(.renewa(15, weight: .semibold))
+                        .foregroundStyle(RenewaTheme.sage)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                }
+                .buttonStyle(PressScaleStyle())
             }
             Spacer()
         }
@@ -158,6 +171,7 @@ struct OnboardingView: View {
                     if let error { store.errorMessage = error.localizedDescription; return }
                     guard callbackURL != nil else { return }
                     inboxConnected = await store.startEmailScan()
+                    inboxDecisionMade = inboxConnected
                 }
             }
             session.presentationContextProvider = OAuthPresentationContext.shared
