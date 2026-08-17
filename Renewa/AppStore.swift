@@ -596,30 +596,42 @@ final class AppStore {
         if insightReport == nil {
             insightsErrorMessage = nil
         }
+        defer {
+            isLoadingInsights = false
+            isLoadingInsightReport = false
+            isRefreshingInsights = false
+        }
         do {
             let snapshots = try await performAuthenticated { accessToken in
                 try await self.client.fetchSpendingSnapshots(accessToken: accessToken)
             }
             spendingSnapshots = snapshots
             await refreshExchangeRates()
+        } catch is CancellationError {
+            return
         } catch {
             insightsErrorMessage = "Your spending history is unavailable right now."
         }
         hasLoadedInsightsData = true
         isLoadingInsights = false
+
+        guard !subscriptions.isEmpty || !spendingSnapshots.isEmpty else {
+            return
+        }
+
         isLoadingInsightReport = true
         do {
             let response = try await performAuthenticated { accessToken in
                 try await self.client.refreshInsights(force: force, accessToken: accessToken)
             }
             insightReport = response.report
+        } catch is CancellationError {
+            return
         } catch {
             if insightReport == nil {
                 insightsErrorMessage = "AI insights are unavailable right now. Your spending charts are still up to date."
             }
         }
-        isLoadingInsightReport = false
-        isRefreshingInsights = false
     }
 
     func convertedAmount(_ amount: Decimal, from sourceCurrency: String) -> Decimal? {

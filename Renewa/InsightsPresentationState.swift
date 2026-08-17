@@ -38,7 +38,7 @@ struct InsightsPresentationState: Equatable {
     ) {
         let hasEvidence = subscriptionCount > 0 || snapshotPeriodCount > 0 || hasInsightReport
 
-        if !hasLoadedInsightsData || (isLoadingInsightReport && !hasEvidence) {
+        if !hasLoadedInsightsData {
             evidence = .unresolved
         } else if hasEvidence {
             evidence = .dashboard
