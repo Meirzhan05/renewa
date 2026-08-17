@@ -265,6 +265,10 @@ struct EmailScanView: View {
                 }
             }
 
+            if !connectedProviders.isEmpty {
+                inboxAlertSetting
+            }
+
             if connectedProviders.count < 2 {
                 HStack(spacing: 12) {
                     if !connectedProviders.contains("google") {
@@ -276,6 +280,30 @@ struct EmailScanView: View {
                 }
             }
         }
+    }
+
+    private var inboxAlertSetting: some View {
+        RenewaCard {
+            Toggle(
+                isOn: Binding(
+                    get: { store.inboxNotificationSettings.inboxScanOutcomesEnabled },
+                    set: { enabled in
+                        Task { _ = await store.setInboxScanNotificationsEnabled(enabled) }
+                    }
+                )
+            ) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Inbox scan alerts", systemImage: "bell.badge")
+                        .font(.renewa(15, weight: .semibold))
+                    Text("Get a private alert when a scan finds subscriptions, finishes with nothing new, or needs you to reconnect.")
+                        .font(.renewa(12))
+                        .foregroundStyle(RenewaTheme.muted)
+                }
+            }
+            .tint(RenewaTheme.sage)
+            .disabled(store.isUpdatingInboxNotifications)
+        }
+        .accessibilityHint("Controls notifications for completed inbox scans")
     }
 
     private func connectionCard(_ connection: EmailConnectionSummary) -> some View {

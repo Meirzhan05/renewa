@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct RenewaApp: App {
     @State private var store = AppStore()
+    @UIApplicationDelegateAdaptor(NotificationAppDelegate.self) private var notificationDelegate
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -18,6 +19,10 @@ struct RenewaApp: App {
                     Task {
                         await store.appDidBecomeActive()
                     }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .renewaDeviceTokenUpdated)) { notification in
+                    guard let token = notification.object as? String else { return }
+                    Task { await store.receivedAPNSDeviceToken(token) }
                 }
         }
     }

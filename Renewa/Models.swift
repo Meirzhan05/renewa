@@ -389,6 +389,24 @@ struct EmailScanRunProgress: Codable, Hashable, Identifiable {
     }
 }
 
+struct InboxNotificationSettings: Codable, Equatable {
+    var inboxScanOutcomesEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case inboxScanOutcomesEnabled = "inbox_scan_outcomes_enabled"
+    }
+}
+
+struct NotificationInstallationResponse: Codable, Equatable {
+    let installationID: UUID
+    let isEnabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case installationID = "installation_id"
+        case isEnabled = "is_enabled"
+    }
+}
+
 struct EmailCandidateEdits: Equatable {
     var merchantName: String
     var amount: Decimal?

@@ -250,6 +250,85 @@ struct SupabaseClient {
         guard response.cleared else { throw APIError.invalidResponse }
     }
 
+    func inboxNotificationSettings(accessToken: String) async throws -> InboxNotificationSettings {
+        try await request(
+            path: "/functions/v1/notification-settings",
+            method: "POST",
+            body: ["action": "status"],
+            accessToken: accessToken
+        )
+    }
+
+    func setInboxNotificationOutcomesEnabled(_ enabled: Bool, accessToken: String) async throws -> InboxNotificationSettings {
+        try await request(
+            path: "/functions/v1/notification-settings",
+            method: "POST",
+            body: NotificationPreferenceRequest(enabled: enabled),
+            accessToken: accessToken
+        )
+    }
+
+    func registerNotificationDevice(
+        token: String,
+        environment: String,
+        authorizationStatus: String,
+        accessToken: String
+    ) async throws -> NotificationInstallationResponse {
+        try await request(
+            path: "/functions/v1/notification-settings",
+            method: "POST",
+            body: [
+                "action": "register_device",
+                "device_token": token,
+                "environment": environment,
+                "authorization_status": authorizationStatus,
+            ],
+            accessToken: accessToken
+        )
+    }
+
+    func startInboxScanLiveActivity(
+        batchID: UUID,
+        installationID: UUID,
+        activityID: String,
+        pushToken: String,
+        accessToken: String
+    ) async throws {
+        let response: LiveActivityResponse = try await request(
+            path: "/functions/v1/notification-settings",
+            method: "POST",
+            body: [
+                "action": "start_live_activity",
+                "batch_id": batchID.uuidString,
+                "installation_id": installationID.uuidString,
+                "activity_id": activityID,
+                "push_token": pushToken,
+            ],
+            accessToken: accessToken
+        )
+        guard response.registered else { throw APIError.invalidResponse }
+    }
+
+    func disableNotificationDevice(installationID: UUID, accessToken: String) async throws {
+        let response: NotificationDeviceDisabledResponse = try await request(
+            path: "/functions/v1/notification-settings",
+            method: "POST",
+            body: ["action": "disable_device", "installation_id": installationID.uuidString],
+            accessToken: accessToken
+        )
+        guard response.disabled else { throw APIError.invalidResponse }
+    }
+
+    func endInboxScanLiveActivity(activityID: String, accessToken: String) async throws {
+        let response: LiveActivityEndResponse = try await request(
+            path: "/functions/v1/notification-settings",
+            method: "POST",
+            body: ["action": "end_live_activity", "activity_id": activityID],
+            accessToken: accessToken
+        )
+        guard response.ended else { throw APIError.invalidResponse }
+    }
+
     func fetchSpendingSnapshots(accessToken: String) async throws -> [SpendingSnapshot] {
         try await request(
             path: "/rest/v1/monthly_spend_snapshots?select=id,period_start,currency,monthly_total,category_totals&order=period_start.asc",
@@ -525,6 +604,23 @@ private struct EmailDisconnectRequest: Encodable {
 
 private struct EmailHistoryCleanupResponse: Decodable {
     let cleared: Bool
+}
+
+private struct LiveActivityResponse: Decodable {
+    let registered: Bool
+}
+
+private struct LiveActivityEndResponse: Decodable {
+    let ended: Bool
+}
+
+private struct NotificationDeviceDisabledResponse: Decodable {
+    let disabled: Bool
+}
+
+private struct NotificationPreferenceRequest: Encodable {
+    let action = "set_preference"
+    let enabled: Bool
 }
 
 private struct SignUpBody: Encodable {

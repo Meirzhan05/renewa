@@ -121,7 +121,9 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             candidates: [],
             suppressedMerchants: [],
             connections: connections,
-            errors: errors
+            errors: errors,
+            withheldAmbiguities: nil,
+            runs: nil
         )
     }
 
@@ -146,6 +148,8 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             confidence: 0.92,
             evidence: "A monthly subscription event was detected.",
             validationIssues: [],
+            resolutionReason: nil,
+            evidenceEvents: nil,
             createdAt: .now
         )
     }

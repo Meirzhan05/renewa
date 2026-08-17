@@ -57,3 +57,4 @@
 - [x] Add evidence-backed inbox discovery foundations: merchant bundles, reviewed aliases, bounded advisory identity validation, and privacy-minimized review outcomes. Validate against redacted fixtures before considering additional automation.
 - [x] Add opt-in full-mailbox onboarding discovery with resumable pages, explicit connection/scan feedback, and daily cursor-based monitoring; configure the protected Supabase scheduler before enabling it in production.
 - [x] Reconcile per-merchant email evidence into current, ended, or uncertain lifecycle outcomes so obsolete receipts never become actionable subscriptions; allow reversible unused-merchant suppression.
+- [x] Add opt-in Inbox Intelligence outcome alerts with durable, privacy-minimized delivery records, a manual-scan Live Activity, deep linking, APNs invalid-token cleanup, and deployment/runbook documentation; physical APNs delivery remains a release verification step.

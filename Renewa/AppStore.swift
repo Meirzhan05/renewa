@@ -1,6 +1,9 @@
+import ActivityKit
 import Foundation
 import Observation
 import SwiftUI
+import UIKit
+import UserNotifications
 
 @MainActor
 @Observable
@@ -29,6 +32,8 @@ final class AppStore {
     var spendingSnapshots: [SpendingSnapshot] = []
     var insightReport: InsightReport?
     var emailScanStatus: EmailScanStatus?
+    var inboxNotificationSettings = InboxNotificationSettings(inboxScanOutcomesEnabled: false)
+    var isUpdatingInboxNotifications = false
     var isLoadingEmailDiscovery = false
     var isReviewingEmailCandidate = false
     var emailCandidatePendingID: UUID?
@@ -48,6 +53,9 @@ final class AppStore {
     private var exchangeRates: [String: Decimal] = [:]
     private var sessionRefreshTask: Task<Session, Error>?
     private var emailScanPollingTask: Task<Void, Never>?
+    private var notificationInstallationID: UUID?
+    private var pendingDeviceToken: String?
+    private var inboxScanLiveActivity: Activity<InboxScanLiveActivityAttributes>?
 
     private let sessionRefreshLeadTime: TimeInterval = 90
 
@@ -127,6 +135,7 @@ final class AppStore {
             session = try JSONDecoder().decode(Session.self, from: data)
             _ = try await validAccessToken()
             try await refreshData()
+            await loadInboxNotificationSettings()
             state = authenticatedDestination
         } catch {
             if session == nil {
@@ -180,6 +189,7 @@ final class AppStore {
             }
             try persistSession()
             try await refreshData()
+            await loadInboxNotificationSettings()
             if createAccount {
                 await requireOnboarding()
                 state = .onboarding
@@ -247,6 +257,12 @@ final class AppStore {
 
     func signOut() async {
         if let accessToken = session?.accessToken {
+            if let activityID = inboxScanLiveActivity?.id {
+                try? await client.endInboxScanLiveActivity(activityID: activityID, accessToken: accessToken)
+            }
+            if let installationID = notificationInstallationID {
+                try? await client.disableNotificationDevice(installationID: installationID, accessToken: accessToken)
+            }
             try? await client.signOut(accessToken: accessToken)
         }
         clearLocalSession()
@@ -275,6 +291,7 @@ final class AppStore {
     func appDidBecomeActive() async {
         guard session != nil, state != .signedOut else { return }
         _ = try? await validAccessToken()
+        await synchronizeInboxNotificationAuthorization()
     }
 
     func refreshData() async throws {
@@ -427,6 +444,7 @@ final class AppStore {
             withAnimation(RenewaMotion.standard) {
                 emailScanStatus = status
             }
+            await startInboxScanLiveActivity(for: status)
             beginEmailScanPolling(id: status.scanID)
             return true
         } catch {
@@ -565,6 +583,7 @@ final class AppStore {
                     emailScanStatus = status
                 }
                 if !status.isActive {
+                    await finishInboxScanLiveActivity(with: status)
                     return
                 }
                 try await Task.sleep(for: .seconds(1))
@@ -583,6 +602,134 @@ final class AppStore {
         emailScanPollingTask = Task { [weak self] in
             await self?.pollEmailScan(id: id)
         }
+    }
+
+    func loadInboxNotificationSettings() async {
+        guard session != nil else { return }
+        do {
+            inboxNotificationSettings = try await performAuthenticated { accessToken in
+                try await self.client.inboxNotificationSettings(accessToken: accessToken)
+            }
+        } catch {
+            // Notification preferences are optional and must never block Inbox Intelligence.
+        }
+    }
+
+    func setInboxScanNotificationsEnabled(_ enabled: Bool) async -> Bool {
+        guard session != nil else { return false }
+        isUpdatingInboxNotifications = true
+        defer { isUpdatingInboxNotifications = false }
+        if enabled {
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            let authorization: UNAuthorizationStatus
+            if settings.authorizationStatus == .notDetermined {
+                let granted = (try? await center.requestAuthorization(options: [.alert, .badge, .sound])) ?? false
+                authorization = granted ? .authorized : .denied
+            } else {
+                authorization = settings.authorizationStatus
+            }
+            guard authorization == .authorized || authorization == .provisional else {
+                return false
+            }
+            do {
+                inboxNotificationSettings = try await performAuthenticated { accessToken in
+                    try await self.client.setInboxNotificationOutcomesEnabled(true, accessToken: accessToken)
+                }
+                await synchronizeInboxNotificationAuthorization()
+                return true
+            } catch {
+                reportAuthenticatedOperationError(error)
+                return false
+            }
+        }
+        do {
+            inboxNotificationSettings = try await performAuthenticated { accessToken in
+                try await self.client.setInboxNotificationOutcomesEnabled(false, accessToken: accessToken)
+            }
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
+    func receivedAPNSDeviceToken(_ token: String) async {
+        pendingDeviceToken = token
+        await synchronizeInboxNotificationAuthorization()
+    }
+
+    private func synchronizeInboxNotificationAuthorization() async {
+        guard session != nil, inboxNotificationSettings.inboxScanOutcomesEnabled else { return }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        let status = settings.authorizationStatus
+        guard status == .authorized || status == .provisional else { return }
+        UIApplication.shared.registerForRemoteNotifications()
+        guard let token = pendingDeviceToken else { return }
+        do {
+            let response = try await performAuthenticated { accessToken in
+                try await self.client.registerNotificationDevice(
+                    token: token,
+                    environment: Self.apnsEnvironment,
+                    authorizationStatus: status == .provisional ? "provisional" : "authorized",
+                    accessToken: accessToken
+                )
+            }
+            notificationInstallationID = response.installationID
+        } catch {
+            // A token registration failure must not turn a successful preference change into an app-wide error.
+        }
+    }
+
+    private func startInboxScanLiveActivity(for status: EmailScanStatus) async {
+        guard let batchID = status.scanID,
+            inboxNotificationSettings.inboxScanOutcomesEnabled,
+            let installationID = notificationInstallationID,
+            ActivityAuthorizationInfo().areActivitiesEnabled
+        else { return }
+        do {
+            let activity = try Activity.request(
+                attributes: InboxScanLiveActivityAttributes(batchID: batchID.uuidString),
+                content: .init(state: .init(status: status), staleDate: Date.now.addingTimeInterval(15 * 60)),
+                pushType: .token
+            )
+            inboxScanLiveActivity = activity
+            Task { [weak self, client] in
+                for await tokenData in activity.pushTokenUpdates {
+                    guard let self else { return }
+                    do {
+                        try await self.performAuthenticated { accessToken in
+                            try await client.startInboxScanLiveActivity(
+                                batchID: batchID,
+                                installationID: installationID,
+                                activityID: activity.id,
+                                pushToken: tokenData.map { String(format: "%02x", $0) }.joined(),
+                                accessToken: accessToken
+                            )
+                        }
+                    } catch {
+                        return
+                    }
+                }
+            }
+        } catch {
+            // Live Activities are additive; scan progress remains visible in app.
+        }
+    }
+
+    private func finishInboxScanLiveActivity(with status: EmailScanStatus) async {
+        guard inboxScanLiveActivity != nil else { return }
+        // The server owns the terminal update so a scan that finishes after the app backgrounds
+        // still reaches the Live Activity with the same privacy-minimized result.
+        inboxScanLiveActivity = nil
+    }
+
+    private static var apnsEnvironment: String {
+        #if DEBUG
+            "sandbox"
+        #else
+            "production"
+        #endif
     }
 
     func loadInsights(force: Bool = false) async {
@@ -745,6 +892,10 @@ final class AppStore {
         spendingSnapshots = []
         insightReport = nil
         emailScanStatus = nil
+        inboxNotificationSettings = InboxNotificationSettings(inboxScanOutcomesEnabled: false)
+        notificationInstallationID = nil
+        pendingDeviceToken = nil
+        inboxScanLiveActivity = nil
         isLoadingEmailDiscovery = false
         isReviewingEmailCandidate = false
         emailCandidatePendingID = nil

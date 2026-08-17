@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXContainerItemProxy section */
+		30000000000000000000000C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 10000000000000000000000B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 300000000000000000000007;
+			remoteInfo = RenewaInboxLiveActivity;
+		};
 		200000000000000000000012 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 10000000000000000000000B /* Project object */;
@@ -16,10 +23,15 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXBuildFile section */
+		30000000000000000000000B /* RenewaInboxLiveActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 300000000000000000000001 /* RenewaInboxLiveActivity.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		100000000000000000000001 /* Renewa.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Renewa.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000002 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		200000000000000000000001 /* RenewaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RenewaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		300000000000000000000001 /* RenewaInboxLiveActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RenewaInboxLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -33,10 +45,35 @@
 			path = RenewaTests;
 			sourceTree = "<group>";
 		};
+		300000000000000000000003 /* RenewaInboxLiveActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				300000000000000000000011 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
+			path = RenewaInboxLiveActivity;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		300000000000000000000011 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 300000000000000000000007 /* RenewaInboxLiveActivity */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		100000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		300000000000000000000004 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -58,6 +95,7 @@
 			children = (
 				100000000000000000000003 /* Renewa */,
 				200000000000000000000003 /* RenewaTests */,
+				300000000000000000000003 /* RenewaInboxLiveActivity */,
 				100000000000000000000002 /* Config.xcconfig */,
 				100000000000000000000006 /* Products */,
 			);
@@ -68,6 +106,7 @@
 			children = (
 				100000000000000000000001 /* Renewa.app */,
 				200000000000000000000001 /* RenewaTests.xctest */,
+				300000000000000000000001 /* RenewaInboxLiveActivity.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -82,10 +121,12 @@
 				100000000000000000000009 /* Sources */,
 				100000000000000000000004 /* Frameworks */,
 				10000000000000000000000A /* Resources */,
+				30000000000000000000000E /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				30000000000000000000000D /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				100000000000000000000003 /* Renewa */,
@@ -96,6 +137,28 @@
 			productName = Renewa;
 			productReference = 100000000000000000000001 /* Renewa.app */;
 			productType = "com.apple.product-type.application";
+		};
+		300000000000000000000007 /* RenewaInboxLiveActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 300000000000000000000008 /* Build configuration list for PBXNativeTarget "RenewaInboxLiveActivity" */;
+			buildPhases = (
+				300000000000000000000009 /* Sources */,
+				300000000000000000000004 /* Frameworks */,
+				30000000000000000000000A /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				300000000000000000000003 /* RenewaInboxLiveActivity */,
+			);
+			name = RenewaInboxLiveActivity;
+			packageProductDependencies = (
+			);
+			productName = RenewaInboxLiveActivity;
+			productReference = 300000000000000000000001 /* RenewaInboxLiveActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		200000000000000000000007 /* RenewaTests */ = {
 			isa = PBXNativeTarget;
@@ -137,6 +200,9 @@
 						CreatedOnToolsVersion = 26.0;
 						TestTargetID = 100000000000000000000007;
 					};
+					300000000000000000000007 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 				};
 			};
 			buildConfigurationList = 10000000000000000000000C /* Build configuration list for PBXProject "Renewa" */;
@@ -155,6 +221,7 @@
 			targets = (
 				100000000000000000000007 /* Renewa */,
 				200000000000000000000007 /* RenewaTests */,
+				300000000000000000000007 /* RenewaInboxLiveActivity */,
 			);
 		};
 /* End PBXProject section */
@@ -174,10 +241,38 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		30000000000000000000000A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		30000000000000000000000E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				30000000000000000000000B /* RenewaInboxLiveActivity.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		100000000000000000000009 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		300000000000000000000009 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -194,6 +289,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		30000000000000000000000D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 300000000000000000000007 /* RenewaInboxLiveActivity */;
+			targetProxy = 30000000000000000000000C /* PBXContainerItemProxy */;
+		};
 		200000000000000000000011 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 100000000000000000000007 /* Renewa */;
@@ -326,7 +426,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				APS_ENVIRONMENT = development;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = Renewa/Renewa.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
@@ -361,7 +463,9 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				APS_ENVIRONMENT = production;
 				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_ENTITLEMENTS = Renewa/Renewa.entitlements;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				ENABLE_PREVIEWS = YES;
@@ -438,6 +542,56 @@
 			};
 			name = Release;
 		};
+		30000000000000000000000F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "RenewaInboxLiveActivity/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.renewa.app.InboxScanLiveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		300000000000000000000010 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "RenewaInboxLiveActivity/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.renewa.app.InboxScanLiveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -464,6 +618,15 @@
 			buildConfigurations = (
 				20000000000000000000000F /* Debug */,
 				200000000000000000000010 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		300000000000000000000008 /* Build configuration list for PBXNativeTarget "RenewaInboxLiveActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				30000000000000000000000F /* Debug */,
+				300000000000000000000010 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

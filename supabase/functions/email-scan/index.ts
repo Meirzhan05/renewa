@@ -379,6 +379,7 @@ async function processUserJobs(
         status: "completed",
         completed_at: new Date().toISOString(),
       }).eq("id", job.id);
+      await publishBatchNotificationState(admin, userID, job.batch_id);
     } catch (jobError) {
       const message = safeErrorMessage(jobError);
       const retryable = job.attempts + 1 < 3;
@@ -399,9 +400,26 @@ async function processUserJobs(
         error_message: message,
         completed_at: retryable ? null : new Date().toISOString(),
       }).eq("id", job.scan_run_id);
+      await publishBatchNotificationState(admin, userID, job.batch_id);
     }
   }
   if (needsFollowup && batchID) queueWorkerContinuation(userID, batchID);
+}
+
+async function publishBatchNotificationState(
+  admin: AdminClient,
+  userID: string,
+  batchID: string,
+): Promise<void> {
+  try {
+    const { error } = await admin.rpc("publish_inbox_scan_notification_state", {
+      p_user_id: userID,
+      p_batch_id: batchID,
+    });
+    if (error) throw error;
+  } catch (error) {
+    console.error("Could not publish inbox scan notification state", safeErrorMessage(error));
+  }
 }
 
 async function processConnectionJob(

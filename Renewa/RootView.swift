@@ -154,6 +154,7 @@ private enum TabNavigationDirection {
 }
 
 struct MainTabView: View {
+    @Environment(AppStore.self) private var store
     @State private var selectedTab: AppTab = .home
     @State private var showingAdd = false
     @State private var tabNavigationDirection: TabNavigationDirection = .forward
@@ -223,6 +224,10 @@ struct MainTabView: View {
             AddSubscriptionView()
                 .presentationDetents([.large])
                 .presentationCornerRadius(30)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .renewaOpenInboxIntelligence)) { _ in
+            selectTab(.inbox)
+            Task { await store.loadEmailDiscovery() }
         }
     }
 
