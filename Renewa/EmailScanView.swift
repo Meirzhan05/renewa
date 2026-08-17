@@ -487,7 +487,9 @@ struct EmailScanView: View {
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "renewa") { callbackURL, error in
                 Task { @MainActor in
                     if let error {
-                        store.errorMessage = error.localizedDescription
+                        if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
+                            store.errorMessage = error.localizedDescription
+                        }
                     } else if callbackURL != nil {
                         await store.loadEmailDiscovery()
                     }

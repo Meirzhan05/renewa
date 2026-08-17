@@ -1778,7 +1778,11 @@ async function extractBillingEvent(
   }
   const text = payload.choices?.[0]?.message?.content;
   if (typeof text !== "string" || !text) {
-    throw new Error("AI returned no structured output");
+    return {
+      event: null,
+      abstainReason: null,
+      issues: ["ai_empty_response"],
+    };
   }
   try {
     return validateExtractionEnvelope(JSON.parse(text), message.id);

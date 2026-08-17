@@ -166,7 +166,12 @@ struct OnboardingView: View {
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "renewa") { callbackURL, error in
                 Task { @MainActor in
                     defer { isConnectingInbox = false; webSession = nil }
-                    if let error { store.errorMessage = error.localizedDescription; return }
+                    if let error {
+                        if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
+                            store.errorMessage = error.localizedDescription
+                        }
+                        return
+                    }
                     guard let callbackURL else { return }
                     if let message = inboxAuthorizationError(from: callbackURL) {
                         store.errorMessage = message
