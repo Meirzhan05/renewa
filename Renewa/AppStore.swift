@@ -751,9 +751,17 @@ final class AppStore {
     }
 
     private func reportAuthenticatedOperationError(_ error: Error) {
-        if state != .signedOut {
-            errorMessage = error.localizedDescription
+        guard state != .signedOut, !isExpectedCancellation(error) else { return }
+        errorMessage = error.localizedDescription
+    }
+
+    private func isExpectedCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let urlError = error as? URLError, urlError.code == .cancelled {
+            return true
         }
+        let nsError = error as NSError
+        return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
     private func authenticationIssue(for error: Error, creatingAccount: Bool) -> AuthenticationIssue {

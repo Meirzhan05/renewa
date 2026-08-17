@@ -51,6 +51,7 @@
 - [x] Replace synchronous bulk email extraction with resumable per-inbox jobs, Gmail history cursors, Microsoft delta links, metadata-first filtering, and per-message runtime-validated AI extraction that safely skips malformed model replies.
 - [x] Keep AI proposals review-first: let people correct, confirm, or ignore detected additions and changes before subscriptions are mutated.
 - [x] Show redacted connection health and scan progress, and support disconnect, best-effort token revocation, and scan-history cleanup.
+- [x] Treat expected cancellation from tab navigation or dismissed OAuth sheets as non-errors, so background scan work never raises a false global alert.
 - [x] Add backend extraction fixtures and iOS presentation tests for candidate validation, prompt-injection boundaries, idempotency, progress, and confirmation eligibility.
 - [x] Harden OAuth token-expiry validation and deploy the inbox-discovery migration plus mail OAuth and scan Functions to the linked Supabase project.
 - [x] Add evidence-backed inbox discovery foundations: merchant bundles, reviewed aliases, bounded advisory identity validation, and privacy-minimized review outcomes. Validate against redacted fixtures before considering additional automation.
