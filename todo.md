@@ -54,5 +54,5 @@
 - [x] Add backend extraction fixtures and iOS presentation tests for candidate validation, prompt-injection boundaries, idempotency, progress, and confirmation eligibility.
 - [x] Harden OAuth token-expiry validation and deploy the inbox-discovery migration plus mail OAuth and scan Functions to the linked Supabase project.
 - [x] Add evidence-backed inbox discovery foundations: merchant bundles, reviewed aliases, bounded advisory identity validation, and privacy-minimized review outcomes. Validate against redacted fixtures before considering additional automation.
-- [x] Add opt-in full-mailbox onboarding discovery with resumable pages and daily cursor-based monitoring; configure the protected Supabase scheduler before enabling it in production.
+- [x] Add opt-in full-mailbox onboarding discovery with resumable pages, explicit connection/scan feedback, and daily cursor-based monitoring; configure the protected Supabase scheduler before enabling it in production.
 - [x] Reconcile per-merchant email evidence into current, ended, or uncertain lifecycle outcomes so obsolete receipts never become actionable subscriptions; allow reversible unused-merchant suppression.

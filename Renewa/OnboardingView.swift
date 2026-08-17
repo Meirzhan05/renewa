@@ -13,6 +13,7 @@ struct OnboardingView: View {
     @State private var isConnectingInbox = false
     @State private var inboxConnected = false
     @State private var inboxDecisionMade = false
+    @State private var connectedProvider: String?
 
     private let currencyOptions = ["USD", "EUR", "GBP", "KZT", "CAD", "AUD", "JPY"]
 
@@ -60,7 +61,7 @@ struct OnboardingView: View {
                 }
             } label: {
                 RenewaPrimaryActionLabel(
-                    title: step == 2 ? "Finish setup" : "Continue",
+                    title: step == 2 ? finishTitle : "Continue",
                     pendingTitle: "Finishing setup…",
                     isPending: store.isBusy,
                     icon: step < 2 ? .chevronRight : nil
@@ -121,11 +122,7 @@ struct OnboardingView: View {
                 inboxButton("Google", provider: "google", mark: "G")
                 inboxButton("Microsoft", provider: "microsoft", mark: "M")
             }
-            if inboxConnected {
-                Label("Inbox connected — your first scan is running.", systemImage: "checkmark.circle.fill")
-                    .font(.renewa(14, weight: .semibold))
-                    .foregroundStyle(RenewaTheme.sage)
-            }
+            inboxConnectionFeedback
             if !inboxConnected {
                 Button {
                     inboxDecisionMade = true
@@ -163,13 +160,18 @@ struct OnboardingView: View {
 
     private func connectInbox(_ provider: String) async {
         do {
+            connectedProvider = provider
             isConnectingInbox = true
             let url = try await store.emailAuthorizationURL(provider: provider)
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "renewa") { callbackURL, error in
                 Task { @MainActor in
                     defer { isConnectingInbox = false; webSession = nil }
                     if let error { store.errorMessage = error.localizedDescription; return }
-                    guard callbackURL != nil else { return }
+                    guard let callbackURL else { return }
+                    if let message = inboxAuthorizationError(from: callbackURL) {
+                        store.errorMessage = message
+                        return
+                    }
                     inboxConnected = await store.startEmailScan()
                     inboxDecisionMade = inboxConnected
                 }
@@ -181,6 +183,84 @@ struct OnboardingView: View {
             isConnectingInbox = false
             store.errorMessage = error.localizedDescription
         }
+    }
+
+    @ViewBuilder
+    private var inboxConnectionFeedback: some View {
+        if isConnectingInbox {
+            connectionFeedbackCard(
+                title: "Connecting \(providerTitle)…",
+                message: "Finishing the secure connection. You’ll see scan progress here next.",
+                icon: .arrowPath,
+                isWorking: true
+            )
+        } else if inboxConnected {
+            let status = store.emailScanStatus
+            connectionFeedbackCard(
+                title: "\(providerTitle) connected",
+                message: scanProgressText(status),
+                icon: status?.isActive == true ? .sparkles : .checkCircle,
+                isWorking: status?.isActive == true
+            )
+        }
+    }
+
+    private var providerTitle: String {
+        connectedProvider == "microsoft" ? "Microsoft" : "Google"
+    }
+
+    private var finishTitle: String {
+        inboxConnected && store.emailScanStatus?.isActive == true
+            ? "Continue while scanning"
+            : "Finish setup"
+    }
+
+    private func scanProgressText(_ status: EmailScanStatus?) -> String {
+        guard let status else {
+            return "Your inbox is connected. Preparing your first private scan…"
+        }
+        if status.status == .failed {
+            return status.errors.first ?? "The scan needs attention. You can retry it from Inbox Intelligence."
+        }
+        if status.isActive {
+            return "Your first scan is running: \(status.scanned) messages checked and \(status.candidateMessages) billing emails found so far."
+        }
+        return "Your first scan is complete. You can review any findings in Inbox Intelligence."
+    }
+
+    private func connectionFeedbackCard(
+        title: String,
+        message: String,
+        icon: HeroIconName,
+        isWorking: Bool
+    ) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            HeroIcon(icon, style: .solid, size: 22)
+                .foregroundStyle(RenewaTheme.sage)
+                .rotationEffect(.degrees(isWorking && !reduceMotion ? 360 : 0))
+                .animation(
+                    isWorking && !reduceMotion
+                        ? .linear(duration: 1.2).repeatForever(autoreverses: false)
+                        : nil,
+                    value: isWorking
+                )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.renewa(15, weight: .bold))
+                Text(message)
+                    .font(.renewa(13))
+                    .foregroundStyle(RenewaTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(14)
+        .background(RenewaTheme.sage.opacity(0.09), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+    }
+
+    private func inboxAuthorizationError(from callbackURL: URL) -> String? {
+        let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems
+        return items?.first(where: { $0.name == "error_description" })?.value
+            ?? items?.first(where: { $0.name == "error" })?.value
     }
 
     private var personalization: some View {

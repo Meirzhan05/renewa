@@ -47,6 +47,7 @@ final class AppStore {
     private var exchangeRateBaseCurrency: String?
     private var exchangeRates: [String: Decimal] = [:]
     private var sessionRefreshTask: Task<Session, Error>?
+    private var emailScanPollingTask: Task<Void, Never>?
 
     private let sessionRefreshLeadTime: TimeInterval = 90
 
@@ -409,7 +410,7 @@ final class AppStore {
                 emailScanStatus = status
             }
             if status.isActive {
-                await pollEmailScan(id: status.scanID)
+                beginEmailScanPolling(id: status.scanID)
             }
         } catch {
             reportAuthenticatedOperationError(error)
@@ -426,7 +427,7 @@ final class AppStore {
             withAnimation(RenewaMotion.standard) {
                 emailScanStatus = status
             }
-            await pollEmailScan(id: status.scanID)
+            beginEmailScanPolling(id: status.scanID)
             return true
         } catch {
             reportAuthenticatedOperationError(error)
@@ -566,12 +567,21 @@ final class AppStore {
                 if !status.isActive {
                     return
                 }
+                try await Task.sleep(for: .seconds(1))
             } catch is CancellationError {
                 return
             } catch {
                 reportAuthenticatedOperationError(error)
                 return
             }
+        }
+    }
+
+    private func beginEmailScanPolling(id: UUID?) {
+        emailScanPollingTask?.cancel()
+        guard id != nil else { return }
+        emailScanPollingTask = Task { [weak self] in
+            await self?.pollEmailScan(id: id)
         }
     }
 
@@ -714,6 +724,8 @@ final class AppStore {
     }
 
     private func clearLocalSession(message: String? = nil) {
+        emailScanPollingTask?.cancel()
+        emailScanPollingTask = nil
         keychain.clear()
         session = nil
         profile = nil
