@@ -11,6 +11,7 @@ struct EmailScanView: View {
     @State private var learningItem: EmailScanLearningItem?
     @State private var showingClearConfirmation = false
     @State private var showingInboxSettings = false
+    @State private var showingScanDetails = false
 
     private var presentation: EmailDiscoveryPresentationState {
         EmailDiscoveryPresentationState(status: store.emailScanStatus)
@@ -35,9 +36,13 @@ struct EmailScanView: View {
                 } else {
                     assistantStatus
                         .renewaEntrance(appeared, delay: 0.08)
+                    if let latestCheck = presentation.latestCheck {
+                        latestCheckSection(latestCheck)
+                            .renewaEntrance(appeared, delay: 0.1)
+                    }
                     if !pendingCandidates.isEmpty {
                         reviewSection
-                            .renewaEntrance(appeared, delay: 0.12)
+                            .renewaEntrance(appeared, delay: 0.14)
                     }
                 }
             }
@@ -65,6 +70,18 @@ struct EmailScanView: View {
             inboxSettingsSheet
                 .presentationDetents([.large])
                 .presentationCornerRadius(30)
+        }
+        .sheet(isPresented: $showingScanDetails) {
+            NavigationStack {
+                scanDetailsView
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Done") { showingScanDetails = false }
+                        }
+                    }
+            }
+            .presentationDetents([.large])
+            .presentationCornerRadius(30)
         }
         .confirmationDialog(
             "Stop suggestions from \(suppressionCandidate?.merchantName ?? "this service")?",
@@ -123,7 +140,7 @@ struct EmailScanView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Inbox intelligence")
                     .font(.renewa(31, weight: .bold))
-                Text("We watch for meaningful subscription changes.")
+                Text("Subscription activity from your connected inboxes.")
                     .font(.renewa(15))
                     .foregroundStyle(RenewaTheme.muted)
             }
@@ -204,10 +221,6 @@ struct EmailScanView: View {
                             .font(.renewa(12))
                             .foregroundStyle(RenewaTheme.muted)
                     }
-                } else if let lastScannedAt = presentation.lastScannedAt {
-                    Text("Last checked \(lastScannedAt.formatted(.relative(presentation: .named)))")
-                        .font(.renewa(12, weight: .medium))
-                        .foregroundStyle(RenewaTheme.muted)
                 }
 
                 if needsSettingsAction {
@@ -239,6 +252,81 @@ struct EmailScanView: View {
                 candidateCard(candidate)
             }
         }
+    }
+
+    private func latestCheckSection(_ latestCheck: EmailLatestCheckSummary) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Latest check")
+                    .font(.renewa(19, weight: .bold))
+                Spacer()
+                Button("Scan details") {
+                    showingScanDetails = true
+                }
+                .font(.renewa(13, weight: .semibold))
+                .foregroundStyle(RenewaTheme.sage)
+                .accessibilityHint("Opens privacy-safe inbox scan details")
+            }
+
+            RenewaCard {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(alignment: .top, spacing: 12) {
+                        HeroIcon(.envelope, size: 20)
+                            .foregroundStyle(RenewaTheme.sage)
+                            .frame(width: 36, height: 36)
+                            .background(RenewaTheme.sage.opacity(0.12), in: Circle())
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(latestCheck.inboxLabel)
+                                .font(.renewa(15, weight: .semibold))
+                            Text("Checked \(latestCheck.completedAt.formatted(.relative(presentation: .named)))")
+                                .font(.renewa(12))
+                                .foregroundStyle(RenewaTheme.muted)
+                        }
+                    }
+
+                    Text(latestCheck.outcome)
+                        .font(.renewa(14, weight: .medium))
+                        .foregroundStyle(RenewaTheme.ink)
+
+                    if latestCheck.checkedMessageCount != nil || latestCheck.likelyBillingMessageCount != nil {
+                        Divider()
+                        HStack(spacing: 16) {
+                            if let checkedMessageCount = latestCheck.checkedMessageCount {
+                                latestCheckMetric("\(checkedMessageCount) messages checked")
+                            }
+                            if let likelyBillingMessageCount = latestCheck.likelyBillingMessageCount {
+                                latestCheckMetric("\(likelyBillingMessageCount) likely billing")
+                            }
+                        }
+                    }
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(latestCheckAccessibilityLabel(latestCheck))
+        }
+    }
+
+    private func latestCheckMetric(_ label: String) -> some View {
+        Text(label)
+            .font(.renewa(12, weight: .semibold))
+            .foregroundStyle(RenewaTheme.muted)
+    }
+
+    private func latestCheckAccessibilityLabel(_ latestCheck: EmailLatestCheckSummary) -> String {
+        var labels = [
+            "Latest check",
+            latestCheck.inboxLabel,
+            "Checked \(latestCheck.completedAt.formatted(.relative(presentation: .named)))",
+            latestCheck.outcome,
+        ]
+        if let checkedMessageCount = latestCheck.checkedMessageCount {
+            labels.append("\(checkedMessageCount) messages checked")
+        }
+        if let likelyBillingMessageCount = latestCheck.likelyBillingMessageCount {
+            labels.append("\(likelyBillingMessageCount) likely billing")
+        }
+        return labels.joined(separator: ". ")
     }
 
     private var statusIcon: HeroIconName {
