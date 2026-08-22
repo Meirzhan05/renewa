@@ -168,7 +168,7 @@ struct SupabaseClient {
         try await request(
             path: "/functions/v1/email-scan",
             method: "POST",
-            body: EmailScanRequest(action: "start", days: 365, scanID: nil),
+            body: EmailScanRequest(action: "start", days: 180, scanID: nil),
             accessToken: accessToken
         )
     }

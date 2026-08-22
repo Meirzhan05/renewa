@@ -20,6 +20,7 @@
 - [x] 3.3 Implement per-connection debounce and due-work claiming so event bursts create one incremental scan and events during a scan retain a follow-up check.
 - [x] 3.4 Integrate due work with the existing durable `email-scan` jobs, Gmail history cursor, Microsoft delta cursor, and terminal notification publication without changing review-first candidate policy.
 - [ ] 3.5 Add integration-style backend tests for duplicate events, active-scan follow-up, missed-event cursor recovery, invalid webhook input, and zero-candidate automatic completion.
+- [x] 3.6 Bound initial historical discovery to 180 days, use a 90-day provider-cursor recovery window, and verify both provider request policies.
 
 ## 4. Reconciliation, Operations, and Deployment
 

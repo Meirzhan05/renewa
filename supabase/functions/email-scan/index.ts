@@ -28,6 +28,12 @@ import {
 } from "../_shared/email-discovery.ts";
 import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
 import {
+  cursorRecoveryLookbackDays,
+  gmailHistoricalQuery,
+  initialMailboxLookbackDays,
+  microsoftHistoricalFilter,
+} from "../_shared/email-scan-window.ts";
+import {
   renewDueInboxMonitoring,
   stopInboxMonitoring,
 } from "../_shared/inbox-monitoring.ts";
@@ -125,8 +131,7 @@ Deno.serve(async (request) => {
 
     switch (action) {
       case "start": {
-        const days = boundedDays(body.days);
-        const started = await startScan(admin, user.id, days);
+        const started = await startScan(admin, user.id);
         const scanID = typeof started.scan_id === "string"
           ? started.scan_id
           : null;
@@ -188,7 +193,6 @@ Deno.serve(async (request) => {
 async function startScan(
   admin: AdminClient,
   userID: string,
-  days: number,
   connectionIDs?: string[],
 ): Promise<Record<string, unknown>> {
   const { data: activeJob, error: activeError } = await admin
@@ -281,7 +285,7 @@ async function startScan(
     status: "queued",
     stage: "queued",
     connection_count: connections.length,
-    lookback_days: days,
+    lookback_days: initialMailboxLookbackDays,
     scanned: 0,
     candidate_messages: 0,
     detected: 0,
@@ -318,7 +322,7 @@ async function runAutomaticScans(
   }
   let queued = 0;
   for (const [userID, connectionIDs] of groups) {
-    const started = await startScan(admin, userID, 1, connectionIDs);
+    const started = await startScan(admin, userID, connectionIDs);
     if (!started.reused) queued += connectionIDs.length;
     scheduleUserJobs(
       admin,
@@ -367,7 +371,7 @@ async function runDueInboxMonitoringWork(
     if (!claimed) continue;
 
     try {
-      const started = await startScan(admin, claimed.user_id, 1, [
+      const started = await startScan(admin, claimed.user_id, [
         claimed.connection_id,
       ]);
       if (started.reused) {
@@ -1739,7 +1743,11 @@ async function fetchGmailBatch(
   let cursorValue = "";
   let nextPageToken: string | null = null;
   if (continuation !== null || !sync) {
-    const bootstrap = await gmailMailboxPage(accessToken, continuation);
+    const bootstrap = await gmailMailboxPage(
+      accessToken,
+      continuation,
+      initialMailboxLookbackDays,
+    );
     messageIDs = bootstrap.messageIDs;
     cursorValue = bootstrap.historyID;
     nextPageToken = bootstrap.nextPageToken;
@@ -1750,7 +1758,10 @@ async function fetchGmailBatch(
       cursorValue = history.historyID;
     } catch (error) {
       if (!errorMessage(error, "").includes("cursor expired")) throw error;
-      const bootstrap = await gmailRecentPage(accessToken, 30);
+      const bootstrap = await gmailRecentPage(
+        accessToken,
+        cursorRecoveryLookbackDays,
+      );
       messageIDs = bootstrap.messageIDs;
       cursorValue = bootstrap.historyID;
     }
@@ -1778,11 +1789,13 @@ async function fetchGmailBatch(
 async function gmailMailboxPage(
   accessToken: string,
   pageToken: string | null,
+  lookbackDays: number,
 ): Promise<
   { messageIDs: string[]; historyID: string; nextPageToken: string | null }
 > {
   const params = new URLSearchParams({
     maxResults: String(maximumMessagesPerHistoricalPage),
+    q: gmailHistoricalQuery(lookbackDays),
   });
   if (pageToken) params.set("pageToken", pageToken);
   const response = await providerFetch(
@@ -1923,7 +1936,11 @@ async function fetchMicrosoftBatch(
   continuation: string | null,
 ): Promise<ProviderBatch> {
   if (continuation !== null || !sync) {
-    return await fetchMicrosoftMailboxPage(accessToken, continuation);
+    return await fetchMicrosoftMailboxPage(
+      accessToken,
+      continuation,
+      initialMailboxLookbackDays,
+    );
   }
   try {
     return await fetchMicrosoftBatchAttempt(accessToken, sync);
@@ -1932,7 +1949,11 @@ async function fetchMicrosoftBatch(
       sync?.cursor_kind === "microsoft_delta" &&
       errorMessage(error, "").includes("cursor expired")
     ) {
-      return await fetchMicrosoftMailboxPage(accessToken, null);
+      return await fetchMicrosoftMailboxPage(
+        accessToken,
+        null,
+        cursorRecoveryLookbackDays,
+      );
     }
     throw error;
   }
@@ -1996,10 +2017,13 @@ async function fetchMicrosoftBatchAttempt(
 async function fetchMicrosoftMailboxPage(
   accessToken: string,
   continuation: string | null,
+  lookbackDays: number,
 ): Promise<ProviderBatch> {
   const params = new URLSearchParams({
     "$select": "id,subject,from,receivedDateTime,bodyPreview",
     "$top": String(maximumMessagesPerHistoricalPage),
+    "$filter": microsoftHistoricalFilter(lookbackDays),
+    "$orderby": "receivedDateTime desc",
   });
   const nextURL = continuation && isMicrosoftGraphURL(continuation)
     ? continuation
@@ -2352,13 +2376,6 @@ function uniqueStrings(values: unknown[]): string[] {
 
 function modelIdentifier(): string {
   return Deno.env.get("DEEPSEEK_MODEL") ?? "deepseek-chat";
-}
-
-function boundedDays(value: unknown): number {
-  const days = typeof value === "number" && Number.isFinite(value)
-    ? Math.floor(value)
-    : 365;
-  return Math.max(1, Math.min(days, 365));
 }
 
 function requiredString(value: unknown, name: string): string {

@@ -50,3 +50,14 @@ The system SHALL run bounded scheduled reconciliation for monitored connections 
 #### Scenario: A provider event is missed
 - **WHEN** daily reconciliation runs for an inbox whose stored cursor has unseen changes
 - **THEN** the system SHALL process the changes through the same incremental scan pipeline
+
+### Requirement: Historical discovery favors current billing evidence
+The system SHALL limit a first-time mailbox discovery scan to messages received within the last 180 days. If a provider synchronization cursor has expired, the recovery scan SHALL limit retrieval to the last 90 days before storing a new cursor.
+
+#### Scenario: A person connects an existing inbox
+- **WHEN** a connected inbox has no stored provider cursor
+- **THEN** the system SHALL retrieve only the provider's messages from the preceding 180 days, retaining the bound through every historical page
+
+#### Scenario: A provider cursor cannot be used
+- **WHEN** a stored provider cursor has expired or is invalidated
+- **THEN** the system SHALL recover using only messages from the preceding 90 days and resume incremental processing from the replacement cursor

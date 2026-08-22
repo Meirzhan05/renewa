@@ -56,6 +56,12 @@ Scheduled server work has two separate responsibilities:
 
 The jobs use protected, server-only invocation and batch limits. Daily polling alone was rejected as the primary mechanism because it makes a “watching new email” promise inaccurate; push alone was rejected because provider notifications are not a complete-delivery guarantee.
 
+### Bound historical discovery and prioritize recent evidence
+
+The first discovery pass SHALL query the most recent 180 days of a connected mailbox rather than treating the entire mailbox as equally relevant. The Gmail query and Microsoft delta bootstrap MUST apply that bound on every historical page. If a provider cursor expires, recovery SHALL rescan the most recent 90 days before rebuilding the cursor.
+
+This makes recent paid renewals the primary evidence for current subscriptions, contains provider and model work, and prevents distant receipts from dominating the first review queue. Provider-event and daily reconciliation scans remain cursor-based and do not re-read the historical window.
+
 ### Make monitoring—not manual scanning—the dashboard’s primary story
 
 Inbox Intelligence will display a distinct monitoring health state: actively monitoring, checking/reconciling, degraded but protected by daily reconciliation, or reconnect required. It will show a privacy-minimized last successful check and a clear explanation of degraded state. “Check now” remains available as an optional user action; it is not described as the expected way to discover new subscriptions.
