@@ -14,8 +14,8 @@ struct EmailScanView: View {
     @State private var showingInboxSettings = false
     @State private var showingScanDetails = false
     @State private var showingInboxMenu = false
-    @State private var showingPrivacySheet = false
-    @State private var showingReviewPolicy = false
+    @State private var showingMutedServices = false
+    @State private var connectingProvider: String?
 
     private var presentation: EmailDiscoveryPresentationState {
         EmailDiscoveryPresentationState(status: store.emailScanStatus)
@@ -82,7 +82,7 @@ struct EmailScanView: View {
         }
         .sheet(isPresented: $showingInboxSettings) {
             inboxSettingsSheet
-                .presentationDetents([.large])
+                .presentationDetents([.medium, .large])
                 .presentationCornerRadius(30)
         }
         .sheet(isPresented: $showingScanDetails) {
@@ -97,15 +97,10 @@ struct EmailScanView: View {
             .presentationDetents([.large])
             .presentationCornerRadius(30)
         }
-        .sheet(isPresented: $showingPrivacySheet) {
-            inboxPrivacySheet
+        .sheet(isPresented: $showingMutedServices) {
+            mutedServicesSheet
                 .presentationDetents([.medium])
                 .presentationCornerRadius(30)
-        }
-        .alert("Review keeps you in control", isPresented: $showingReviewPolicy) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Renewa never adds, changes, or cancels a subscription from inbox email without your approval.")
         }
         .confirmationDialog(
             "Stop suggestions from \(suppressionCandidate?.merchantName ?? "this service")?",
@@ -609,13 +604,6 @@ struct EmailScanView: View {
                 showingInboxSettings = true
             }
 
-            menuDivider
-
-            inboxMenuRow(icon: "checkmark.shield", title: "Review before tracking", detail: "Always") {
-                showingInboxMenu = false
-                showingReviewPolicy = true
-            }
-
             inboxMenuRow(
                 icon: "bell",
                 title: "Inbox scan alerts",
@@ -637,7 +625,7 @@ struct EmailScanView: View {
                 detail: "\(store.emailScanStatus?.suppressedMerchants.count ?? 0)"
             ) {
                 showingInboxMenu = false
-                showingInboxSettings = true
+                showingMutedServices = true
             }
 
             inboxMenuRow(icon: "clock", title: "Everything it found") {
@@ -645,13 +633,6 @@ struct EmailScanView: View {
                 showingScanDetails = true
             }
 
-            menuDivider
-
-            inboxMenuRow(icon: "lock", title: "Privacy & data") {
-                showingInboxMenu = false
-                showingPrivacySheet = true
-            }
-            .foregroundStyle(RenewaTheme.muted)
         }
         .padding(7)
         .frame(width: 260)
@@ -702,10 +683,6 @@ struct EmailScanView: View {
             .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
         }
         .buttonStyle(InboxMenuButtonStyle())
-    }
-
-    private var inboxPrivacySheet: some View {
-        InboxPrivacySheet()
     }
 
     private var dashboardLoading: some View {
@@ -944,35 +921,51 @@ struct EmailScanView: View {
     private var inboxSettingsSheet: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    connectionSection
-                    if presentation.connectionCount > 0 {
-                        manualScanSection
-                    }
-                    NavigationLink {
-                        scanDetailsView
-                    } label: {
-                        settingsDisclosureRow(
-                            icon: .rectangleStack,
-                            title: "Scan details",
-                            detail: "View privacy-safe outcomes and scan history"
-                        )
-                    }
-                    .buttonStyle(PressScaleStyle())
-                    .accessibilityHint("Opens privacy-safe inbox scan details")
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(connectedProviders.isEmpty ? "Add an inbox" : "Your inboxes")
+                        .font(.renewa(21, weight: .bold))
+                    Text("Watching more accounts catches subscriptions billed to work or personal mail.")
+                        .font(.renewa(12, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                        .padding(.top, 4)
 
-                    if let suppressed = store.emailScanStatus?.suppressedMerchants, !suppressed.isEmpty {
-                        suppressionSection(suppressed)
-                    }
+                    VStack(spacing: 10) {
+                        ForEach(store.emailScanStatus?.connections ?? []) { connection in
+                            inboxConnectionRow(connection)
+                        }
 
-                    privacyNote
+                        if !connectedProviders.contains("google") {
+                            inboxProviderRow(
+                                title: "Google Gmail",
+                                detail: "Personal and work Google accounts",
+                                mark: "G",
+                                provider: "google"
+                            )
+                        }
+
+                        if !connectedProviders.contains("microsoft") {
+                            inboxProviderRow(
+                                title: "Microsoft Outlook",
+                                detail: "Work and personal Microsoft accounts",
+                                mark: "M",
+                                provider: "microsoft"
+                            )
+                        }
+                    }
+                    .padding(.top, 18)
+
+                    Label("Read-only access to likely billing mail. You can disconnect any inbox at any time.", systemImage: "lock")
+                        .font(.renewa(11, weight: .medium))
+                        .foregroundStyle(Color(red: 0.66, green: 0.62, blue: 0.54))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 17)
                 }
                 .padding(24)
                 .padding(.bottom, 14)
             }
             .scrollIndicators(.hidden)
             .background(RenewaTheme.background)
-            .navigationTitle("Inbox settings")
+            .navigationTitle("Inboxes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -980,6 +973,137 @@ struct EmailScanView: View {
                 }
             }
         }
+    }
+
+    private var mutedServicesSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Muted services")
+                        .font(.renewa(21, weight: .bold))
+                    Text("Muted services won’t be suggested from inbox evidence. You can restore them any time.")
+                        .font(.renewa(12, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+
+                    if let suppressed = store.emailScanStatus?.suppressedMerchants, !suppressed.isEmpty {
+                        suppressionSection(suppressed)
+                    } else {
+                        Text("No services are muted.")
+                            .font(.renewa(13, weight: .medium))
+                            .foregroundStyle(RenewaTheme.muted)
+                            .padding(.top, 4)
+                    }
+                }
+                .padding(24)
+            }
+            .scrollIndicators(.hidden)
+            .background(RenewaTheme.background)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { showingMutedServices = false }
+                }
+            }
+        }
+    }
+
+    private func inboxConnectionRow(_ connection: EmailConnectionSummary) -> some View {
+        HStack(spacing: 12) {
+            inboxProviderMark(connection.provider == "google" ? "G" : "M", provider: connection.provider)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(connection.providerTitle)
+                    .font(.renewa(13.5, weight: .semibold))
+                    .foregroundStyle(RenewaTheme.ink)
+                Text(connection.redactedEmail ?? "Connected inbox")
+                    .font(.renewa(11.5, weight: .medium))
+                    .foregroundStyle(RenewaTheme.muted)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if connection.health == "attention" || connection.monitoringHealth == "reconnect_required" {
+                Button("Reconnect") {
+                    Task { await connect(connection.provider) }
+                }
+                .font(.renewa(12, weight: .semibold))
+                .foregroundStyle(RenewaTheme.sage)
+                .disabled(connectingProvider != nil || presentation.isScanning)
+            } else {
+                Button("Connected") {
+                    disconnectTarget = connection
+                }
+                .font(.renewa(12, weight: .semibold))
+                .foregroundStyle(RenewaTheme.sage)
+                .accessibilityHint("Opens the option to disconnect this inbox")
+            }
+        }
+        .padding(.horizontal, 15)
+        .frame(minHeight: 68)
+        .background(Color(red: 0.985, green: 0.974, blue: 0.953), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(RenewaTheme.divider.opacity(0.72), lineWidth: 1)
+        }
+    }
+
+    private func inboxProviderRow(
+        title: String,
+        detail: String,
+        mark: String,
+        provider: String
+    ) -> some View {
+        Button {
+            Task { await connect(provider) }
+        } label: {
+            HStack(spacing: 12) {
+                inboxProviderMark(mark, provider: provider)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.renewa(13.5, weight: .semibold))
+                    Text(connectingProvider == provider ? "Opening secure sign-in…" : detail)
+                        .font(.renewa(11.5, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                }
+                Spacer(minLength: 8)
+                if connectingProvider == provider {
+                    ProgressView()
+                        .tint(RenewaTheme.sage)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color(red: 0.79, green: 0.75, blue: 0.66))
+                }
+            }
+            .foregroundStyle(RenewaTheme.ink)
+            .padding(.horizontal, 15)
+            .frame(minHeight: 68)
+            .background(Color(red: 0.985, green: 0.974, blue: 0.953), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(RenewaTheme.divider.opacity(0.72), lineWidth: 1)
+            }
+        }
+        .buttonStyle(PressScaleStyle())
+        .disabled(connectingProvider != nil || presentation.isScanning)
+    }
+
+    private func inboxProviderMark(_ mark: String, provider: String) -> some View {
+        Text(mark)
+            .font(.system(size: 16, weight: .bold, design: .rounded))
+            .foregroundStyle(provider == "google" ? Color(red: 0.91, green: 0.27, blue: 0.21) : Color.white)
+            .frame(width: 36, height: 36)
+            .background(
+                provider == "google" ? Color.white : Color(red: 0.06, green: 0.42, blue: 0.74),
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+            )
+            .overlay {
+                if provider == "google" {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(Color(red: 0.93, green: 0.89, blue: 0.83), lineWidth: 1)
+                }
+            }
+            .accessibilityHidden(true)
     }
 
     private var manualScanSection: some View {
@@ -1386,16 +1510,25 @@ struct EmailScanView: View {
     }
 
     private func connect(_ provider: String) async {
+        connectingProvider = provider
         do {
             let url = try await store.emailAuthorizationURL(provider: provider)
             let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "renewa") { callbackURL, error in
                 Task { @MainActor in
+                    defer { connectingProvider = nil }
                     if let error {
                         if (error as? ASWebAuthenticationSessionError)?.code != .canceledLogin {
-                            store.errorMessage = error.localizedDescription
+                            store.errorMessage = "Couldn’t connect this inbox: \(error.localizedDescription)"
                         }
-                    } else if callbackURL != nil {
-                        await store.loadEmailDiscovery()
+                    } else if let callbackURL {
+                        let result = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
+                        let callbackError = result?.queryItems?.first(where: { $0.name == "error" })?.value
+                        if let callbackError, !callbackError.isEmpty {
+                            store.errorMessage = "Couldn’t connect this inbox: \(callbackError)"
+                        } else {
+                            await store.loadEmailDiscovery()
+                            _ = await store.startEmailScan()
+                        }
                     }
                     webSession = nil
                 }
@@ -1403,8 +1536,13 @@ struct EmailScanView: View {
             session.prefersEphemeralWebBrowserSession = false
             session.presentationContextProvider = OAuthPresentationContext.shared
             webSession = session
-            session.start()
+            if !session.start() {
+                webSession = nil
+                connectingProvider = nil
+                store.errorMessage = "Couldn’t open secure sign-in. Please try again."
+            }
         } catch {
+            connectingProvider = nil
             store.errorMessage = error.localizedDescription
         }
     }
