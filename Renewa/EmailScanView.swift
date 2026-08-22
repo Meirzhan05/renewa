@@ -3,7 +3,6 @@ import SwiftUI
 
 struct EmailScanView: View {
     @Environment(AppStore.self) private var store
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var webSession: ASWebAuthenticationSession?
     @State private var appeared = false
     @State private var reviewCandidate: EmailSubscriptionCandidate?
@@ -11,6 +10,7 @@ struct EmailScanView: View {
     @State private var disconnectTarget: EmailConnectionSummary?
     @State private var learningItem: EmailScanLearningItem?
     @State private var showingClearConfirmation = false
+    @State private var showingInboxSettings = false
 
     private var presentation: EmailDiscoveryPresentationState {
         EmailDiscoveryPresentationState(status: store.emailScanStatus)
@@ -26,32 +26,20 @@ struct EmailScanView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 20) {
                 header
                     .renewaEntrance(appeared, delay: 0.02)
                 if store.isLoadingEmailDiscovery && store.emailScanStatus == nil {
                     dashboardLoading
-                        .renewaEntrance(appeared, delay: 0.08)
+                    .renewaEntrance(appeared, delay: 0.08)
                 } else {
-                    scanHealthSummary
+                    assistantStatus
                         .renewaEntrance(appeared, delay: 0.08)
-                    if presentation.isScanning {
-                        activeScanSection
-                            .renewaEntrance(appeared, delay: 0.1)
-                    }
-                    actionsSection
-                        .renewaEntrance(appeared, delay: 0.12)
-                    learningSection
-                        .renewaEntrance(appeared, delay: 0.15)
-                    connectionSection
-                        .renewaEntrance(appeared, delay: 0.18)
-                    if let suppressed = store.emailScanStatus?.suppressedMerchants, !suppressed.isEmpty {
-                        suppressionSection(suppressed)
-                            .renewaEntrance(appeared, delay: 0.2)
+                    if !pendingCandidates.isEmpty {
+                        reviewSection
+                            .renewaEntrance(appeared, delay: 0.12)
                     }
                 }
-                privacyNote
-                    .renewaEntrance(appeared, delay: 0.22)
             }
             .padding(.horizontal, 24)
             .padding(.top, 18)
@@ -71,6 +59,11 @@ struct EmailScanView: View {
         .sheet(item: $learningItem) { item in
             EmailScanLearningDetailSheet(item: item)
                 .presentationDetents([.medium])
+                .presentationCornerRadius(30)
+        }
+        .sheet(isPresented: $showingInboxSettings) {
+            inboxSettingsSheet
+                .presentationDetents([.large])
                 .presentationCornerRadius(30)
         }
         .confirmationDialog(
@@ -126,12 +119,27 @@ struct EmailScanView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Inbox intelligence")
-                .font(.renewa(31, weight: .bold))
-            Text("AI finds billing events. You decide what changes.")
-                .font(.renewa(15))
-                .foregroundStyle(RenewaTheme.muted)
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Inbox intelligence")
+                    .font(.renewa(31, weight: .bold))
+                Text("We watch for meaningful subscription changes.")
+                    .font(.renewa(15))
+                    .foregroundStyle(RenewaTheme.muted)
+            }
+            Spacer(minLength: 8)
+            Button {
+                showingInboxSettings = true
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(RenewaTheme.ink)
+                    .frame(width: 44, height: 44)
+                    .background(RenewaTheme.surface, in: Circle())
+            }
+            .buttonStyle(PressScaleStyle())
+            .accessibilityLabel("Inbox settings")
+            .accessibilityHint("Opens inbox connections, alerts, and scan details")
         }
     }
 
@@ -166,282 +174,225 @@ struct EmailScanView: View {
         .accessibilityLabel("Loading inbox intelligence")
     }
 
-    private var scanHealthSummary: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            summaryTint.opacity(0.96),
-                            summaryTint.opacity(0.72),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 8) {
-                    HeroIcon(summaryIcon, style: .solid, size: 16)
-                    Text(summaryEyebrow)
-                        .font(.renewa(12, weight: .bold))
-                        .tracking(0.6)
-                    Spacer()
-                    if presentation.isMonitoringAutomatically {
-                        Text("MONITORED")
-                            .font(.renewa(10, weight: .bold))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 6)
-                            .background(.white.opacity(0.16), in: Capsule())
+    private var assistantStatus: some View {
+        RenewaCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .top, spacing: 13) {
+                    HeroIcon(statusIcon, style: .solid, size: 25)
+                        .foregroundStyle(statusTint)
+                        .frame(width: 34, height: 34)
+                        .background(statusTint.opacity(0.12), in: Circle())
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(assistantTitle)
+                            .font(.renewa(18, weight: .bold))
+                        Text(assistantMessage)
+                            .font(.renewa(13))
+                            .foregroundStyle(RenewaTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    Spacer(minLength: 0)
                 }
-                .foregroundStyle(.white.opacity(0.9))
 
-                ZStack {
-                    ForEach(0..<3) { index in
-                        Circle()
-                            .stroke(.white.opacity(0.16 - Double(index) * 0.035), lineWidth: 1)
-                            .frame(width: CGFloat(76 + index * 31))
-                            .scaleEffect(presentation.isScanning ? 1.1 : 0.94)
-                            .animation(
-                                reduceMotion || !presentation.isScanning
-                                    ? nil
-                                    : .easeInOut(duration: 1.05 + Double(index) * 0.16)
-                                        .repeatForever(autoreverses: true),
-                                value: presentation.isScanning
-                            )
+                if presentation.isScanning {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(presentation.stageTitle) · \(presentation.scanned) messages checked")
+                            .font(.renewa(13, weight: .semibold))
+                            .foregroundStyle(RenewaTheme.ink)
+                        Text("You can leave this tab. The scan continues safely in the background.")
+                            .font(.renewa(12))
+                            .foregroundStyle(RenewaTheme.muted)
                     }
-                    HeroIcon(
-                        summaryIcon,
-                        style: .solid,
-                        size: 38
-                    )
+                } else if let lastScannedAt = presentation.lastScannedAt {
+                    Text("Last checked \(lastScannedAt.formatted(.relative(presentation: .named)))")
+                        .font(.renewa(12, weight: .medium))
+                        .foregroundStyle(RenewaTheme.muted)
+                }
+
+                if needsSettingsAction {
+                    Button(statusActionTitle) {
+                        performStatusAction()
+                    }
+                    .font(.renewa(14, weight: .semibold))
                     .foregroundStyle(.white)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 104)
-                .accessibilityHidden(true)
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(presentation.headline)
-                        .font(.renewa(22, weight: .bold))
-                        .foregroundStyle(.white)
-                        .contentTransition(.opacity)
-                    Text(presentation.progressText)
-                        .font(.renewa(14, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.78))
-                        .multilineTextAlignment(.leading)
-                        .contentTransition(.numericText())
-                }
-
-                if presentation.connectionCount > 0 {
-                    HStack(spacing: 0) {
-                        summaryMetric(value: "\(presentation.scanned)", label: "checked")
-                        Divider().overlay(.white.opacity(0.22))
-                        summaryMetric(value: "\(presentation.candidateMessages)", label: "likely billing")
-                        Divider().overlay(.white.opacity(0.22))
-                        summaryMetric(value: "\(presentation.pendingCount)", label: "to review")
-                    }
-                    .frame(height: 52)
-                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
-
-                if let lastScannedAt = presentation.lastScannedAt, !presentation.isScanning {
-                    Text("Last completed \(lastScannedAt, style: .relative)")
-                        .font(.renewa(12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.74))
-                }
-
-                if presentation.dashboardState == .needsAttention,
-                   let error = store.emailScanStatus?.errors.first {
-                    Text(error)
-                        .font(.renewa(12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.84))
-                        .lineLimit(2)
-                }
-
-                if presentation.connectionCount > 0 {
-                    Button {
-                        Task { _ = await store.startEmailScan() }
-                    } label: {
-                        RenewaPrimaryActionLabel(
-                            title: presentation.status == .failed ? "Try check again" : "Check now",
-                            pendingTitle: "Checking privately…",
-                            isPending: presentation.isScanning,
-                            icon: .arrowPath
-                        )
-                        .font(.renewa(14, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 46)
-                        .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
+                    .background(RenewaTheme.ink, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .buttonStyle(PressScaleStyle())
-                    .disabled(!presentation.canStartScan)
-                    .opacity(presentation.canStartScan || presentation.isScanning ? 1 : 0.52)
                 }
             }
-            .padding(24)
         }
-        .shadow(color: summaryTint.opacity(0.13), radius: 18, y: 10)
         .accessibilityElement(children: .contain)
     }
 
-    private var summaryTint: Color {
-        switch presentation.dashboardState {
-        case .needsAttention: RenewaTheme.coral
-        case .reviewReady: Color(red: 0.53, green: 0.35, blue: 0.19)
-        default: RenewaTheme.sage
+    private var reviewSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(pendingCandidates.count == 1 ? "One change to review" : "\(pendingCandidates.count) changes to review")
+                    .font(.renewa(20, weight: .bold))
+                Text("Nothing changes until you confirm it.")
+                    .font(.renewa(13))
+                    .foregroundStyle(RenewaTheme.muted)
+            }
+            ForEach(pendingCandidates) { candidate in
+                candidateCard(candidate)
+            }
         }
     }
 
-    private var summaryIcon: HeroIconName {
+    private var statusIcon: HeroIconName {
         switch presentation.dashboardState {
         case .noInbox: .envelope
         case .scanning: .sparkles
-        case .reviewReady: .checkCircle
-        case .upToDate: .checkCircle
+        case .reviewReady, .upToDate: .checkCircle
         case .needsAttention: .exclamationTriangle
         }
     }
 
-    private var summaryEyebrow: String {
+    private var statusTint: Color {
+        presentation.dashboardState == .needsAttention ? RenewaTheme.coral : RenewaTheme.sage
+    }
+
+    private var assistantTitle: String {
         switch presentation.dashboardState {
-        case .noInbox: "READ-ONLY INBOX ACCESS"
-        case .scanning: "SCAN IN PROGRESS"
-        case .reviewReady: "ACTION NEEDED"
+        case .noInbox: "Connect an inbox"
+        case .scanning: "Checking your inbox"
+        case .reviewReady: "Your review is ready"
+        case .upToDate: "You’re all caught up"
+        case .needsAttention: "Your inbox needs attention"
+        }
+    }
+
+    private var assistantMessage: String {
+        switch presentation.dashboardState {
+        case .noInbox:
+            return "Connect Google or Microsoft with read-only access. You can disconnect it any time."
+        case .scanning:
+            return "We’ll surface only subscription changes that need your decision."
+        case .reviewReady:
+            return "Review the changes below when you’re ready."
         case .upToDate:
-            switch presentation.monitoringState {
-            case .active: "INBOX HEALTHY · MONITORING NEW EMAIL"
-            case .checking: "BACKGROUND CHECK IN PROGRESS"
-            case .fallback: "DAILY RECONCILIATION ACTIVE"
-            case .reconnectRequired: "INBOX NEEDS RECONNECTING"
-            case .notConfigured: "INBOX HEALTHY"
+            return "We’re watching for new subscription changes and will let you know when something needs review."
+        case .needsAttention:
+            return store.emailScanStatus?.errors.first ?? "Reconnect this inbox to keep monitoring new email."
+        }
+    }
+
+    private var needsSettingsAction: Bool {
+        presentation.dashboardState == .noInbox || presentation.dashboardState == .needsAttention
+    }
+
+    private var attentionConnection: EmailConnectionSummary? {
+        store.emailScanStatus?.connections.first {
+            $0.health == "attention" || $0.monitoringHealth == "reconnect_required"
+        }
+    }
+
+    private var statusActionTitle: String {
+        if presentation.dashboardState == .noInbox { return "Connect inbox" }
+        if let connection = attentionConnection { return "Reconnect \(connection.providerTitle)" }
+        return "Try again"
+    }
+
+    private func performStatusAction() {
+        if presentation.dashboardState == .noInbox {
+            showingInboxSettings = true
+        } else if let connection = attentionConnection {
+            Task { await connect(connection.provider) }
+        } else {
+            Task { _ = await store.startEmailScan() }
+        }
+    }
+
+    private var inboxSettingsSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    connectionSection
+                    if presentation.connectionCount > 0 {
+                        manualScanSection
+                    }
+                    NavigationLink {
+                        scanDetailsView
+                    } label: {
+                        settingsDisclosureRow(
+                            icon: .rectangleStack,
+                            title: "Scan details",
+                            detail: "View privacy-safe outcomes and scan history"
+                        )
+                    }
+                    .buttonStyle(PressScaleStyle())
+                    .accessibilityHint("Opens privacy-safe inbox scan details")
+
+                    if let suppressed = store.emailScanStatus?.suppressedMerchants, !suppressed.isEmpty {
+                        suppressionSection(suppressed)
+                    }
+
+                    privacyNote
+                }
+                .padding(24)
+                .padding(.bottom, 14)
             }
-        case .needsAttention: "CONNECTION NEEDS ATTENTION"
-        }
-    }
-
-    private func summaryMetric(value: String, label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.renewa(15, weight: .bold))
-                .foregroundStyle(.white)
-            Text(label)
-                .font(.renewa(10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.72))
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private var activeScanSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                HeroIcon(.arrowPath, size: 20)
-                    .foregroundStyle(RenewaTheme.sage)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Scanning safely in the background")
-                        .font(.renewa(15, weight: .bold))
-                    Text("You can leave this tab. The server keeps scanning and this summary will refresh when you return.")
-                        .font(.renewa(13))
-                        .foregroundStyle(RenewaTheme.muted)
+            .scrollIndicators(.hidden)
+            .background(RenewaTheme.background)
+            .navigationTitle("Inbox settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { showingInboxSettings = false }
                 }
             }
-            if let runs = store.emailScanStatus?.runs, !runs.isEmpty {
-                scanTimeline(runs)
-            }
         }
     }
 
-    private func scanTimeline(_ runs: [EmailScanRunProgress]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Live scan activity")
-                .font(.renewa(19, weight: .bold))
-            ForEach(runs) { run in
-                RenewaCard {
-                    HStack(alignment: .top, spacing: 12) {
-                        HeroIcon(run.error == nil ? .envelope : .exclamationTriangle, size: 20)
-                            .foregroundStyle(run.error == nil ? RenewaTheme.sage : RenewaTheme.coral)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("\(run.provider.capitalized) · \(run.stageTitle)")
-                                .font(.renewa(15, weight: .bold))
-                            if let error = run.error {
-                                Text(error)
-                                    .font(.renewa(13))
-                                    .foregroundStyle(RenewaTheme.coral)
-                            } else {
-                                Text("\(run.scanned) messages checked · \(run.candidateMessages) billing candidates · \(run.detected) discoveries")
-                                    .font(.renewa(13))
-                                    .foregroundStyle(RenewaTheme.muted)
-                            }
+    private var manualScanSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("MANUAL CHECK")
+                .font(.renewa(12, weight: .bold))
+                .tracking(1)
+                .foregroundStyle(RenewaTheme.muted)
+            RenewaCard {
+                HStack(spacing: 13) {
+                    HeroIcon(.arrowPath, size: 21)
+                        .foregroundStyle(RenewaTheme.sage)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(presentation.isScanning ? "Inbox check in progress" : "Check inbox now")
+                            .font(.renewa(15, weight: .semibold))
+                            .foregroundStyle(RenewaTheme.ink)
+                        Text(
+                            presentation.isScanning
+                                ? "The current check will continue in the background."
+                                : "Use this when you want an immediate update."
+                        )
+                        .font(.renewa(12))
+                        .foregroundStyle(RenewaTheme.muted)
+                    }
+                    Spacer(minLength: 6)
+                    if !presentation.isScanning {
+                        Button("Check") {
+                            Task { _ = await store.startEmailScan() }
                         }
+                        .font(.renewa(13, weight: .semibold))
+                        .foregroundStyle(RenewaTheme.sage)
+                        .disabled(!presentation.canStartScan)
                     }
                 }
             }
         }
     }
 
-    private var actionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Actions for you")
-                    .font(.renewa(19, weight: .bold))
-                Text("Renewa never changes a subscription until you confirm it.")
-                    .font(.renewa(13))
-                    .foregroundStyle(RenewaTheme.muted)
-            }
-
-            if pendingCandidates.isEmpty {
-                RenewaCard {
-                    HStack(alignment: .top, spacing: 12) {
-                        HeroIcon(.checkCircle, style: .solid, size: 24)
-                            .foregroundStyle(RenewaTheme.sage)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(presentation.connectionCount == 0 ? "Connect an inbox to start" : "Nothing needs your decision")
-                                .font(.renewa(16, weight: .bold))
-                            Text(noActionMessage)
-                                .font(.renewa(13))
-                                .foregroundStyle(RenewaTheme.muted)
-                        }
-                    }
-                }
-            } else {
-                ForEach(pendingCandidates) { candidate in
-                    candidateCard(candidate)
-                }
-            }
-        }
-    }
-
-    private var noActionMessage: String {
-        if presentation.isScanning {
-            return "We will show any safe discoveries here when the scan finishes."
-        }
-        if presentation.nonActionableCount > 0 {
-            return "Billing history was found, but older endings or uncertain receipts were kept out of your subscription list."
-        }
-        return "You will see a review card here when Renewa finds a safe change to confirm."
-    }
-
-    private var learningSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("What we learned")
-                    .font(.renewa(19, weight: .bold))
-                Text("These items are not active subscriptions and do not need a change from you.")
-                    .font(.renewa(13))
-                    .foregroundStyle(RenewaTheme.muted)
-            }
-
-            if presentation.nonActionableCount == 0 {
-                RenewaCard {
-                    Text("As scans build evidence, safe historical outcomes will appear here without exposing your email content.")
-                        .font(.renewa(13))
+    private var scanDetailsView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Scan details")
+                        .font(.renewa(25, weight: .bold))
+                    Text("Safe outcomes from previous checks. These are not active subscriptions or actions for you.")
+                        .font(.renewa(14))
                         .foregroundStyle(RenewaTheme.muted)
                 }
-            } else {
-                learningMetricGrid
+
                 if let items = store.emailScanStatus?.learningSummary?.items, !items.isEmpty {
                     RenewaCard {
                         VStack(spacing: 0) {
@@ -475,31 +426,39 @@ struct EmailScanView: View {
                             }
                         }
                     }
+                } else {
+                    RenewaCard {
+                        Text("There are no historical outcomes to show yet. Future safe outcomes will appear here without exposing email content.")
+                            .font(.renewa(14))
+                            .foregroundStyle(RenewaTheme.muted)
+                    }
                 }
             }
+            .padding(24)
         }
+        .scrollIndicators(.hidden)
+        .background(RenewaTheme.background)
+        .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var learningMetricGrid: some View {
-        HStack(spacing: 10) {
-            learningMetric(value: presentation.endedCount, label: "ended")
-            learningMetric(value: presentation.uncertainCount, label: "needs evidence")
-            learningMetric(value: presentation.withheldAmbiguities + presentation.validationFailures, label: "kept safe")
-        }
-    }
-
-    private func learningMetric(value: Int, label: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text("\(value)")
-                .font(.renewa(18, weight: .bold))
-            Text(label)
-                .font(.renewa(11, weight: .medium))
+    private func settingsDisclosureRow(icon: HeroIconName, title: String, detail: String) -> some View {
+        HStack(spacing: 13) {
+            HeroIcon(icon, size: 21)
+                .foregroundStyle(RenewaTheme.sage)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.renewa(16, weight: .semibold))
+                    .foregroundStyle(RenewaTheme.ink)
+                Text(detail)
+                    .font(.renewa(12))
+                    .foregroundStyle(RenewaTheme.muted)
+            }
+            Spacer()
+            HeroIcon(.chevronRight, size: 16)
                 .foregroundStyle(RenewaTheme.muted)
-                .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(RenewaTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(18)
+        .background(RenewaTheme.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     private var connectionSection: some View {

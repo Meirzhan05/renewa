@@ -58,6 +58,6 @@
 - [x] Add opt-in full-mailbox onboarding discovery with resumable pages, explicit connection/scan feedback, and daily cursor-based monitoring; configure the protected Supabase scheduler before enabling it in production.
 - [x] Reconcile per-merchant email evidence into current, ended, or uncertain lifecycle outcomes so obsolete receipts never become actionable subscriptions; allow reversible unused-merchant suppression.
 - [x] Add opt-in Inbox Intelligence outcome alerts with durable, privacy-minimized delivery records, a manual-scan Live Activity, deep linking, APNs invalid-token cleanup, and deployment/runbook documentation; physical APNs delivery remains a release verification step.
-- [x] Redesign Inbox Intelligence as a scan-health dashboard with trustworthy background progress, a separate action queue, and privacy-minimized lifecycle learning details instead of persistent skeletons or ambiguous empty states.
+- [x] Redesign Inbox Intelligence as a quiet assistant-first surface: pending reviews stay primary, monitoring status stays compact, and settings, diagnostics, and lifecycle history are progressively disclosed.
 - [x] Prioritize recent subscription evidence by limiting first-time historical inbox discovery to 180 days and provider-cursor recovery to 90 days.
 - [ ] Add verified Gmail Pub/Sub and Microsoft Graph event monitoring with debounced cursor scans, watch renewal, daily reconciliation, and truthful Inbox Intelligence monitoring health. Code and local verification are complete; hosted provider setup and staged rollout remain.

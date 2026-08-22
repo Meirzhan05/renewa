@@ -51,7 +51,7 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
-    func test_completedScanWithoutCandidates_explainsNoActionOutcome() {
+    func test_completedScanWithoutCandidates_staysUpToDateWithoutReview() {
         let state = EmailDiscoveryPresentationState(
             status: makeStatus(
                 status: .completed,
@@ -64,8 +64,25 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         )
 
         XCTAssertEqual(state.dashboardState, .upToDate)
+        XCTAssertEqual(state.pendingCount, 0)
         XCTAssertEqual(state.headline, "Daily checks are active")
         XCTAssertEqual(state.progressText, "Daily reconciliation is active while live inbox monitoring needs attention.")
+    }
+
+    @MainActor
+    func test_queuedScan_isPresentedAsScanningBeforeMessagesAreAvailable() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .queued,
+                stage: .queued,
+                connectionCount: 1
+            )
+        )
+
+        XCTAssertTrue(state.isScanning)
+        XCTAssertEqual(state.dashboardState, .scanning)
+        XCTAssertEqual(state.stageTitle, "Preparing your scan")
+        XCTAssertEqual(state.scanned, 0)
     }
 
     @MainActor

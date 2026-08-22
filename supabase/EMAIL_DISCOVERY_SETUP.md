@@ -13,11 +13,11 @@ Renewa's inbox discovery is an authenticated, read-only, review-first pipeline:
 
 Raw bodies and raw model responses are not stored. OAuth credentials remain encrypted in `email_connections`, which has no authenticated-client table privileges.
 
-## Inbox Intelligence dashboard
+## Inbox Intelligence experience
 
-The Inbox Intelligence dashboard presents a durable scan-health summary before any scan controls. It separates pending subscription proposals under **Actions for you** from lifecycle outcomes under **What we learned**. Ended and uncertain evidence never appears as an active subscription or a requested change.
+Inbox Intelligence is an assistant-first surface: its default view answers whether a person needs to review a subscription change. Healthy monitoring shows a compact all-caught-up state, pending proposals appear as the primary review cards, and active scans show only the durable stage and checked-message count. Manual checks, provider connections, alerts, scan history, paused suggestions, privacy guidance, and non-actionable outcomes live in **Inbox settings** and **Scan details** so routine monitoring does not feel like a scanner dashboard.
 
-The authenticated scan-status response contains only privacy-minimized dashboard learning items: merchant label, event type, received date, lifecycle outcome, and a bounded explanation. It never includes raw email content, full mailbox addresses, OAuth credentials, or raw model output. While a scan is running, the UI reports the durable stage and checked-message count rather than an estimated percentage, because mailbox providers do not always supply a reliable total.
+The authenticated scan-status response contains only privacy-minimized learning items: merchant label, event type, received date, lifecycle outcome, and a bounded explanation. These remain secondary and never appear as active subscriptions or required actions. The UI never includes raw email content, full mailbox addresses, OAuth credentials, or raw model output, and it never invents a scan completion percentage when a provider has no reliable total.
 
 ## Local setup
 
