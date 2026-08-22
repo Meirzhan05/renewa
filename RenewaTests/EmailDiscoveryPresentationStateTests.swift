@@ -25,8 +25,9 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         )
 
         XCTAssertTrue(state.isScanning)
-        XCTAssertEqual(state.headline, "Reading likely subscriptions")
-        XCTAssertEqual(state.progressText, "80 messages checked · 6 billing candidates")
+        XCTAssertEqual(state.dashboardState, .scanning)
+        XCTAssertEqual(state.headline, "Checking subscription evidence")
+        XCTAssertEqual(state.progressText, "80 messages checked · 6 likely billing emails")
     }
 
     @MainActor
@@ -35,7 +36,7 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             status: makeStatus(status: .completed, pendingCount: 2)
         )
 
-        XCTAssertEqual(state.headline, "Ready for your review")
+        XCTAssertEqual(state.headline, "Changes are ready for review")
         XCTAssertEqual(state.progressText, "2 discoveries waiting for confirmation.")
     }
 
@@ -45,8 +46,36 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             status: makeStatus(status: .partial, errors: ["Microsoft mail could not be read."])
         )
 
-        XCTAssertEqual(state.headline, "Some inboxes need attention")
+        XCTAssertEqual(state.headline, "An inbox needs attention")
         XCTAssertEqual(state.progressText, "Completed with 1 connection issue.")
+    }
+
+    @MainActor
+    func test_completedScanWithoutCandidates_explainsNoActionOutcome() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .completed,
+                learningSummary: EmailScanLearningSummary(
+                    endedCount: 1,
+                    uncertainCount: 2,
+                    items: []
+                )
+            )
+        )
+
+        XCTAssertEqual(state.dashboardState, .upToDate)
+        XCTAssertEqual(state.headline, "No action needed")
+        XCTAssertEqual(state.progressText, "We found billing history, but nothing safely needs your review.")
+    }
+
+    @MainActor
+    func test_failedScan_mapsToNeedsAttention() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(status: .failed, errors: ["Gmail needs reconnection."])
+        )
+
+        XCTAssertEqual(state.dashboardState, .needsAttention)
+        XCTAssertEqual(state.headline, "An inbox needs attention")
     }
 
     @MainActor
@@ -96,7 +125,8 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         scanned: Int = 0,
         candidateMessages: Int = 0,
         pendingCount: Int = 0,
-        errors: [String] = []
+        errors: [String] = [],
+        learningSummary: EmailScanLearningSummary? = nil
     ) -> EmailScanStatus {
         let connections = (0..<connectionCount).map { index in
             EmailConnectionSummary(
@@ -105,7 +135,8 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
                 redactedEmail: "me••@example.com",
                 lastScannedAt: nil,
                 health: "connected",
-                scanStatus: "idle"
+                scanStatus: "idle",
+                automaticMonitoringEnabled: true
             )
         }
         return EmailScanStatus(
@@ -123,6 +154,7 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             connections: connections,
             errors: errors,
             withheldAmbiguities: nil,
+            learningSummary: learningSummary,
             runs: nil
         )
     }

@@ -13,6 +13,12 @@ Renewa's inbox discovery is an authenticated, read-only, review-first pipeline:
 
 Raw bodies and raw model responses are not stored. OAuth credentials remain encrypted in `email_connections`, which has no authenticated-client table privileges.
 
+## Inbox Intelligence dashboard
+
+The Inbox Intelligence dashboard presents a durable scan-health summary before any scan controls. It separates pending subscription proposals under **Actions for you** from lifecycle outcomes under **What we learned**. Ended and uncertain evidence never appears as an active subscription or a requested change.
+
+The authenticated scan-status response contains only privacy-minimized dashboard learning items: merchant label, event type, received date, lifecycle outcome, and a bounded explanation. It never includes raw email content, full mailbox addresses, OAuth credentials, or raw model output. While a scan is running, the UI reports the durable stage and checked-message count rather than an estimated percentage, because mailbox providers do not always supply a reliable total.
+
 ## Local setup
 
 Copy `.env.example` to the ignored `.env`, provide the provider clients, a 32-byte mail encryption key, and the DeepSeek values, then reset the local database and serve Functions:
@@ -29,6 +35,7 @@ Run the pure extraction tests independently:
 ```sh
 npx --yes deno@2.5.2 check supabase/functions/email-scan/index.ts
 npx --yes deno@2.5.2 test supabase/functions/email-scan/email-discovery.test.ts
+npx --yes deno@2.5.2 test supabase/functions/_shared/inbox-scan-dashboard.test.ts
 ```
 
 ## Hosted deployment

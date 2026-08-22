@@ -229,6 +229,7 @@ struct EmailConnectionSummary: Identifiable, Codable, Hashable {
     let lastScannedAt: Date?
     let health: String
     let scanStatus: String
+    let automaticMonitoringEnabled: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -237,9 +238,52 @@ struct EmailConnectionSummary: Identifiable, Codable, Hashable {
         case lastScannedAt = "last_scanned_at"
         case health
         case scanStatus = "scan_status"
+        case automaticMonitoringEnabled = "automatic_monitoring_enabled"
     }
 
     var providerTitle: String { provider.capitalized }
+}
+
+enum EmailScanLearningOutcome: String, Codable, Hashable {
+    case ended
+    case uncertain
+
+    var title: String {
+        switch self {
+        case .ended: "Ended"
+        case .uncertain: "Needs more evidence"
+        }
+    }
+}
+
+struct EmailScanLearningItem: Codable, Hashable, Identifiable {
+    let merchantName: String
+    let outcome: EmailScanLearningOutcome
+    let eventType: String
+    let receivedAt: Date
+    let explanation: String
+
+    var id: String { "\(merchantName)|\(outcome.rawValue)|\(receivedAt.timeIntervalSince1970)" }
+
+    enum CodingKeys: String, CodingKey {
+        case merchantName = "merchant_name"
+        case outcome
+        case eventType = "event_type"
+        case receivedAt = "received_at"
+        case explanation
+    }
+}
+
+struct EmailScanLearningSummary: Codable, Hashable {
+    let endedCount: Int
+    let uncertainCount: Int
+    let items: [EmailScanLearningItem]
+
+    enum CodingKeys: String, CodingKey {
+        case endedCount = "ended_count"
+        case uncertainCount = "uncertain_count"
+        case items
+    }
 }
 
 struct EmailSubscriptionCandidate: Identifiable, Codable, Hashable {
@@ -336,6 +380,7 @@ struct EmailScanStatus: Codable, Equatable {
     let connections: [EmailConnectionSummary]
     let errors: [String]
     let withheldAmbiguities: Int?
+    let learningSummary: EmailScanLearningSummary?
     let runs: [EmailScanRunProgress]?
 
     enum CodingKeys: String, CodingKey {
@@ -353,6 +398,7 @@ struct EmailScanStatus: Codable, Equatable {
         case connections
         case errors
         case withheldAmbiguities = "withheld_ambiguities"
+        case learningSummary = "learning_summary"
         case runs
     }
 

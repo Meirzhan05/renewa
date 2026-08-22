@@ -26,6 +26,7 @@ import {
   tintForCategory,
   validateExtractionEnvelope,
 } from "../_shared/email-discovery.ts";
+import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
 
 type AdminClient = ReturnType<typeof adminClient>;
 
@@ -855,6 +856,8 @@ async function scanStatus(
       runs: [],
       suppressed_merchants: await merchantSuppressions(admin, userID),
       connections: await connectionSummaries(admin, userID),
+      learning_summary: await learningSummary(admin, userID),
+      withheld_ambiguities: 0,
       errors: [],
     };
   }
@@ -907,6 +910,7 @@ async function scanStatus(
     candidate_messages: sum(runs, "candidate_messages"),
     detected: sum(runs, "events_detected"),
     validation_failures: sum(runs, "validation_failures"),
+    withheld_ambiguities: sum(runs, "withheld_ambiguities"),
     pending_count: pendingCandidates.length,
     runs: runs.map((run) => {
       const job = (jobs ?? []).find((item) => item.scan_run_id === run.id);
@@ -931,11 +935,54 @@ async function scanStatus(
     })),
     suppressed_merchants: await merchantSuppressions(admin, userID),
     connections: await connectionSummaries(admin, userID),
+    learning_summary: await learningSummary(admin, userID),
     errors: uniqueStrings([
       ...runs.map((run) => run.error_message),
       ...(jobs ?? []).map((job) => job.error_message),
     ]),
   };
+}
+
+async function learningSummary(
+  admin: AdminClient,
+  userID: string,
+): Promise<Record<string, unknown>> {
+  const { data: bundles, error: bundlesError } = await admin
+    .from("merchant_evidence_bundles")
+    .select("canonical_merchant_key,lifecycle_state,resolution_reason,updated_at")
+    .eq("user_id", userID)
+    .order("updated_at", { ascending: false });
+  if (bundlesError) throw bundlesError;
+
+  const safeBundles = (bundles ?? []) as Array<{
+    canonical_merchant_key: string;
+    lifecycle_state: "current" | "ended" | "uncertain";
+    resolution_reason: string;
+    updated_at: string;
+  }>;
+  const keys = safeBundles.map((bundle) => bundle.canonical_merchant_key);
+  if (keys.length === 0) {
+    return { ended_count: 0, uncertain_count: 0, items: [] };
+  }
+
+  const { data: events, error: eventsError } = await admin
+    .from("detected_billing_events")
+    .select("canonical_merchant_key,merchant_name,event_type,source_received_at,evidence")
+    .eq("user_id", userID)
+    .in("canonical_merchant_key", keys)
+    .order("source_received_at", { ascending: false });
+  if (eventsError) throw eventsError;
+
+  return buildLearningSummary(
+    safeBundles,
+    (events ?? []) as Array<{
+      canonical_merchant_key: string | null;
+      merchant_name: string;
+      event_type: string;
+      source_received_at: string;
+      evidence: string | null;
+    }>,
+  );
 }
 
 async function merchantSuppressions(
@@ -1338,7 +1385,7 @@ async function connectionSummaries(
 ): Promise<Array<Record<string, unknown>>> {
   const { data: connections, error } = await admin
     .from("email_connections")
-    .select("id,provider,email,last_scanned_at,last_error,created_at")
+    .select("id,provider,email,last_scanned_at,last_error,automatic_monitoring_enabled,created_at")
     .eq("user_id", userID)
     .order("created_at", { ascending: true });
   if (error) throw error;
@@ -1375,6 +1422,7 @@ async function connectionSummaries(
         ? "attention"
         : "connected",
       scan_status: active?.status ?? "idle",
+      automatic_monitoring_enabled: connection.automatic_monitoring_enabled === true,
     };
   });
 }

@@ -3,12 +3,12 @@ import XCTest
 
 final class InsightsPresentationStateTests: XCTestCase {
     @MainActor
-    func test_unresolvedEvidence_waitsForInitialRequests() {
+    func test_unresolvedEvidence_waitsForInitialDataLoadOnly() {
         let beforeLoad = makeState(hasLoadedInsightsData: false)
-        let reportLoading = makeState(isLoadingInsightReport: true)
+        let reportLoading = makeState(isLoadingInsightReport: true, subscriptionCount: 1)
 
         XCTAssertEqual(beforeLoad.evidence, .unresolved)
-        XCTAssertEqual(reportLoading.evidence, .unresolved)
+        XCTAssertEqual(reportLoading.evidence, .dashboard)
     }
 
     @MainActor
