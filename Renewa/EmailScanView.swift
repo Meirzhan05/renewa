@@ -175,16 +175,43 @@ struct EmailScanView: View {
     }
 
     private var inboxLoading: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .tint(RenewaTheme.sage)
-            Text("Loading your inbox activity")
-                .font(.renewa(13, weight: .semibold))
-                .foregroundStyle(RenewaTheme.muted)
+        RenewaDelayedSkeleton(accessibilityLabel: "Loading inbox activity") {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 9) {
+                    RenewaSkeleton(width: 7, height: 7, cornerRadius: 4)
+                    RenewaSkeleton(width: 142, height: 13, cornerRadius: 6)
+                }
+
+                RenewaSkeleton(width: 228, height: 12, cornerRadius: 6)
+                    .padding(.top, 8)
+
+                HStack(spacing: 7) {
+                    RenewaSkeleton(width: 128, height: 32, cornerRadius: 16)
+                    RenewaSkeleton(width: 92, height: 32, cornerRadius: 16)
+                }
+                .padding(.top, 16)
+
+                Divider()
+                    .overlay(RenewaTheme.divider.opacity(0.55))
+                    .padding(.top, 22)
+
+                HStack(spacing: 12) {
+                    RenewaSkeleton(width: 38, height: 38, cornerRadius: 19)
+                    VStack(alignment: .leading, spacing: 8) {
+                        RenewaSkeleton(width: 176, height: 14, cornerRadius: 6)
+                        RenewaSkeleton(width: 236, height: 11, cornerRadius: 6)
+                    }
+                }
+                .padding(.top, 24)
+
+                HStack(spacing: 8) {
+                    RenewaSkeleton(width: 92, height: 10, cornerRadius: 5)
+                    RenewaSkeleton(width: 64, height: 10, cornerRadius: 5)
+                }
+                .padding(.top, 30)
+            }
         }
         .padding(.top, 28)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Loading inbox activity")
     }
 
     private var inboxDashboard: some View {
