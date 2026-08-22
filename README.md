@@ -9,7 +9,7 @@ All account, profile, and subscription screens use Supabase data. If the backend
 - Native SwiftUI iOS 17+ client with the supplied dashboard visual language
 - Vendored Heroicons with an outlined/solid navigation hierarchy and no runtime icon dependency
 - Month/year spending views, a Logo.dev-powered upcoming-payments calendar, renewal reminders, category insights, manual entry, and deletion
-- A guided first-time Insights state with direct manual-entry and inbox-discovery actions plus honest partial-data and currency-conversion messaging
+- A guided first-time Insights state with direct manual-entry and inbox-discovery actions, honest partial-data and currency-conversion messaging, and transparent AI-versus-fallback summary provenance
 - Coordinated springs, staggered entrances, numeric transitions, and a Reduced Motion fallback
 - Supabase email/password auth with Keychain-backed sessions, proactive JWT refresh, and a one-time 401 retry
 - Registration onboarding plus editable display name, avatar preset, and preferred currency
@@ -103,6 +103,8 @@ Renewa evaluates bounded message metadata and snippets first, retrieves full con
 
 The configured model endpoint is DeepSeek-compatible Chat Completions in JSON response mode. Renewa's non-retention of raw content does not control the AI provider's own processing or abuse-monitoring practices. Review the provider's current data terms, regional requirements, and production privacy agreement before deployment.
 
+Insights sends only the user’s stored subscription facts, validated billing-event facts, scan outcome, and aggregate spending snapshots to its server-side model request. The result identifies whether it is AI-generated or a deterministic fallback, whether it was served from the 24-hour cache, when it was generated, and only non-zero aggregate evidence counts. Provider error text, prompts, raw email content, and secrets are never shown in the iOS app. See [INSIGHTS_SETUP.md](supabase/INSIGHTS_SETUP.md) for deployment and retry behavior.
+
 Users can mark a suggested merchant as “I don’t use this” to suppress future discovery proposals without canceling or changing a confirmed subscription; suppression is reversible through the authenticated API. Incremental evidence is best-effort and Inbox-focused after the bounded initial scan, so absence of a message never proves that a service is active or ended. Users can also inspect redacted connection state, disconnect an inbox, trigger best-effort Google token revocation, and clear discovery history without removing confirmed subscriptions. Microsoft does not expose an equivalent delegated refresh-token revocation endpoint to this app, so disconnect deletes Renewa's encrypted credential and prevents further access. Before public release, complete the privacy policy, App Store privacy disclosure, provider verification, representative multilingual extraction evaluation, and production rate/latency monitoring. See [EMAIL_DISCOVERY_SETUP.md](supabase/EMAIL_DISCOVERY_SETUP.md).
 
 Inbox Intelligence stores only validated billing facts, compact evidence summaries, user-reviewed merchant aliases, and aggregate quality outcomes. Raw email bodies and raw model payloads remain transient. A second advisory model pass is reserved for configured merchant-identity ambiguity and never receives tools, subscription IDs, or mutation authority; its result cannot bypass review.
@@ -122,6 +124,8 @@ Renewa/                         SwiftUI client
   InsightsView.swift            Insight activation, summaries, and visualizations
   InsightsPresentationState.swift
                                 Testable Insights evidence and completeness states
+  InsightsSummaryPresentationState.swift
+                                Testable AI provenance and fallback presentation rules
   EmailScanView.swift           OAuth, scan progress, connection controls, and review UX
   EmailDiscoveryPresentationState.swift
                                 Testable scan and candidate presentation rules
@@ -162,5 +166,7 @@ xcodebuild -project Renewa.xcodeproj -scheme Renewa \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 xcrun swift-format lint --configuration .swift-format \
   Renewa/InsightsView.swift Renewa/InsightsPresentationState.swift \
-  Renewa/RootView.swift RenewaTests/InsightsPresentationStateTests.swift
+  Renewa/InsightsSummaryPresentationState.swift Renewa/RootView.swift \
+  RenewaTests/InsightsPresentationStateTests.swift \
+  RenewaTests/InsightsSummaryPresentationStateTests.swift
 ```

@@ -12,7 +12,7 @@ final class InsightsPresentationStateTests: XCTestCase {
     }
 
     @MainActor
-    func test_activationEvidence_requiresResolvedAccountWithoutEvidence() {
+    func test_noActiveSubscriptions_withoutInsightEvidenceUsesActivationRatherThanAIDegradedState() {
         let state = makeState()
 
         XCTAssertEqual(state.evidence, .activation)

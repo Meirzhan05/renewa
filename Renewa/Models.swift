@@ -565,17 +565,50 @@ struct InsightCard: Codable, Hashable, Identifiable {
     }
 }
 
+enum InsightSummarySource: String, Codable, Hashable {
+    case ai
+    case deterministic
+}
+
+struct InsightEvidenceSummary: Codable, Hashable {
+    let activeSubscriptionCount: Int
+    let billingEventCount: Int
+    let monthlySnapshotCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case activeSubscriptionCount = "active_subscription_count"
+        case billingEventCount = "billing_event_count"
+        case monthlySnapshotCount = "monthly_snapshot_count"
+    }
+}
+
+struct InsightProvenance: Codable, Hashable {
+    let source: InsightSummarySource
+    let generatedAt: Date
+    let isCached: Bool
+    let evidence: InsightEvidenceSummary
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case generatedAt = "generated_at"
+        case isCached = "is_cached"
+        case evidence
+    }
+}
+
 struct InsightReport: Codable, Hashable {
     let summary: String
     let cards: [InsightCard]
     let generatedAt: Date
     let isAIGenerated: Bool
+    let provenance: InsightProvenance?
 
     enum CodingKeys: String, CodingKey {
         case summary
         case cards
         case generatedAt = "generated_at"
         case isAIGenerated = "is_ai_generated"
+        case provenance
     }
 }
 

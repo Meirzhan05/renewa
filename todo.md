@@ -45,6 +45,7 @@
 - [x] Add AI-backed, explainable spending insights with cached server reports and deterministic fallback.
 - [x] Add category, upcoming-renewal, and persisted monthly-spending graphs to Insights.
 - [x] Replace the empty Insights dashboard with a guided activation state and distinguish history-building, quiet-renewal, unavailable-conversion, and service-failure states without indefinite skeleton loading.
+- [x] Show whether an Insight summary is AI-generated, cached, or deterministic; retain facts and charts during degraded AI generation, with privacy-safe evidence context and retry.
 
 ## Inbox discovery
 
