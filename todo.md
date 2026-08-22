@@ -64,6 +64,6 @@
 - [x] Prioritize recent subscription evidence by limiting first-time historical inbox discovery to 180 days and provider-cursor recovery to 90 days.
 - [x] Rebuild Inbox Intelligence from the approved handoff as a concise native review queue, connection status, and real handled-activity feed, keeping unsupported automation and email facts out of the UI.
 - [x] Replace the legacy Inbox settings dashboard with the handoff’s compact provider chooser, in-context OAuth status, and a focused overflow menu; successful account connection refreshes state and starts the first scan.
-- [x] Use recognizable Gmail and Microsoft Outlook icons throughout Inbox Intelligence’s connection UI.
+- [x] Use the current Gmail and Microsoft Outlook app icons throughout Inbox Intelligence’s connection UI.
 - [ ] Configure hosted Microsoft OAuth credentials (`MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET`) and verify the callback redirect in a real Microsoft account. The deployed backend has the complete flow but cannot start Microsoft authorization without these external values.
 - [ ] Add verified Gmail Pub/Sub and Microsoft Graph event monitoring with debounced cursor scans, watch renewal, daily reconciliation, and truthful Inbox Intelligence monitoring health. Code and local verification are complete; hosted provider setup and staged rollout remain.
