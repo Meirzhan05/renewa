@@ -344,11 +344,7 @@ struct EmailScanView: View {
 
     private func inboxChip(_ connection: EmailConnectionSummary) -> some View {
         HStack(spacing: 6) {
-            Text(connection.provider == "google" ? "G" : "M")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .foregroundStyle(connection.provider == "google" ? Color(red: 0.91, green: 0.27, blue: 0.21) : Color(red: 0.06, green: 0.42, blue: 0.74))
-                .frame(width: 19, height: 19)
-                .background(.white, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            inboxProviderIcon(connection.provider, size: 19)
             Text(connection.redactedEmail ?? connection.providerTitle)
                 .font(.renewa(11, weight: .semibold))
                 .foregroundStyle(Color(red: 0.33, green: 0.31, blue: 0.27))
@@ -938,7 +934,6 @@ struct EmailScanView: View {
                             inboxProviderRow(
                                 title: "Google Gmail",
                                 detail: "Personal and work Google accounts",
-                                mark: "G",
                                 provider: "google"
                             )
                         }
@@ -947,7 +942,6 @@ struct EmailScanView: View {
                             inboxProviderRow(
                                 title: "Microsoft Outlook",
                                 detail: "Work and personal Microsoft accounts",
-                                mark: "M",
                                 provider: "microsoft"
                             )
                         }
@@ -1008,7 +1002,7 @@ struct EmailScanView: View {
 
     private func inboxConnectionRow(_ connection: EmailConnectionSummary) -> some View {
         HStack(spacing: 12) {
-            inboxProviderMark(connection.provider == "google" ? "G" : "M", provider: connection.provider)
+            inboxProviderIcon(connection.provider, size: 36)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(connection.providerTitle)
@@ -1050,14 +1044,13 @@ struct EmailScanView: View {
     private func inboxProviderRow(
         title: String,
         detail: String,
-        mark: String,
         provider: String
     ) -> some View {
         Button {
             Task { await connect(provider) }
         } label: {
             HStack(spacing: 12) {
-                inboxProviderMark(mark, provider: provider)
+                inboxProviderIcon(provider, size: 36)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.renewa(13.5, weight: .semibold))
@@ -1088,21 +1081,11 @@ struct EmailScanView: View {
         .disabled(connectingProvider != nil || presentation.isScanning)
     }
 
-    private func inboxProviderMark(_ mark: String, provider: String) -> some View {
-        Text(mark)
-            .font(.system(size: 16, weight: .bold, design: .rounded))
-            .foregroundStyle(provider == "google" ? Color(red: 0.91, green: 0.27, blue: 0.21) : Color.white)
-            .frame(width: 36, height: 36)
-            .background(
-                provider == "google" ? Color.white : Color(red: 0.06, green: 0.42, blue: 0.74),
-                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-            )
-            .overlay {
-                if provider == "google" {
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .stroke(Color(red: 0.93, green: 0.89, blue: 0.83), lineWidth: 1)
-                }
-            }
+    private func inboxProviderIcon(_ provider: String, size: CGFloat) -> some View {
+        Image(provider == "google" ? "Gmail" : "Outlook")
+            .resizable()
+            .scaledToFit()
+            .frame(width: size, height: size)
             .accessibilityHidden(true)
     }
 
@@ -1253,10 +1236,10 @@ struct EmailScanView: View {
             if connectedProviders.count < 2 {
                 HStack(spacing: 12) {
                     if !connectedProviders.contains("google") {
-                        providerButton("Google", mark: "G", provider: "google")
+                        providerButton("Google", provider: "google")
                     }
                     if !connectedProviders.contains("microsoft") {
-                        providerButton("Microsoft", mark: "M", provider: "microsoft")
+                        providerButton("Microsoft", provider: "microsoft")
                     }
                 }
             }
@@ -1290,11 +1273,7 @@ struct EmailScanView: View {
     private func connectionCard(_ connection: EmailConnectionSummary) -> some View {
         RenewaCard {
             HStack(spacing: 13) {
-                Text(connection.provider == "google" ? "G" : "M")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(connection.provider == "google" ? Color.blue : RenewaTheme.sage)
-                    .frame(width: 40, height: 40)
-                    .background(RenewaTheme.background, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                inboxProviderIcon(connection.provider, size: 40)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(connection.providerTitle)
@@ -1489,14 +1468,12 @@ struct EmailScanView: View {
         .foregroundStyle(RenewaTheme.muted)
     }
 
-    private func providerButton(_ title: String, mark: String, provider: String) -> some View {
+    private func providerButton(_ title: String, provider: String) -> some View {
         Button {
             Task { await connect(provider) }
         } label: {
             HStack(spacing: 8) {
-                Text(mark)
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(provider == "google" ? Color.blue : RenewaTheme.sage)
+                inboxProviderIcon(provider, size: 20)
                 Text("Connect \(title)")
                     .font(.renewa(13, weight: .semibold))
             }
