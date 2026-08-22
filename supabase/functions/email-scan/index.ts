@@ -1019,6 +1019,7 @@ async function scanStatus(
       suppressed_merchants: await merchantSuppressions(admin, userID),
       connections: await connectionSummaries(admin, userID),
       learning_summary: await learningSummary(admin, userID),
+      recent_activity: await recentActivity(admin, userID),
       withheld_ambiguities: 0,
       errors: [],
     };
@@ -1098,6 +1099,7 @@ async function scanStatus(
     suppressed_merchants: await merchantSuppressions(admin, userID),
     connections: await connectionSummaries(admin, userID),
     learning_summary: await learningSummary(admin, userID),
+    recent_activity: await recentActivity(admin, userID),
     errors: uniqueStrings([
       ...runs.map((run) => run.error_message),
       ...(jobs ?? []).map((job) => job.error_message),
@@ -1149,6 +1151,50 @@ async function learningSummary(
       evidence: string | null;
     }>,
   );
+}
+
+async function recentActivity(
+  admin: AdminClient,
+  userID: string,
+): Promise<Array<Record<string, unknown>>> {
+  const { data: outcomes, error: outcomeError } = await admin
+    .from("subscription_candidate_review_outcomes")
+    .select("id,candidate_id,outcome,proposed_fields,applied_fields,created_at")
+    .eq("user_id", userID)
+    .order("created_at", { ascending: false })
+    .limit(6);
+  if (outcomeError) throw outcomeError;
+  if (!outcomes || outcomes.length === 0) return [];
+
+  const candidateIDs = outcomes.map((outcome) => String(outcome.candidate_id));
+  const { data: candidates, error: candidateError } = await admin
+    .from("subscription_candidates")
+    .select("id,merchant_name,amount,currency,event_type")
+    .eq("user_id", userID)
+    .in("id", candidateIDs);
+  if (candidateError) throw candidateError;
+
+  const candidateByID = new Map(
+    (candidates ?? []).map((candidate) => [String(candidate.id), candidate]),
+  );
+  return outcomes.flatMap((outcome) => {
+    const candidate = candidateByID.get(String(outcome.candidate_id));
+    const applied = isRecord(outcome.applied_fields) ? outcome.applied_fields : {};
+    const proposed = isRecord(outcome.proposed_fields) ? outcome.proposed_fields : {};
+    const merchantName = candidate?.merchant_name ??
+      stringOrNull(applied.merchant_name) ??
+      stringOrNull(proposed.merchant_name);
+    if (!merchantName) return [];
+    return [{
+      id: outcome.id,
+      merchant_name: merchantName,
+      outcome: outcome.outcome,
+      event_type: candidate?.event_type ?? null,
+      amount: candidate?.amount ?? numberOrNull(applied.amount) ?? numberOrNull(proposed.amount),
+      currency: candidate?.currency ?? stringOrNull(applied.currency) ?? stringOrNull(proposed.currency),
+      created_at: outcome.created_at,
+    }];
+  });
 }
 
 async function merchantSuppressions(

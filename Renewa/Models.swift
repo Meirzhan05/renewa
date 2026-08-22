@@ -324,6 +324,49 @@ struct EmailScanLearningSummary: Codable, Hashable {
     }
 }
 
+struct EmailScanActivity: Codable, Hashable, Identifiable {
+    let id: UUID
+    let merchantName: String
+    let outcome: String
+    let eventType: String?
+    let amount: Decimal?
+    let currency: String?
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case merchantName = "merchant_name"
+        case outcome
+        case eventType = "event_type"
+        case amount
+        case currency
+        case createdAt = "created_at"
+    }
+
+    var title: String {
+        switch outcome {
+        case "confirmed": "Now tracking \(merchantName)"
+        case "corrected": "Updated \(merchantName)"
+        case "canceled": "Marked \(merchantName) as canceled"
+        case "suppressed": "Muted \(merchantName)"
+        case "ignored": "Skipped \(merchantName)"
+        default: "Handled \(merchantName)"
+        }
+    }
+
+    var detail: String {
+        var values: [String] = []
+        if let amount, let currency {
+            values.append(amount.currencyText(code: currency))
+        }
+        if let eventType {
+            values.append(eventType.replacingOccurrences(of: "_", with: " ").capitalized)
+        }
+        values.append(createdAt.formatted(.relative(presentation: .named)))
+        return values.joined(separator: " · ")
+    }
+}
+
 struct EmailSubscriptionCandidate: Identifiable, Codable, Hashable {
     let id: UUID
     let matchedSubscriptionID: UUID?
@@ -419,6 +462,7 @@ struct EmailScanStatus: Codable, Equatable {
     let errors: [String]
     let withheldAmbiguities: Int?
     let learningSummary: EmailScanLearningSummary?
+    let recentActivity: [EmailScanActivity]? = nil
     let runs: [EmailScanRunProgress]?
 
     enum CodingKeys: String, CodingKey {
@@ -437,6 +481,7 @@ struct EmailScanStatus: Codable, Equatable {
         case errors
         case withheldAmbiguities = "withheld_ambiguities"
         case learningSummary = "learning_summary"
+        case recentActivity = "recent_activity"
         case runs
     }
 

@@ -62,4 +62,5 @@
 - [x] Redesign Inbox Intelligence as a quiet assistant-first surface: pending reviews stay primary, monitoring status stays compact, and settings, diagnostics, and lifecycle history are progressively disclosed.
 - [x] Add a compact Latest check proof-of-work card so Inbox Intelligence explains recent inbox activity without restoring a dashboard or exposing email content.
 - [x] Prioritize recent subscription evidence by limiting first-time historical inbox discovery to 180 days and provider-cursor recovery to 90 days.
+- [x] Rebuild Inbox Intelligence from the approved handoff as a concise native review queue, connection status, and real handled-activity feed, keeping unsupported automation and email facts out of the UI.
 - [ ] Add verified Gmail Pub/Sub and Microsoft Graph event monitoring with debounced cursor scans, watch renewal, daily reconciliation, and truthful Inbox Intelligence monitoring health. Code and local verification are complete; hosted provider setup and staged rollout remain.

@@ -225,6 +225,39 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
+    func test_handledActivity_describesConfirmedSubscriptionWithoutEmailContent() {
+        let activity = EmailScanActivity(
+            id: UUID(),
+            merchantName: "Notion",
+            outcome: "confirmed",
+            eventType: "created",
+            amount: 10,
+            currency: "USD",
+            createdAt: .now
+        )
+
+        XCTAssertEqual(activity.title, "Now tracking Notion")
+        XCTAssertTrue(activity.detail.contains("10"))
+        XCTAssertTrue(activity.detail.contains("Created"))
+    }
+
+    @MainActor
+    func test_handledActivity_describesCanceledSubscription() {
+        let activity = EmailScanActivity(
+            id: UUID(),
+            merchantName: "Netflix",
+            outcome: "canceled",
+            eventType: "canceled",
+            amount: nil,
+            currency: nil,
+            createdAt: .now
+        )
+
+        XCTAssertEqual(activity.title, "Marked Netflix as canceled")
+        XCTAssertTrue(activity.detail.contains("Canceled"))
+    }
+
+    @MainActor
     private func makeStatus(
         status: EmailScanAggregateStatus,
         stage: EmailScanStage = .idle,
