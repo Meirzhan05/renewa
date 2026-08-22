@@ -48,18 +48,30 @@ supabase secrets set --env-file supabase/functions/.env
 supabase functions deploy mail-oauth-start
 supabase functions deploy mail-oauth-callback --no-verify-jwt
 supabase functions deploy email-scan
+supabase functions deploy inbox-monitor --no-verify-jwt
 ```
 
-## Daily automatic monitoring
+## Event-driven inbox monitoring
 
-After a person explicitly connects an inbox during onboarding, Renewa processes the existing inbox in resumable pages and then enables daily incremental monitoring for that connection. The daily monitor only follows the established Gmail history or Microsoft delta cursor; it does not re-run the historical scan or inspect full content unless a new message passes billing-signal filtering.
+After a person explicitly connects an inbox, Renewa provisions a provider watch. Provider events are wake signals only: Gmail Pub/Sub and Microsoft Graph never provide the message content used for extraction. Renewa follows the established Gmail history or Microsoft delta cursor, filters metadata first, and retrieves full content only for likely billing messages.
 
-Set a random server-only `INBOX_MONITOR_SECRET` for the `email-scan` Edge Function. Then use the Supabase Dashboard SQL Editor to enable `pg_cron` and `pg_net`, store the same value in Vault as `INBOX_MONITOR_SECRET`, and schedule a daily call. Keep the secret out of the iOS app and migrations.
+Configure these server-only values before connecting a production inbox:
+
+- `GMAIL_PUBSUB_TOPIC`: fully-qualified Google Cloud Pub/Sub topic, for example `projects/PROJECT_ID/topics/renewa-inbox-events`. Grant `gmail-api-push@system.gserviceaccount.com` publisher access to it.
+- `GMAIL_PUBSUB_AUDIENCE`: the audience configured on the Pub/Sub push subscription, normally the public `inbox-monitor` Function URL.
+- `GMAIL_PUBSUB_SERVICE_ACCOUNT`: the service account email configured for Pub/Sub OIDC push delivery.
+- `INBOX_MONITORING_WEBHOOK_URL`: optional public HTTPS callback used by Microsoft Graph; it defaults to `<SUPABASE_URL>/functions/v1/inbox-monitor`.
+
+Create a Pub/Sub push subscription to the deployed `inbox-monitor` URL with OIDC authentication. Register the same public HTTPS callback with Microsoft Graph; Graph validates it by POSTing a `validationToken`, which the Function returns as plain text. Do not put any of these values in the iOS app.
+
+## Reconciliation and watch renewal
+
+Set a random server-only `INBOX_MONITOR_SECRET` for the `email-scan` Edge Function. Then use the Supabase Dashboard SQL Editor to enable `pg_cron` and `pg_net`, store the same value in Vault as `INBOX_MONITOR_SECRET`, and schedule protected reconciliation and renewal calls. Keep the secret out of the iOS app and migrations.
 
 ```sql
 select cron.schedule(
-  'renewa-inbox-monitor-daily',
-  '15 3 * * *',
+  'renewa-inbox-event-work',
+  '*/2 * * * *',
   $$
   select net.http_post(
     url := 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/email-scan',
@@ -68,13 +80,29 @@ select cron.schedule(
       'x-renewa-monitor-secret',
       (select decrypted_secret from vault.decrypted_secrets where name = 'INBOX_MONITOR_SECRET')
     ),
-    body := '{"action":"automatic"}'::jsonb
+    body := '{"action":"reconcile"}'::jsonb
+  );
+  $$
+);
+
+select cron.schedule(
+  'renewa-inbox-watch-renewal',
+  '15 * * * *',
+  $$
+  select net.http_post(
+    url := 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/email-scan',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-renewa-monitor-secret',
+      (select decrypted_secret from vault.decrypted_secrets where name = 'INBOX_MONITOR_SECRET')
+    ),
+    body := '{"action":"renew_monitoring"}'::jsonb
   );
   $$
 );
 ```
 
-The monitor is protected by its server-only secret. It processes up to 100 due connections per run, marks each processed connection with `last_automatic_scan_at`, and starts durable jobs; the existing retry/cursor logic handles transient provider failures. Disconnecting an inbox stops all future monitoring. Users can still run a manual scan at any time.
+The reconciliation command processes provider-event work every two minutes and also runs the existing daily cursor backstop for due inboxes. The renewal command refreshes watches before they expire. Both calls are protected by a server-only secret, process bounded batches, and use the existing retry/cursor logic for transient provider failures. Disconnecting an inbox deletes local monitoring state and attempts to remove the Microsoft subscription. People can still use **Check now** at any time.
 
 ## Operational checks
 
@@ -84,6 +112,9 @@ The monitor is protected by its server-only secret. It processes up to 100 due c
 - Confirm an old receipt followed by a later cancellation does not appear as an add candidate, and that a recent annual receipt remains current until its projected renewal.
 - Confirm “I don’t use this” resolves pending non-cancellation candidates for a merchant and prevents future proposals without changing subscriptions.
 - Confirm incremental scans remain Inbox-focused; do not treat the absence of a cancellation email as lifecycle proof.
+- Confirm duplicate Gmail Pub/Sub and Microsoft Graph events create one due record, and an event received during an active scan creates one follow-up check.
+- Confirm a missed provider event is discovered by the daily cursor reconciliation, an expired provider watch becomes degraded, and invalid OAuth becomes reconnect required.
+- Confirm dashboard copy says inbox monitoring is active only after a verified provider watch has been provisioned.
 - Confirm malformed JSON, wrong message IDs, impossible dates, unsupported currencies, and prompt-injection text never create actionable candidates.
 - Confirm another authenticated user cannot read or review a candidate through RLS or Function ownership checks.
 - Confirm repeated confirmation is idempotent and an ignored candidate never changes a subscription.

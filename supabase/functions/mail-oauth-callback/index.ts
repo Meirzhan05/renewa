@@ -1,6 +1,7 @@
 import { adminClient } from "../_shared/supabase.ts";
 import { encryptJSON, sha256 } from "../_shared/crypto.ts";
 import { exchangeCode, Provider, providerEmail } from "../_shared/oauth.ts";
+import { provisionInboxMonitoring } from "../_shared/inbox-monitoring.ts";
 
 Deno.serve(async (request) => {
   const url = new URL(request.url);
@@ -32,7 +33,9 @@ Deno.serve(async (request) => {
     const provider = record.provider as Provider;
     const tokens = await exchangeCode(provider, code);
     const email = await providerEmail(provider, tokens.access_token);
-    const { error: saveError } = await admin.from("email_connections").upsert({
+    const { data: connection, error: saveError } = await admin.from(
+      "email_connections",
+    ).upsert({
       user_id: record.user_id,
       provider,
       email,
@@ -41,8 +44,11 @@ Deno.serve(async (request) => {
       scopes: tokens.scope?.split(" ") ?? [],
       last_error: null,
       automatic_monitoring_enabled: true,
-    }, { onConflict: "user_id,provider" });
-    if (saveError) throw saveError;
+    }, { onConflict: "user_id,provider" }).select("id").single();
+    if (saveError || !connection) {
+      throw saveError ?? new Error("Could not save inbox connection");
+    }
+    await provisionInboxMonitoring(admin, connection.id);
     return Response.redirect(`renewa://mail-connected?provider=${provider}`);
   } catch (error) {
     const message = error instanceof Error

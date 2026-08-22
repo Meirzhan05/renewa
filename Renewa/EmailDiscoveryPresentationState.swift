@@ -9,6 +9,14 @@ struct EmailDiscoveryPresentationState: Equatable {
         case needsAttention
     }
 
+    enum MonitoringState: Equatable {
+        case notConfigured
+        case active
+        case checking
+        case fallback
+        case reconnectRequired
+    }
+
     let status: EmailScanAggregateStatus
     let stage: EmailScanStage
     let connectionCount: Int
@@ -46,13 +54,27 @@ struct EmailDiscoveryPresentationState: Equatable {
     var dashboardState: DashboardState {
         if connectionCount == 0 { return .noInbox }
         if isScanning { return .scanning }
+        if monitoringState == .reconnectRequired { return .needsAttention }
         if errorCount > 0 || status == .failed || status == .partial { return .needsAttention }
         if pendingCount > 0 { return .reviewReady }
         return .upToDate
     }
 
     var isMonitoringAutomatically: Bool {
-        connections.contains { $0.automaticMonitoringEnabled == true }
+        monitoringState == .active || monitoringState == .checking
+    }
+
+    var monitoringState: MonitoringState {
+        guard !connections.isEmpty else { return .notConfigured }
+        if connections.contains(where: { $0.monitoringHealth == "reconnect_required" || $0.health == "attention" }) {
+            return .reconnectRequired
+        }
+        if connections.contains(where: { $0.monitoringHealth == "checking" }) { return .checking }
+        if connections.allSatisfy({ $0.monitoringHealth == "active" }) { return .active }
+        if connections.contains(where: { $0.monitoringFallbackActive == true || $0.automaticMonitoringEnabled == true }) {
+            return .fallback
+        }
+        return .notConfigured
     }
 
     var lastScannedAt: Date? {
@@ -81,7 +103,14 @@ struct EmailDiscoveryPresentationState: Equatable {
         case .noInbox: "Connect an inbox"
         case .scanning: stageTitle
         case .reviewReady: "Changes are ready for review"
-        case .upToDate: "No action needed"
+        case .upToDate:
+            switch monitoringState {
+            case .active: "Monitoring new email"
+            case .checking: "Checking new email"
+            case .fallback: "Daily checks are active"
+            case .reconnectRequired: "An inbox needs attention"
+            case .notConfigured: "No action needed"
+            }
         case .needsAttention: "An inbox needs attention"
         }
     }
@@ -99,10 +128,22 @@ struct EmailDiscoveryPresentationState: Equatable {
         case .needsAttention:
             return "Completed with \(errorCount) connection issue\(errorCount == 1 ? "" : "s")."
         case .upToDate:
+            switch monitoringState {
+            case .active:
+                return "New inbox activity is checked automatically. You only need to review meaningful changes."
+            case .checking:
+                return "A server-side check is in progress. You can leave Renewa while it finishes."
+            case .fallback:
+                return "Daily reconciliation is active while live inbox monitoring needs attention."
+            case .reconnectRequired:
+                return "Reconnect this inbox to resume automatic monitoring."
+            case .notConfigured:
+                break
+            }
             if nonActionableCount > 0 {
                 return "We found billing history, but nothing safely needs your review."
             }
-            return "Your inbox is connected and ready for the next scan."
+            return "Your inbox is connected. Check now whenever you want an immediate update."
         }
     }
 

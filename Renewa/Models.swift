@@ -230,6 +230,11 @@ struct EmailConnectionSummary: Identifiable, Codable, Hashable {
     let health: String
     let scanStatus: String
     let automaticMonitoringEnabled: Bool?
+    let monitoringHealth: String?
+    let monitoringError: String?
+    let monitoringExpiresAt: Date?
+    let lastAutomaticScanAt: Date?
+    let monitoringFallbackActive: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -239,6 +244,39 @@ struct EmailConnectionSummary: Identifiable, Codable, Hashable {
         case health
         case scanStatus = "scan_status"
         case automaticMonitoringEnabled = "automatic_monitoring_enabled"
+        case monitoringHealth = "monitoring_health"
+        case monitoringError = "monitoring_error"
+        case monitoringExpiresAt = "monitoring_expires_at"
+        case lastAutomaticScanAt = "last_automatic_scan_at"
+        case monitoringFallbackActive = "monitoring_fallback_active"
+    }
+
+    init(
+        id: UUID,
+        provider: String,
+        redactedEmail: String?,
+        lastScannedAt: Date?,
+        health: String,
+        scanStatus: String,
+        automaticMonitoringEnabled: Bool?,
+        monitoringHealth: String? = nil,
+        monitoringError: String? = nil,
+        monitoringExpiresAt: Date? = nil,
+        lastAutomaticScanAt: Date? = nil,
+        monitoringFallbackActive: Bool? = nil
+    ) {
+        self.id = id
+        self.provider = provider
+        self.redactedEmail = redactedEmail
+        self.lastScannedAt = lastScannedAt
+        self.health = health
+        self.scanStatus = scanStatus
+        self.automaticMonitoringEnabled = automaticMonitoringEnabled
+        self.monitoringHealth = monitoringHealth
+        self.monitoringError = monitoringError
+        self.monitoringExpiresAt = monitoringExpiresAt
+        self.lastAutomaticScanAt = lastAutomaticScanAt
+        self.monitoringFallbackActive = monitoringFallbackActive
     }
 
     var providerTitle: String { provider.capitalized }

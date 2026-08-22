@@ -630,20 +630,33 @@ private struct InsightsActivationGraphic: View {
 
 private struct InsightsLoadingSkeleton: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 16) {
             RenewaCard {
-                VStack(alignment: .leading, spacing: 13) {
-                    RenewaSkeleton(width: 126, height: 14, cornerRadius: 6)
-                    RenewaSkeleton(width: 210, height: 46, cornerRadius: 12)
-                    RenewaSkeleton(width: 248, height: 14, cornerRadius: 6)
+                HStack(alignment: .top, spacing: 15) {
+                    ZStack {
+                        Circle()
+                            .fill(RenewaTheme.sage.opacity(0.13))
+                        HeroIcon(.chartBar, size: 25)
+                            .foregroundStyle(RenewaTheme.sage)
+                    }
+                    .frame(width: 54, height: 54)
+                    .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Preparing your insights")
+                            .font(.renewa(17, weight: .bold))
+                        Text("Bringing together your subscriptions and spending history.")
+                            .font(.renewa(13))
+                            .foregroundStyle(RenewaTheme.muted)
+                        HStack(spacing: 8) {
+                            RenewaSkeleton(width: 74, height: 10, cornerRadius: 5)
+                            RenewaSkeleton(width: 92, height: 10, cornerRadius: 5)
+                            RenewaSkeleton(width: 61, height: 10, cornerRadius: 5)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-
-            InsightSummarySkeleton()
-
-            InsightsChartSkeleton(titleWidth: 176, chartHeight: 170)
-            InsightsChartSkeleton(titleWidth: 132, chartHeight: 190)
-            InsightsChartSkeleton(titleWidth: 118, chartHeight: 154)
         }
     }
 }
@@ -651,31 +664,28 @@ private struct InsightsLoadingSkeleton: View {
 private struct InsightSummarySkeleton: View {
     var body: some View {
         RenewaCard {
-            VStack(alignment: .leading, spacing: 13) {
-                HStack(spacing: 9) {
-                    RenewaSkeleton(width: 21, height: 21, cornerRadius: 8)
-                    RenewaSkeleton(width: 132, height: 16, cornerRadius: 7)
+            HStack(alignment: .top, spacing: 13) {
+                ZStack {
+                    Circle()
+                        .fill(RenewaTheme.sage.opacity(0.13))
+                    HeroIcon(.sparkles, style: .solid, size: 20)
+                        .foregroundStyle(RenewaTheme.sage)
                 }
-                RenewaSkeleton(height: 15, cornerRadius: 7)
-                RenewaSkeleton(width: 236, height: 15, cornerRadius: 7)
-                RenewaSkeleton(width: 178, height: 15, cornerRadius: 7)
-            }
-        }
-    }
-}
+                .frame(width: 42, height: 42)
+                .accessibilityHidden(true)
 
-private struct InsightsChartSkeleton: View {
-    let titleWidth: CGFloat
-    let chartHeight: CGFloat
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            RenewaSkeleton(width: titleWidth, height: 20, cornerRadius: 8)
-            RenewaCard {
-                VStack(spacing: 12) {
-                    RenewaSkeleton(height: chartHeight, cornerRadius: 18)
-                    RenewaSkeleton(width: 212, height: 12, cornerRadius: 6)
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Refreshing Renewa’s read")
+                        .font(.renewa(16, weight: .bold))
+                    Text("Updating your latest subscription patterns.")
+                        .font(.renewa(13))
+                        .foregroundStyle(RenewaTheme.muted)
+                    HStack(spacing: 8) {
+                        RenewaSkeleton(width: 72, height: 9, cornerRadius: 5)
+                        RenewaSkeleton(width: 104, height: 9, cornerRadius: 5)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
     }

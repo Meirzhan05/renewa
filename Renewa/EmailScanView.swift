@@ -136,9 +136,31 @@ struct EmailScanView: View {
     }
 
     private var dashboardLoading: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            RenewaSkeleton(height: 220)
-            RenewaSkeleton(height: 120)
+        RenewaCard {
+            HStack(alignment: .top, spacing: 15) {
+                ZStack {
+                    Circle()
+                        .fill(RenewaTheme.sage.opacity(0.13))
+                    HeroIcon(.envelope, style: .solid, size: 25)
+                        .foregroundStyle(RenewaTheme.sage)
+                }
+                .frame(width: 54, height: 54)
+                .accessibilityHidden(true)
+
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("Preparing Inbox Intelligence")
+                        .font(.renewa(17, weight: .bold))
+                    Text("Checking your connected inboxes and scan history.")
+                        .font(.renewa(13))
+                        .foregroundStyle(RenewaTheme.muted)
+                    HStack(spacing: 8) {
+                        RenewaSkeleton(width: 58, height: 10, cornerRadius: 5)
+                        RenewaSkeleton(width: 86, height: 10, cornerRadius: 5)
+                        RenewaSkeleton(width: 68, height: 10, cornerRadius: 5)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Loading inbox intelligence")
@@ -243,16 +265,16 @@ struct EmailScanView: View {
                         Task { _ = await store.startEmailScan() }
                     } label: {
                         RenewaPrimaryActionLabel(
-                            title: presentation.status == .failed ? "Try scan again" : presentation.connectionCount == 1 ? "Scan connected inbox" : "Scan connected inboxes",
-                            pendingTitle: "Scanning privately…",
+                            title: presentation.status == .failed ? "Try check again" : "Check now",
+                            pendingTitle: "Checking privately…",
                             isPending: presentation.isScanning,
-                            icon: .sparkles
+                            icon: .arrowPath
                         )
-                        .font(.renewa(15, weight: .semibold))
-                        .foregroundStyle(RenewaTheme.ink)
+                        .font(.renewa(14, weight: .semibold))
+                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background(.white.opacity(0.94), in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                        .frame(height: 46)
+                        .background(.white.opacity(0.16), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
                     }
                     .buttonStyle(PressScaleStyle())
                     .disabled(!presentation.canStartScan)
@@ -288,7 +310,14 @@ struct EmailScanView: View {
         case .noInbox: "READ-ONLY INBOX ACCESS"
         case .scanning: "SCAN IN PROGRESS"
         case .reviewReady: "ACTION NEEDED"
-        case .upToDate: presentation.isMonitoringAutomatically ? "INBOX HEALTHY · DAILY MONITORING" : "INBOX HEALTHY"
+        case .upToDate:
+            switch presentation.monitoringState {
+            case .active: "INBOX HEALTHY · MONITORING NEW EMAIL"
+            case .checking: "BACKGROUND CHECK IN PROGRESS"
+            case .fallback: "DAILY RECONCILIATION ACTIVE"
+            case .reconnectRequired: "INBOX NEEDS RECONNECTING"
+            case .notConfigured: "INBOX HEALTHY"
+            }
         case .needsAttention: "CONNECTION NEEDS ATTENTION"
         }
     }
@@ -555,11 +584,15 @@ struct EmailScanView: View {
                         .font(.renewa(13))
                         .foregroundStyle(RenewaTheme.muted)
                     if let lastScannedAt = connection.lastScannedAt {
-                        Text(connection.automaticMonitoringEnabled == true
-                            ? "Monitored daily · checked \(lastScannedAt, style: .relative)"
-                            : "Checked \(lastScannedAt, style: .relative)")
+                        Text(connectionMonitoringLabel(connection, lastChecked: lastScannedAt))
                         .font(.renewa(11, weight: .medium))
                         .foregroundStyle(RenewaTheme.muted)
+                    }
+                    if let error = connection.monitoringError, connection.monitoringHealth != "active" {
+                        Text(error)
+                            .font(.renewa(11))
+                            .foregroundStyle(RenewaTheme.coral)
+                            .lineLimit(2)
                     }
                 }
 
@@ -580,6 +613,26 @@ struct EmailScanView: View {
                     .disabled(presentation.isScanning)
                 }
             }
+        }
+    }
+
+    private func connectionMonitoringLabel(
+        _ connection: EmailConnectionSummary,
+        lastChecked: Date
+    ) -> String {
+        switch connection.monitoringHealth {
+        case "active":
+            return "Monitoring new email · checked \(lastChecked.formatted(.relative(presentation: .named)))"
+        case "checking":
+            return "Checking new inbox activity"
+        case "degraded":
+            return connection.monitoringFallbackActive == true
+                ? "Daily check fallback · checked \(lastChecked.formatted(.relative(presentation: .named)))"
+                : "Monitoring needs attention"
+        case "reconnect_required":
+            return "Reconnect to resume monitoring"
+        default:
+            return "Checked \(lastChecked.formatted(.relative(presentation: .named)))"
         }
     }
 

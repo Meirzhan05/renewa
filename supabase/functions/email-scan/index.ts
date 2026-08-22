@@ -27,6 +27,10 @@ import {
   validateExtractionEnvelope,
 } from "../_shared/email-discovery.ts";
 import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
+import {
+  renewDueInboxMonitoring,
+  stopInboxMonitoring,
+} from "../_shared/inbox-monitoring.ts";
 
 type AdminClient = ReturnType<typeof adminClient>;
 
@@ -94,8 +98,15 @@ Deno.serve(async (request) => {
     >;
     const action = typeof body.action === "string" ? body.action : "start";
 
-    if (action === "automatic" || action === "continue") {
-      if (request.headers.get("x-renewa-monitor-secret") !== mustEnv("INBOX_MONITOR_SECRET")) {
+    if (
+      ["automatic", "continue", "reconcile", "renew_monitoring"].includes(
+        action,
+      )
+    ) {
+      if (
+        request.headers.get("x-renewa-monitor-secret") !==
+          mustEnv("INBOX_MONITOR_SECRET")
+      ) {
         return json({ message: "Invalid monitor secret" }, 401);
       }
       if (action === "continue") {
@@ -104,7 +115,10 @@ Deno.serve(async (request) => {
         scheduleUserJobs(admin, userID, batchID);
         return json({ status: "processing" }, 202);
       }
-      return json(await runAutomaticScans(admin));
+      if (action === "renew_monitoring") {
+        return json(await renewDueInboxMonitoring(admin));
+      }
+      return json(await runAutomaticScans(admin, action === "automatic"));
     }
 
     const user = await authenticatedUser(request);
@@ -216,8 +230,11 @@ async function startScan(
       "id,user_id,provider,email,encrypted_tokens,last_scanned_at,created_at",
     )
     .eq("user_id", userID);
-  if (connectionIDs?.length) connectionsQuery = connectionsQuery.in("id", connectionIDs);
-  const { data: connections, error: connectionError } = await connectionsQuery.order("created_at", { ascending: true });
+  if (connectionIDs?.length) {
+    connectionsQuery = connectionsQuery.in("id", connectionIDs);
+  }
+  const { data: connections, error: connectionError } = await connectionsQuery
+    .order("created_at", { ascending: true });
   if (connectionError) throw connectionError;
   if (!connections || connections.length === 0) {
     throw new Error("Connect Google or Microsoft before scanning.");
@@ -276,12 +293,21 @@ async function startScan(
   };
 }
 
-async function runAutomaticScans(admin: AdminClient): Promise<Record<string, unknown>> {
+async function runAutomaticScans(
+  admin: AdminClient,
+  renewMonitoring = false,
+): Promise<Record<string, unknown>> {
+  const eventWork = await runDueInboxMonitoringWork(admin);
+  const monitoringRenewals = renewMonitoring
+    ? await renewDueInboxMonitoring(admin)
+    : null;
   const dueBefore = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
   const { data: connections, error } = await admin.from("email_connections")
     .select("id,user_id,created_at,last_automatic_scan_at")
     .eq("automatic_monitoring_enabled", true)
-    .or(`last_automatic_scan_at.is.null,last_automatic_scan_at.lte.${dueBefore}`)
+    .or(
+      `last_automatic_scan_at.is.null,last_automatic_scan_at.lte.${dueBefore}`,
+    )
     .limit(100);
   if (error) throw error;
   const groups = new Map<string, string[]>();
@@ -294,10 +320,100 @@ async function runAutomaticScans(admin: AdminClient): Promise<Record<string, unk
   for (const [userID, connectionIDs] of groups) {
     const started = await startScan(admin, userID, 1, connectionIDs);
     if (!started.reused) queued += connectionIDs.length;
-    scheduleUserJobs(admin, userID, typeof started.scan_id === "string" ? started.scan_id : null);
-    await admin.from("email_connections").update({ last_automatic_scan_at: new Date().toISOString() }).in("id", connectionIDs);
+    scheduleUserJobs(
+      admin,
+      userID,
+      typeof started.scan_id === "string" ? started.scan_id : null,
+    );
+    await admin.from("email_connections").update({
+      last_automatic_scan_at: new Date().toISOString(),
+    }).in("id", connectionIDs);
   }
-  return { queued_connections: queued, monitored_users: groups.size };
+  return {
+    queued_connections: queued,
+    monitored_users: groups.size,
+    event_work: eventWork,
+    monitoring_renewals: monitoringRenewals,
+  };
+}
+
+async function runDueInboxMonitoringWork(
+  admin: AdminClient,
+): Promise<{ queuedConnections: number; deferredConnections: number }> {
+  const now = new Date().toISOString();
+  const { data: dueWork, error } = await admin
+    .from("inbox_monitoring_due_work")
+    .select("connection_id,user_id,attempts")
+    .eq("event_pending", true)
+    .lte("due_at", now)
+    .is("claimed_at", null)
+    .order("due_at", { ascending: true })
+    .limit(100);
+  if (error) throw error;
+
+  let queuedConnections = 0;
+  let deferredConnections = 0;
+  for (const work of dueWork ?? []) {
+    const claimedAt = new Date().toISOString();
+    const { data: claimed, error: claimError } = await admin
+      .from("inbox_monitoring_due_work")
+      .update({ claimed_at: claimedAt, attempts: (work.attempts ?? 0) + 1 })
+      .eq("connection_id", work.connection_id)
+      .eq("event_pending", true)
+      .is("claimed_at", null)
+      .select("connection_id,user_id")
+      .maybeSingle();
+    if (claimError) throw claimError;
+    if (!claimed) continue;
+
+    try {
+      const started = await startScan(admin, claimed.user_id, 1, [
+        claimed.connection_id,
+      ]);
+      if (started.reused) {
+        deferredConnections += 1;
+        await admin.from("inbox_monitoring_due_work").update({
+          claimed_at: null,
+          due_at: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
+          last_error: null,
+        }).eq("connection_id", claimed.connection_id);
+        continue;
+      }
+      queuedConnections += 1;
+      scheduleUserJobs(
+        admin,
+        claimed.user_id,
+        typeof started.scan_id === "string" ? started.scan_id : null,
+      );
+      await admin.from("inbox_monitoring_due_work").update({
+        event_pending: false,
+        claimed_at: null,
+        completed_at: new Date().toISOString(),
+        last_error: null,
+      }).eq("connection_id", claimed.connection_id);
+      await admin.from("inbox_monitoring_watches").update({
+        health: "checking",
+        last_error: null,
+      })
+        .eq("connection_id", claimed.connection_id);
+    } catch (error) {
+      const message = errorMessage(error, "Inbox monitoring scan failed").slice(
+        0,
+        280,
+      );
+      await admin.from("inbox_monitoring_due_work").update({
+        claimed_at: null,
+        due_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+        last_error: message,
+      }).eq("connection_id", claimed.connection_id);
+      await admin.from("inbox_monitoring_watches").update({
+        health: "degraded",
+        last_error: message,
+      })
+        .eq("connection_id", claimed.connection_id);
+    }
+  }
+  return { queuedConnections, deferredConnections };
 }
 
 function scheduleUserJobs(
@@ -339,7 +455,9 @@ async function processUserJobs(
 
   let query = admin
     .from("email_scan_jobs")
-    .select("id,batch_id,scan_run_id,connection_id,attempts,page_number,provider_continuation")
+    .select(
+      "id,batch_id,scan_run_id,connection_id,attempts,page_number,provider_continuation",
+    )
     .eq("user_id", userID)
     .eq("status", "queued")
     .lte("available_at", new Date().toISOString())
@@ -380,6 +498,10 @@ async function processUserJobs(
         status: "completed",
         completed_at: new Date().toISOString(),
       }).eq("id", job.id);
+      await admin.from("inbox_monitoring_watches").update({
+        health: "active",
+        last_error: null,
+      }).eq("connection_id", job.connection_id).eq("health", "checking");
       await publishBatchNotificationState(admin, userID, job.batch_id);
     } catch (jobError) {
       const message = safeErrorMessage(jobError);
@@ -388,6 +510,14 @@ async function processUserJobs(
         "id",
         job.connection_id,
       ).eq("user_id", userID);
+      await admin.from("inbox_monitoring_watches").update({
+        health: /reconnect|access expired|invalid.*token|unauthori[sz]ed/i.test(
+            message,
+          )
+          ? "reconnect_required"
+          : "degraded",
+        last_error: message.slice(0, 280),
+      }).eq("connection_id", job.connection_id);
       await admin.from("email_scan_jobs").update({
         status: retryable ? "queued" : "failed",
         available_at: new Date(Date.now() + (job.attempts + 1) * 2_000)
@@ -419,7 +549,10 @@ async function publishBatchNotificationState(
     });
     if (error) throw error;
   } catch (error) {
-    console.error("Could not publish inbox scan notification state", safeErrorMessage(error));
+    console.error(
+      "Could not publish inbox scan notification state",
+      safeErrorMessage(error),
+    );
   }
 }
 
@@ -523,10 +656,21 @@ async function processConnectionJob(
     const key = canonicalMerchantKey(event.merchant_name);
     const identity = resolveMerchantIdentity({
       merchant_name: event.merchant_name,
-      sender_domain: senderDomain(metadataByID.get(event.message_id)?.sender ?? ""),
+      sender_domain: senderDomain(
+        metadataByID.get(event.message_id)?.sender ?? "",
+      ),
       canonical_merchant_key: key,
-      aliases: (reviewedAliases ?? []) as Array<{ alias_key: string; canonical_merchant_key: string }>,
-      known_keys: [...new Set([key, ...(subscriptions ?? []).map((item) => String(item.canonical_merchant_key ?? "")).filter(Boolean)])],
+      aliases: (reviewedAliases ?? []) as Array<
+        { alias_key: string; canonical_merchant_key: string }
+      >,
+      known_keys: [
+        ...new Set([
+          key,
+          ...(subscriptions ?? []).map((item) =>
+            String(item.canonical_merchant_key ?? "")
+          ).filter(Boolean),
+        ]),
+      ],
     });
     if (identity.state !== "resolved") {
       await updateRun(admin, runID, { withheld_ambiguities: 1 });
@@ -535,7 +679,7 @@ async function processConnectionJob(
     const matched = uniqueSubscriptionMatch(
       subscriptions ?? [],
       event.merchant_name,
-        identity.canonical_merchant_key,
+      identity.canonical_merchant_key,
       provider,
     );
     const matchedID = typeof matched?.id === "string" ? matched.id : null;
@@ -574,7 +718,11 @@ async function processConnectionJob(
     if (eventError) throw eventError;
     if (!savedEvent) continue;
 
-    const lifecycle = await merchantLifecycle(admin, userID, identity.canonical_merchant_key);
+    const lifecycle = await merchantLifecycle(
+      admin,
+      userID,
+      identity.canonical_merchant_key,
+    );
     const bundleID = await upsertEvidenceBundle(
       admin,
       userID,
@@ -592,7 +740,11 @@ async function processConnectionJob(
         "Later current renewal evidence was found.",
       );
       if (lifecycle.supportingEventID !== savedEvent.id) continue;
-      const suppressed = await merchantIsSuppressed(admin, userID, identity.canonical_merchant_key);
+      const suppressed = await merchantIsSuppressed(
+        admin,
+        userID,
+        identity.canonical_merchant_key,
+      );
       if (!canCreateLifecycleCandidate(lifecycle, suppressed)) {
         await resolvePendingDiscoveryCandidates(
           admin,
@@ -756,8 +908,14 @@ async function upsertEvidenceBundle(
     }, { onConflict: "user_id,canonical_merchant_key" })
     .select("id")
     .single();
-  if (error || !bundle) throw error ?? new Error("Could not save evidence bundle");
-  const { error: linkError } = await admin.from("merchant_evidence_bundle_events").upsert({ bundle_id: bundle.id, event_id: eventID, user_id: userID }, { onConflict: "bundle_id,event_id" });
+  if (error || !bundle) {
+    throw error ?? new Error("Could not save evidence bundle");
+  }
+  const { error: linkError } = await admin.from(
+    "merchant_evidence_bundle_events",
+  ).upsert({ bundle_id: bundle.id, event_id: eventID, user_id: userID }, {
+    onConflict: "bundle_id,event_id",
+  });
   if (linkError) throw linkError;
   return String(bundle.id);
 }
@@ -949,7 +1107,9 @@ async function learningSummary(
 ): Promise<Record<string, unknown>> {
   const { data: bundles, error: bundlesError } = await admin
     .from("merchant_evidence_bundles")
-    .select("canonical_merchant_key,lifecycle_state,resolution_reason,updated_at")
+    .select(
+      "canonical_merchant_key,lifecycle_state,resolution_reason,updated_at",
+    )
     .eq("user_id", userID)
     .order("updated_at", { ascending: false });
   if (bundlesError) throw bundlesError;
@@ -967,7 +1127,9 @@ async function learningSummary(
 
   const { data: events, error: eventsError } = await admin
     .from("detected_billing_events")
-    .select("canonical_merchant_key,merchant_name,event_type,source_received_at,evidence")
+    .select(
+      "canonical_merchant_key,merchant_name,event_type,source_received_at,evidence",
+    )
     .eq("user_id", userID)
     .in("canonical_merchant_key", keys)
     .order("source_received_at", { ascending: false });
@@ -1228,15 +1390,35 @@ async function reviewCandidate(
     admin,
     userID,
     candidate,
-    action === "cancel" ? "canceled" : editsDiffer(candidate, { merchantName, amount, currency, billingCycle, renewalDate, category }) ? "corrected" : "confirmed",
+    action === "cancel" ? "canceled" : editsDiffer(candidate, {
+        merchantName,
+        amount,
+        currency,
+        billingCycle,
+        renewalDate,
+        category,
+      })
+      ? "corrected"
+      : "confirmed",
     body,
-    { merchant_name: merchantName, amount, currency, billing_cycle: billingCycle, renewal_date: renewalDate, category },
+    {
+      merchant_name: merchantName,
+      amount,
+      currency,
+      billing_cycle: billingCycle,
+      renewal_date: renewalDate,
+      category,
+    },
   );
   if (action !== "cancel") {
     const aliasKey = canonicalMerchantKey(candidate.merchant_name);
     const canonicalKey = canonicalMerchantKey(merchantName);
     if (aliasKey !== canonicalKey) {
-      await admin.from("reviewed_merchant_aliases").upsert({ user_id: userID, alias_key: aliasKey, canonical_merchant_key: canonicalKey }, { onConflict: "user_id,alias_key" });
+      await admin.from("reviewed_merchant_aliases").upsert({
+        user_id: userID,
+        alias_key: aliasKey,
+        canonical_merchant_key: canonicalKey,
+      }, { onConflict: "user_id,alias_key" });
     }
   }
   const { error: eventError } = await admin.from("detected_billing_events")
@@ -1254,8 +1436,13 @@ async function reviewCandidate(
   };
 }
 
-function editsDiffer(candidate: Record<string, unknown>, value: Record<string, unknown>): boolean {
-  return Object.entries(value).some(([key, item]) => String(candidate[key] ?? "") !== String(item ?? ""));
+function editsDiffer(
+  candidate: Record<string, unknown>,
+  value: Record<string, unknown>,
+): boolean {
+  return Object.entries(value).some(([key, item]) =>
+    String(candidate[key] ?? "") !== String(item ?? "")
+  );
 }
 
 async function recordReviewOutcome(
@@ -1266,12 +1453,31 @@ async function recordReviewOutcome(
   body: Record<string, unknown>,
   appliedFields: Record<string, unknown> | null,
 ): Promise<void> {
-  const reason = typeof body.correction_reason === "string" && ["wrong_merchant", "wrong_amount", "wrong_cycle", "not_a_subscription", "other"].includes(body.correction_reason) ? body.correction_reason : null;
-  const { error } = await admin.from("subscription_candidate_review_outcomes").insert({
-    user_id: userID, candidate_id: candidate.id, outcome, correction_reason: reason,
-    proposed_fields: { merchant_name: candidate.merchant_name, amount: candidate.amount, currency: candidate.currency, billing_cycle: candidate.billing_cycle, renewal_date: candidate.renewal_date },
-    applied_fields: appliedFields ?? {},
-  });
+  const reason = typeof body.correction_reason === "string" &&
+      [
+        "wrong_merchant",
+        "wrong_amount",
+        "wrong_cycle",
+        "not_a_subscription",
+        "other",
+      ].includes(body.correction_reason)
+    ? body.correction_reason
+    : null;
+  const { error } = await admin.from("subscription_candidate_review_outcomes")
+    .insert({
+      user_id: userID,
+      candidate_id: candidate.id,
+      outcome,
+      correction_reason: reason,
+      proposed_fields: {
+        merchant_name: candidate.merchant_name,
+        amount: candidate.amount,
+        currency: candidate.currency,
+        billing_cycle: candidate.billing_cycle,
+        renewal_date: candidate.renewal_date,
+      },
+      applied_fields: appliedFields ?? {},
+    });
   if (error) throw error;
 }
 
@@ -1385,7 +1591,9 @@ async function connectionSummaries(
 ): Promise<Array<Record<string, unknown>>> {
   const { data: connections, error } = await admin
     .from("email_connections")
-    .select("id,provider,email,last_scanned_at,last_error,automatic_monitoring_enabled,created_at")
+    .select(
+      "id,provider,email,last_scanned_at,last_automatic_scan_at,last_error,automatic_monitoring_enabled,created_at",
+    )
     .eq("user_id", userID)
     .order("created_at", { ascending: true });
   if (error) throw error;
@@ -1405,6 +1613,12 @@ async function connectionSummaries(
     .in("connection_id", connectionIDs)
     .in("status", ["queued", "running"]);
   if (jobError) throw jobError;
+  const { data: watches, error: watchError } = await admin
+    .from("inbox_monitoring_watches")
+    .select("connection_id,health,last_error,expires_at")
+    .eq("user_id", userID)
+    .in("connection_id", connectionIDs);
+  if (watchError) throw watchError;
 
   return connections.map((connection) => {
     const sync = (syncStates ?? []).find((state) =>
@@ -1412,6 +1626,9 @@ async function connectionSummaries(
     );
     const active = (activeJobs ?? []).find((job) =>
       job.connection_id === connection.id
+    );
+    const watch = (watches ?? []).find((item) =>
+      item.connection_id === connection.id
     );
     return {
       id: connection.id,
@@ -1422,7 +1639,14 @@ async function connectionSummaries(
         ? "attention"
         : "connected",
       scan_status: active?.status ?? "idle",
-      automatic_monitoring_enabled: connection.automatic_monitoring_enabled === true,
+      automatic_monitoring_enabled:
+        connection.automatic_monitoring_enabled === true,
+      monitoring_health: watch?.health ?? "not_configured",
+      monitoring_error: watch?.last_error ?? null,
+      monitoring_expires_at: watch?.expires_at ?? null,
+      last_automatic_scan_at: connection.last_automatic_scan_at ?? null,
+      monitoring_fallback_active:
+        connection.automatic_monitoring_enabled === true,
     };
   });
 }
@@ -1442,6 +1666,8 @@ async function disconnectConnection(
     .maybeSingle();
   if (error) throw error;
   if (!connection) throw new Error("Connection not found");
+
+  await stopInboxMonitoring(admin, connectionID);
 
   let remoteRevoked = false;
   try {
@@ -1533,7 +1759,9 @@ async function fetchGmailBatch(
   const metadata = await mapWithConcurrency(
     [...new Set(messageIDs)].slice(
       0,
-      nextPageToken === null ? maximumIncrementalMessages : maximumMessagesPerHistoricalPage,
+      nextPageToken === null
+        ? maximumIncrementalMessages
+        : maximumMessagesPerHistoricalPage,
     ),
     6,
     (id) => fetchGmailMetadata(accessToken, id),
@@ -1550,8 +1778,12 @@ async function fetchGmailBatch(
 async function gmailMailboxPage(
   accessToken: string,
   pageToken: string | null,
-): Promise<{ messageIDs: string[]; historyID: string; nextPageToken: string | null }> {
-  const params = new URLSearchParams({ maxResults: String(maximumMessagesPerHistoricalPage) });
+): Promise<
+  { messageIDs: string[]; historyID: string; nextPageToken: string | null }
+> {
+  const params = new URLSearchParams({
+    maxResults: String(maximumMessagesPerHistoricalPage),
+  });
   if (pageToken) params.set("pageToken", pageToken);
   const response = await providerFetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
@@ -1567,9 +1799,13 @@ async function gmailMailboxPage(
   );
   const profilePayload = await profile.json();
   return {
-    messageIDs: (payload.messages ?? []).map((message: { id: string }) => message.id),
+    messageIDs: (payload.messages ?? []).map((message: { id: string }) =>
+      message.id
+    ),
     historyID: String(profilePayload.historyId),
-    nextPageToken: typeof payload.nextPageToken === "string" ? payload.nextPageToken : null,
+    nextPageToken: typeof payload.nextPageToken === "string"
+      ? payload.nextPageToken
+      : null,
   };
 }
 
@@ -1594,7 +1830,9 @@ async function gmailRecentPage(
   );
   const profilePayload = await profile.json();
   return {
-    messageIDs: (payload.messages ?? []).map((message: { id: string }) => message.id),
+    messageIDs: (payload.messages ?? []).map((message: { id: string }) =>
+      message.id
+    ),
     historyID: String(profilePayload.historyId),
   };
 }
@@ -1772,25 +2010,40 @@ async function fetchMicrosoftMailboxPage(
     "Microsoft mail could not be read. Reconnect your inbox.",
   );
   const payload = await response.json();
-  const metadata = (payload.value ?? []).flatMap((message: Record<string, unknown>) => {
-    if (message["@removed"] || typeof message.id !== "string") return [];
-    return [{
-      id: message.id,
-      subject: typeof message.subject === "string" ? message.subject : "",
-      sender: typeof (message.from as { emailAddress?: { address?: unknown } } | undefined)?.emailAddress?.address === "string"
-        ? (message.from as { emailAddress: { address: string } }).emailAddress.address
-        : "",
-      received_at: typeof message.receivedDateTime === "string" ? message.receivedDateTime : new Date().toISOString(),
-      snippet: typeof message.bodyPreview === "string" ? message.bodyPreview : "",
-    } satisfies MailMetadata];
-  });
-  const next = typeof payload["@odata.nextLink"] === "string" && isMicrosoftGraphURL(payload["@odata.nextLink"])
+  const metadata = (payload.value ?? []).flatMap(
+    (message: Record<string, unknown>) => {
+      if (message["@removed"] || typeof message.id !== "string") return [];
+      return [
+        {
+          id: message.id,
+          subject: typeof message.subject === "string" ? message.subject : "",
+          sender: typeof (message.from as
+              | { emailAddress?: { address?: unknown } }
+              | undefined)?.emailAddress?.address === "string"
+            ? (message.from as { emailAddress: { address: string } })
+              .emailAddress.address
+            : "",
+          received_at: typeof message.receivedDateTime === "string"
+            ? message.receivedDateTime
+            : new Date().toISOString(),
+          snippet: typeof message.bodyPreview === "string"
+            ? message.bodyPreview
+            : "",
+        } satisfies MailMetadata,
+      ];
+    },
+  );
+  const next = typeof payload["@odata.nextLink"] === "string" &&
+      isMicrosoftGraphURL(payload["@odata.nextLink"])
     ? payload["@odata.nextLink"]
     : null;
-  const delta = typeof payload["@odata.deltaLink"] === "string" && isMicrosoftGraphURL(payload["@odata.deltaLink"])
+  const delta = typeof payload["@odata.deltaLink"] === "string" &&
+      isMicrosoftGraphURL(payload["@odata.deltaLink"])
     ? payload["@odata.deltaLink"]
     : "";
-  if (!next && !delta) throw new Error("Microsoft mailbox cursor was not returned.");
+  if (!next && !delta) {
+    throw new Error("Microsoft mailbox cursor was not returned.");
+  }
   return {
     metadata,
     cursorKind: "microsoft_delta",
@@ -2005,26 +2258,37 @@ async function addRunMetrics(
 ): Promise<{ events_detected: number }> {
   const { data: run, error: readError } = await admin
     .from("email_scan_runs")
-    .select("messages_scanned,candidate_messages,events_detected,validation_failures")
+    .select(
+      "messages_scanned,candidate_messages,events_detected,validation_failures",
+    )
     .eq("id", runID)
     .single();
   if (readError || !run) throw readError ?? new Error("Scan run not found");
   const next = {
-    messages_scanned: Number(run.messages_scanned ?? 0) + additions.messages_scanned,
-    candidate_messages: Number(run.candidate_messages ?? 0) + additions.candidate_messages,
-    events_detected: Number(run.events_detected ?? 0) + additions.events_detected,
-    validation_failures: Number(run.validation_failures ?? 0) + additions.validation_failures,
+    messages_scanned: Number(run.messages_scanned ?? 0) +
+      additions.messages_scanned,
+    candidate_messages: Number(run.candidate_messages ?? 0) +
+      additions.candidate_messages,
+    events_detected: Number(run.events_detected ?? 0) +
+      additions.events_detected,
+    validation_failures: Number(run.validation_failures ?? 0) +
+      additions.validation_failures,
   };
   await updateRun(admin, runID, next);
   return { events_detected: next.events_detected };
 }
 
-async function scanRunBatchID(admin: AdminClient, runID: string): Promise<string> {
+async function scanRunBatchID(
+  admin: AdminClient,
+  runID: string,
+): Promise<string> {
   const { data, error } = await admin.from("email_scan_runs")
     .select("batch_id")
     .eq("id", runID)
     .single();
-  if (error || !data?.batch_id) throw error ?? new Error("Scan batch not found");
+  if (error || !data?.batch_id) {
+    throw error ?? new Error("Scan batch not found");
+  }
   return String(data.batch_id);
 }
 
@@ -2036,10 +2300,18 @@ function queueWorkerContinuation(userID: string, batchID: string): void {
       "Content-Type": "application/json",
       "x-renewa-monitor-secret": mustEnv("INBOX_MONITOR_SECRET"),
     },
-    body: JSON.stringify({ action: "continue", user_id: userID, batch_id: batchID }),
+    body: JSON.stringify({
+      action: "continue",
+      user_id: userID,
+      batch_id: batchID,
+    }),
   }).then((response) => {
-    if (!response.ok) throw new Error(`Could not continue mailbox scan (${response.status})`);
-  }).catch((error) => console.error("mailbox scan continuation failed", safeErrorMessage(error)));
+    if (!response.ok) {
+      throw new Error(`Could not continue mailbox scan (${response.status})`);
+    }
+  }).catch((error) =>
+    console.error("mailbox scan continuation failed", safeErrorMessage(error))
+  );
   const runtime = (globalThis as unknown as {
     EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void };
   }).EdgeRuntime;

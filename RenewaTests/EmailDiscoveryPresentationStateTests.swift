@@ -64,8 +64,8 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         )
 
         XCTAssertEqual(state.dashboardState, .upToDate)
-        XCTAssertEqual(state.headline, "No action needed")
-        XCTAssertEqual(state.progressText, "We found billing history, but nothing safely needs your review.")
+        XCTAssertEqual(state.headline, "Daily checks are active")
+        XCTAssertEqual(state.progressText, "Daily reconciliation is active while live inbox monitoring needs attention.")
     }
 
     @MainActor
@@ -74,6 +74,28 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             status: makeStatus(status: .failed, errors: ["Gmail needs reconnection."])
         )
 
+        XCTAssertEqual(state.dashboardState, .needsAttention)
+        XCTAssertEqual(state.headline, "An inbox needs attention")
+    }
+
+    @MainActor
+    func test_activeProviderMonitoring_isPresentedAsAutomaticInboxMonitoring() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(status: .completed, monitoringHealth: "active")
+        )
+
+        XCTAssertEqual(state.monitoringState, .active)
+        XCTAssertEqual(state.headline, "Monitoring new email")
+        XCTAssertTrue(state.progressText.contains("checked automatically"))
+    }
+
+    @MainActor
+    func test_reconnectRequiredMonitoring_needsAttention() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(status: .completed, monitoringHealth: "reconnect_required")
+        )
+
+        XCTAssertEqual(state.monitoringState, .reconnectRequired)
         XCTAssertEqual(state.dashboardState, .needsAttention)
         XCTAssertEqual(state.headline, "An inbox needs attention")
     }
@@ -126,7 +148,8 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         candidateMessages: Int = 0,
         pendingCount: Int = 0,
         errors: [String] = [],
-        learningSummary: EmailScanLearningSummary? = nil
+        learningSummary: EmailScanLearningSummary? = nil,
+        monitoringHealth: String? = nil
     ) -> EmailScanStatus {
         let connections = (0..<connectionCount).map { index in
             EmailConnectionSummary(
@@ -136,7 +159,9 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
                 lastScannedAt: nil,
                 health: "connected",
                 scanStatus: "idle",
-                automaticMonitoringEnabled: true
+                automaticMonitoringEnabled: true,
+                monitoringHealth: monitoringHealth,
+                monitoringFallbackActive: monitoringHealth == nil
             )
         }
         return EmailScanStatus(

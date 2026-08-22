@@ -56,27 +56,52 @@ struct RenewaSkeleton: View {
     var cornerRadius: CGFloat = 10
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isPulsing = false
+    @State private var isShimmering = false
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(RenewaTheme.divider.opacity(0.58))
+            .fill(
+                LinearGradient(
+                    colors: [
+                        RenewaTheme.divider.opacity(0.30),
+                        RenewaTheme.surface.opacity(0.96),
+                        RenewaTheme.divider.opacity(0.34),
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
-            .opacity(isPulsing ? 0.58 : 0.86)
+            .overlay {
+                GeometryReader { proxy in
+                    LinearGradient(
+                        colors: [.clear, RenewaTheme.sageLight.opacity(0.34), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: max(proxy.size.width * 0.62, 86))
+                    .offset(x: isShimmering ? proxy.size.width : -max(proxy.size.width * 0.62, 86))
+                }
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(.white.opacity(0.68), lineWidth: 1)
+            }
             .animation(
                 reduceMotion
                     ? nil
-                    : .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
-                value: isPulsing
+                    : .linear(duration: 1.35).repeatForever(autoreverses: false),
+                value: isShimmering
             )
             .accessibilityHidden(true)
             .task(id: reduceMotion) {
-                isPulsing = false
+                isShimmering = false
                 guard !reduceMotion else { return }
                 try? await Task.sleep(for: .milliseconds(250))
                 guard !Task.isCancelled else { return }
-                isPulsing = true
+                isShimmering = true
             }
     }
 }
