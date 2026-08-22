@@ -109,6 +109,8 @@ Users can mark a suggested merchant as “I don’t use this” to suppress futu
 
 Inbox Intelligence stores only validated billing facts, compact evidence summaries, user-reviewed merchant aliases, and aggregate quality outcomes. Raw email bodies and raw model payloads remain transient. A second advisory model pass is reserved for configured merchant-identity ambiguity and never receives tools, subscription IDs, or mutation authority; its result cannot bypass review.
 
+When an otherwise credible inbox event is still materially ambiguous, Inbox Intelligence can surface one privacy-minimized **Quick question**. Answers are stored per account, are idempotent, and can only create a normal review proposal or a user-scoped merchant alias; they never directly add, edit, cancel, or suppress a subscription. The existing confirmation sheet remains the only subscription-mutation gate.
+
 During onboarding, people can explicitly connect Google or Microsoft to run a bounded historical discovery scan. Connected inboxes then use daily incremental monitoring through their existing provider cursor; see [EMAIL_DISCOVERY_SETUP.md](supabase/EMAIL_DISCOVERY_SETUP.md) for the required server-only scheduler setup and opt-out/disconnect behavior.
 
 ## Project map

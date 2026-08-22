@@ -34,6 +34,7 @@ struct EmailDiscoveryPresentationState: Equatable {
     let errorCount: Int
     let withheldAmbiguities: Int
     let validationFailures: Int
+    let hasClarification: Bool
     let learningSummary: EmailScanLearningSummary?
     let connections: [EmailConnectionSummary]
 
@@ -47,6 +48,7 @@ struct EmailDiscoveryPresentationState: Equatable {
         errorCount = status?.errors.count ?? 0
         withheldAmbiguities = status?.withheldAmbiguities ?? 0
         validationFailures = status?.validationFailures ?? 0
+        hasClarification = status?.clarification != nil
         learningSummary = status?.learningSummary
         connections = status?.connections ?? []
     }
@@ -64,7 +66,7 @@ struct EmailDiscoveryPresentationState: Equatable {
         if isScanning { return .scanning }
         if monitoringState == .reconnectRequired { return .needsAttention }
         if errorCount > 0 || status == .failed || status == .partial { return .needsAttention }
-        if pendingCount > 0 { return .reviewReady }
+        if pendingCount > 0 || hasClarification { return .reviewReady }
         return .upToDate
     }
 
@@ -91,8 +93,9 @@ struct EmailDiscoveryPresentationState: Equatable {
 
     var latestCheck: EmailLatestCheckSummary? {
         guard !isScanning,
-              dashboardState == .upToDate || dashboardState == .reviewReady,
-              let completedAt = lastScannedAt else {
+            dashboardState == .upToDate || dashboardState == .reviewReady,
+            let completedAt = lastScannedAt
+        else {
             return nil
         }
 
@@ -105,7 +108,8 @@ struct EmailDiscoveryPresentationState: Equatable {
 
         let checkedMessageCount = scanned > 0 ? scanned : nil
         let likelyBillingMessageCount = candidateMessages > 0 ? candidateMessages : nil
-        let outcome = pendingCount > 0
+        let outcome =
+            pendingCount > 0
             ? "New subscription changes are ready to review."
             : "No new subscription changes need review."
 

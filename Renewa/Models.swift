@@ -427,6 +427,67 @@ struct EmailEvidenceEvent: Codable, Hashable, Identifiable {
     }
 }
 
+enum InboxClarificationKind: String, Codable, Hashable {
+    case lifecycleCheck = "lifecycle_check"
+    case identityCheck = "identity_check"
+    case billingCycleCheck = "billing_cycle_check"
+}
+
+struct InboxClarificationChoice: Codable, Hashable, Identifiable {
+    let value: String
+    let title: String
+
+    var id: String { value }
+}
+
+struct InboxClarificationEvidence: Codable, Hashable, Identifiable {
+    let merchantName: String
+    let receivedAt: Date
+    let eventType: String?
+
+    var id: String { "\(merchantName)|\(receivedAt.timeIntervalSince1970)|\(eventType ?? "")" }
+
+    enum CodingKeys: String, CodingKey {
+        case merchantName = "merchant_name"
+        case receivedAt = "received_at"
+        case eventType = "event_type"
+    }
+}
+
+struct InboxClarificationRequest: Codable, Hashable, Identifiable {
+    let id: UUID
+    let kind: InboxClarificationKind
+    let merchantName: String
+    let question: String
+    let explanation: String
+    let choices: [InboxClarificationChoice]
+    let evidenceEvents: [InboxClarificationEvidence]
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case merchantName = "merchant_name"
+        case question
+        case explanation
+        case choices
+        case evidenceEvents = "evidence_events"
+        case createdAt = "created_at"
+    }
+}
+
+struct InboxClarificationResolution: Codable, Hashable {
+    let clarificationID: UUID
+    let status: String
+    let idempotent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case clarificationID = "clarification_id"
+        case status
+        case idempotent
+    }
+}
+
 struct EmailMerchantSuppression: Identifiable, Codable, Hashable {
     let canonicalMerchantKey: String
     let createdAt: Date
@@ -457,6 +518,7 @@ struct EmailScanStatus: Codable, Equatable {
     let validationFailures: Int?
     let pendingCount: Int
     let candidates: [EmailSubscriptionCandidate]
+    let clarification: InboxClarificationRequest?
     let suppressedMerchants: [EmailMerchantSuppression]
     let connections: [EmailConnectionSummary]
     let errors: [String]
@@ -476,6 +538,7 @@ struct EmailScanStatus: Codable, Equatable {
         case validationFailures = "validation_failures"
         case pendingCount = "pending_count"
         case candidates
+        case clarification
         case suppressedMerchants = "suppressed_merchants"
         case connections
         case errors
