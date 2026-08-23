@@ -964,6 +964,48 @@ final class AppStore {
         return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
     }
 
+    private func authenticationIssue(forServerCode code: String, creatingAccount: Bool) -> AuthenticationIssue? {
+        switch code {
+        case "invalid_credentials", "invalid_grant":
+            return AuthenticationIssue(
+                title: "Email or password is incorrect",
+                message: "Check both entries and try again, or create an account if you’re new to Renewa."
+            )
+        case "email_not_confirmed":
+            return AuthenticationIssue(
+                title: "Confirm your email first",
+                message: "Open the confirmation link we sent you, then return here to sign in."
+            )
+        case "user_already_exists", "email_exists":
+            return AuthenticationIssue(
+                title: "An account already exists",
+                message: "Try signing in with this email instead."
+            )
+        case "weak_password":
+            return AuthenticationIssue(
+                title: "Choose a stronger password",
+                message: "Use at least 6 characters, then try again."
+            )
+        case "over_request_rate_limit", "over_email_send_rate_limit", "over_sms_send_rate_limit":
+            return AuthenticationIssue(
+                title: "Please wait a moment",
+                message: "There have been too many attempts. Wait a few minutes before trying again."
+            )
+        case "signup_disabled", "email_provider_disabled":
+            return AuthenticationIssue(
+                title: "Sign-up is unavailable",
+                message: "New accounts are not available right now. Please try again later."
+            )
+        case "validation_failed":
+            return AuthenticationIssue(
+                title: "Check your email address",
+                message: "Enter a valid email address, then try again."
+            )
+        default:
+            return nil
+        }
+    }
+
     private func authenticationIssue(for error: Error, creatingAccount: Bool) -> AuthenticationIssue {
         if let urlError = error as? URLError {
             switch urlError.code {
@@ -987,6 +1029,15 @@ final class AppStore {
                 title: "App setup is incomplete",
                 message: "Renewa’s connection settings are missing. Please contact the app owner."
             )
+        }
+
+        // Prefer Supabase's stable `error_code` when present — it does not
+        // vary with copy changes the way the human-readable message can.
+        if let apiError = error as? APIError,
+            case let .server(_, code?, _) = apiError,
+            let issue = authenticationIssue(forServerCode: code, creatingAccount: creatingAccount)
+        {
+            return issue
         }
 
         let rawMessage = error.localizedDescription
@@ -1107,14 +1158,14 @@ final class AppStore {
 private extension Error {
     var isAuthorizationFailure: Bool {
         guard let apiError = self as? APIError,
-            case let .server(status, _) = apiError
+            case let .server(status, _, _) = apiError
         else { return false }
         return status == 401
     }
 
     var isTerminalRefreshFailure: Bool {
         guard let apiError = self as? APIError,
-            case let .server(status, _) = apiError
+            case let .server(status, _, _) = apiError
         else { return false }
         return [400, 401, 403].contains(status)
     }

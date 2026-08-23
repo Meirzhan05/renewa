@@ -435,9 +435,13 @@ struct SupabaseClient {
         guard 200..<300 ~= response.statusCode else {
             let envelope = try? Self.decoder.decode(ErrorEnvelope.self, from: data)
             let message =
-                envelope?.message ?? envelope?.errorDescription
+                envelope?.humanMessage
                 ?? HTTPURLResponse.localizedString(forStatusCode: response.statusCode)
-            throw APIError.server(status: response.statusCode, message: message)
+            throw APIError.server(
+                status: response.statusCode,
+                code: envelope?.errorCode,
+                message: message
+            )
         }
     }
 
@@ -733,10 +737,26 @@ private struct SubscriptionBrandUpdate: Encodable {
 private struct ErrorEnvelope: Decodable {
     let message: String?
     let errorDescription: String?
+    let msg: String?
+    let error: String?
+    let errorCode: String?
 
     enum CodingKeys: String, CodingKey {
         case message
         case errorDescription = "error_description"
+        case msg
+        case error
+        case errorCode = "error_code"
+    }
+
+    // Supabase returns errors in several shapes: PostgREST uses `message`,
+    // older GoTrue used `error_description`, and current GoTrue uses `msg`
+    // with a stable `error_code`. Prefer the most human-readable text.
+    var humanMessage: String? {
+        for candidate in [message, errorDescription, msg, error] {
+            if let candidate, !candidate.isEmpty { return candidate }
+        }
+        return nil
     }
 }
 
@@ -746,7 +766,7 @@ enum APIError: LocalizedError {
     case invalidResponse
     case emailConfirmationRequired
     case decoding(String)
-    case server(status: Int, message: String)
+    case server(status: Int, code: String?, message: String)
 
     var errorDescription: String? {
         switch self {
@@ -755,7 +775,7 @@ enum APIError: LocalizedError {
         case .invalidResponse: "The server returned an invalid response."
         case .emailConfirmationRequired: "Check your inbox to confirm your email, then sign in."
         case let .decoding(detail): "Could not read the server response: \(detail)"
-        case let .server(_, message): message
+        case let .server(_, _, message): message
         }
     }
 }
