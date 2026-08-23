@@ -652,8 +652,15 @@ async function processConnectionJob(
     likely,
     3,
     async (metadata) => {
-      const message = await providerBatch.fullMessage(metadata);
-      return await extractBillingEvent(message);
+      // Tolerate a single unreadable message (e.g. a provider 404 for a message
+      // deleted between listing and fetch). Skipping and counting it keeps one
+      // bad message from aborting the whole scan and degrading the inbox.
+      try {
+        const message = await providerBatch.fullMessage(metadata);
+        return await extractBillingEvent(message);
+      } catch {
+        return { event: null, abstainReason: null, issues: ["message_fetch_failed"] };
+      }
     },
   );
   for (const extraction of extractionResults) {
