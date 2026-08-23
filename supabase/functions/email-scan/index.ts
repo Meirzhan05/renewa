@@ -2306,7 +2306,7 @@ async function fetchGmailBatch(
     }
   }
 
-  const metadata = await mapWithConcurrency(
+  const metadata = (await mapWithConcurrency(
     [...new Set(messageIDs)].slice(
       0,
       nextPageToken === null
@@ -2314,8 +2314,16 @@ async function fetchGmailBatch(
         : maximumMessagesPerHistoricalPage,
     ),
     6,
-    (id) => fetchGmailMetadata(accessToken, id),
-  );
+    async (id) => {
+      // Skip a single unreadable message (e.g. a 404 for one deleted between
+      // the history feed and this fetch) instead of failing the whole listing.
+      try {
+        return await fetchGmailMetadata(accessToken, id);
+      } catch {
+        return null;
+      }
+    },
+  )).filter((item): item is MailMetadata => item !== null);
   return {
     metadata,
     cursorKind: "gmail_history",
