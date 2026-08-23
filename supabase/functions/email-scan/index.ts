@@ -47,6 +47,12 @@ import {
   type InboxClarificationDraft,
   type InboxClarificationKind,
 } from "../_shared/inbox-clarification-policy.ts";
+import {
+  derivePriorUpserts,
+  type MerchantReviewPrior,
+  overlayPriorsOntoEvent,
+  type ReviewedFieldValues,
+} from "../_shared/merchant-review-priors.ts";
 
 type AdminClient = ReturnType<typeof adminClient>;
 
@@ -645,6 +651,17 @@ async function processConnectionJob(
     .select("alias_key,canonical_merchant_key")
     .eq("user_id", userID);
   if (aliasError) throw aliasError;
+  const { data: reviewPriors, error: priorsError } = await admin
+    .from("merchant_review_priors")
+    .select("canonical_merchant_key,field,value,evidence_strength")
+    .eq("user_id", userID);
+  if (priorsError) throw priorsError;
+  const priorsByMerchant = new Map<string, MerchantReviewPrior[]>();
+  for (const prior of (reviewPriors ?? []) as MerchantReviewPrior[]) {
+    const list = priorsByMerchant.get(prior.canonical_merchant_key) ?? [];
+    list.push(prior);
+    priorsByMerchant.set(prior.canonical_merchant_key, list);
+  }
 
   let detected = 0;
   let validationFailures = 0;
@@ -815,30 +832,45 @@ async function processConnectionJob(
       savedEvent.id,
       identity.reason,
     );
+    // Overlay the person's learned priors as proposed defaults. This never
+    // rewrites the raw detected_billing_events row (already saved above), so
+    // reconcileMerchantLifecycle inputs stay untouched; priors only shape the
+    // clarification decision and the candidate a person still confirms.
+    const presented = overlayPriorsOntoEvent(
+      event,
+      priorsByMerchant.get(identity.canonical_merchant_key) ?? [],
+      sourceReceivedAt,
+    );
+    const presentedEvent: BillingEvent = {
+      ...event,
+      billing_cycle: presented.billing_cycle,
+      category: presented.category,
+      renewal_date: presented.renewal_date,
+    };
     await supersedeResolvedClarifications(
       admin,
       userID,
       identity.canonical_merchant_key,
       lifecycle.state,
-      event.billing_cycle,
+      presentedEvent.billing_cycle,
     );
     const lifecycleDraft = lifecycleClarificationDraft({
-      event,
+      event: presentedEvent,
       receivedAt: sourceReceivedAt,
       lifecycleState: lifecycle.state,
     });
     if (lifecycleDraft) {
       await upsertClarificationRequest(admin, userID, {
         draft: lifecycleDraft,
-        merchantName: event.merchant_name,
+        merchantName: presentedEvent.merchant_name,
         merchantKey: identity.canonical_merchant_key,
         evidenceBundleID: bundleID,
         detectedEventID: savedEvent.id,
         sourceReceivedAt,
         context: {
           evidence_events: [{
-            event_type: event.event_type,
-            merchant_name: event.merchant_name,
+            event_type: presentedEvent.event_type,
+            merchant_name: presentedEvent.merchant_name,
             received_at: sourceReceivedAt,
           }],
         },
@@ -846,22 +878,22 @@ async function processConnectionJob(
       continue;
     }
     const cycleDraft = billingCycleClarificationDraft({
-      event,
+      event: presentedEvent,
       receivedAt: sourceReceivedAt,
       lifecycleState: lifecycle.state,
     });
     if (cycleDraft) {
       await upsertClarificationRequest(admin, userID, {
         draft: cycleDraft,
-        merchantName: event.merchant_name,
+        merchantName: presentedEvent.merchant_name,
         merchantKey: identity.canonical_merchant_key,
         evidenceBundleID: bundleID,
         detectedEventID: savedEvent.id,
         sourceReceivedAt,
         context: {
           evidence_events: [{
-            event_type: event.event_type,
-            merchant_name: event.merchant_name,
+            event_type: presentedEvent.event_type,
+            merchant_name: presentedEvent.merchant_name,
             received_at: sourceReceivedAt,
           }],
         },
@@ -891,7 +923,7 @@ async function processConnectionJob(
         );
         continue;
       }
-      action = classifyCandidateAction(event, matchedID);
+      action = classifyCandidateAction(presentedEvent, matchedID);
     } else {
       await resolvePendingDiscoveryCandidates(
         admin,
@@ -905,14 +937,14 @@ async function processConnectionJob(
       if (
         lifecycle.state !== "ended" ||
         lifecycle.supportingEventID !== savedEvent.id ||
-        event.event_type !== "canceled" || matchedStatus !== "active"
+        presentedEvent.event_type !== "canceled" || matchedStatus !== "active"
       ) {
         continue;
       }
       action = "cancel";
     }
     const validationIssues = semanticValidationIssues(
-      event,
+      presentedEvent,
       action,
       matched?.status ?? null,
     );
@@ -931,18 +963,18 @@ async function processConnectionJob(
       detected_event_id: savedEvent.id,
       matched_subscription_id: matchedID,
       suggested_action: action,
-      merchant_name: event.merchant_name,
+      merchant_name: presentedEvent.merchant_name,
       canonical_merchant_key: identity.canonical_merchant_key,
       evidence_bundle_id: bundleID,
       resolution_reason: identity.reason,
-      amount: event.amount,
-      currency: event.currency,
-      billing_cycle: event.billing_cycle,
-      renewal_date: event.renewal_date,
-      category: event.category,
-      event_type: event.event_type,
-      confidence: event.confidence,
-      evidence: event.evidence.slice(0, 280),
+      amount: presentedEvent.amount,
+      currency: presentedEvent.currency,
+      billing_cycle: presentedEvent.billing_cycle,
+      renewal_date: presentedEvent.renewal_date,
+      category: presentedEvent.category,
+      event_type: presentedEvent.event_type,
+      confidence: presentedEvent.confidence,
+      evidence: presentedEvent.evidence.slice(0, 280),
       validation_issues: validationIssues,
     });
     if (candidateError) throw candidateError;
@@ -1780,6 +1812,50 @@ async function recordReviewOutcome(
       applied_fields: appliedFields ?? {},
     });
   if (error) throw error;
+  await learnMerchantPriors(
+    admin,
+    userID,
+    candidate.canonical_merchant_key,
+    outcome,
+    {
+      billing_cycle: appliedFields?.billing_cycle,
+      category: appliedFields?.category,
+    },
+  );
+}
+
+// Persist field priors learned from a person's own confirmed/corrected outcomes,
+// mirroring how reviewed_merchant_aliases is written. derivePriorUpserts ignores
+// non-learning outcomes, so this is safe to call on every review path.
+async function learnMerchantPriors(
+  admin: AdminClient,
+  userID: string,
+  canonicalMerchantKey: unknown,
+  outcome: "confirmed" | "corrected" | "ignored" | "suppressed" | "canceled",
+  applied: ReviewedFieldValues,
+): Promise<void> {
+  if (typeof canonicalMerchantKey !== "string" || !canonicalMerchantKey) return;
+  if (outcome !== "confirmed" && outcome !== "corrected") return;
+  const { data: existingRows, error } = await admin
+    .from("merchant_review_priors")
+    .select("canonical_merchant_key,field,value,evidence_strength")
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", canonicalMerchantKey);
+  if (error) throw error;
+  const upserts = derivePriorUpserts({
+    outcome,
+    canonicalMerchantKey,
+    applied,
+    existing: (existingRows ?? []) as MerchantReviewPrior[],
+  });
+  if (upserts.length === 0) return;
+  const { error: upsertError } = await admin
+    .from("merchant_review_priors")
+    .upsert(
+      upserts.map((row) => ({ user_id: userID, ...row })),
+      { onConflict: "user_id,canonical_merchant_key,field" },
+    );
+  if (upsertError) throw upsertError;
 }
 
 async function suppressCandidate(
@@ -1900,6 +1976,15 @@ async function resolveClarification(
       }, { onConflict: "user_id,alias_key" });
       if (aliasError) throw aliasError;
     }
+  }
+  if (request.kind === "billing_cycle_check") {
+    await learnMerchantPriors(
+      admin,
+      userID,
+      request.canonical_merchant_key,
+      "corrected",
+      { billing_cycle: answer },
+    );
   }
   if (["yes", "monthly", "yearly"].includes(answer)) {
     await createCandidateFromClarification(admin, userID, request, answer);

@@ -678,12 +678,20 @@ function projectedRenewalDate(event: MerchantLifecycleEvent): string | null {
     ? event.event_date!
     : event.source_received_at.slice(0, 10);
   if (!isValidISODate(sourceDate)) return null;
-  const date = new Date(`${sourceDate}T00:00:00Z`);
-  if (event.billing_cycle === "weekly") {
+  return projectRenewalDate(event.billing_cycle, sourceDate);
+}
+
+export function projectRenewalDate(
+  cycle: BillingCycle,
+  fromISODate: string,
+): string | null {
+  if (!isValidISODate(fromISODate)) return null;
+  const date = new Date(`${fromISODate}T00:00:00Z`);
+  if (cycle === "weekly") {
     date.setUTCDate(date.getUTCDate() + 7);
-  } else if (event.billing_cycle === "monthly") {
+  } else if (cycle === "monthly") {
     addUTCMonths(date, 1);
-  } else if (event.billing_cycle === "quarterly") {
+  } else if (cycle === "quarterly") {
     addUTCMonths(date, 3);
   } else {
     addUTCMonths(date, 12);
