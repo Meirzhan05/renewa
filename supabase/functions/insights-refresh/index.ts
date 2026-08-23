@@ -1,4 +1,13 @@
 import { handleOptions, json } from "../_shared/http.ts";
+import {
+  attachInsightProvenance,
+  deliverInsightReport,
+  insightEvidenceSummary,
+  insightOutcomeLog,
+  shouldGenerateInsights,
+  shouldUseCachedInsight,
+  type StoredInsightProvenance,
+} from "../_shared/insights-provenance.ts";
 import { adminClient, authenticatedUser, mustEnv } from "../_shared/supabase.ts";
 
 type FactSubscription = {
@@ -23,6 +32,7 @@ type InsightPayload = {
   cards: InsightCard[];
   generated_at: string;
   is_ai_generated: boolean;
+  provenance?: StoredInsightProvenance;
 };
 
 Deno.serve(async (request) => {
@@ -48,29 +58,44 @@ Deno.serve(async (request) => {
     }
 
     const subscriptions = (subscriptionsResult.data ?? []) as FactSubscription[];
-    if (subscriptions.length === 0) {
-      return json({ report: null, cached: false, fallback: true });
+    if (!shouldGenerateInsights(subscriptions.length)) {
+      return json({ report: null, cached: false, fallback: false });
     }
 
-    const facts = buildFacts(subscriptions, eventsResult.data ?? [], scansResult.data?.[0] ?? null, snapshotsResult.data ?? []);
+    const events = eventsResult.data ?? [];
+    const snapshots = snapshotsResult.data ?? [];
+    const facts = buildFacts(subscriptions, events, scansResult.data?.[0] ?? null, snapshots);
+    const evidence = insightEvidenceSummary(subscriptions.length, events.length, snapshots.length);
     const fingerprint = await fingerprintFor(facts);
     const now = new Date();
     if (!force) {
       const { data: cached, error } = await admin.from("insight_reports").select("payload")
         .eq("user_id", user.id).eq("fact_fingerprint", fingerprint).gt("expires_at", now.toISOString()).maybeSingle();
       if (error) throw error;
-      if (cached?.payload) return json({ report: cached.payload, cached: true, fallback: false });
+      const cachedPayload = cached?.payload;
+      if (shouldUseCachedInsight(force, cachedPayload != null)) {
+        const report = deliverInsightReport(cachedPayload as InsightPayload, evidence, true);
+        console.info(insightOutcomeLog("cache_hit", evidence));
+        return json({
+          report,
+          cached: true,
+          fallback: report.provenance.source === "deterministic",
+        });
+      }
     }
 
     let payload: InsightPayload;
     let modelIdentifier: string | null = null;
     try {
-      payload = await generateInsights(facts);
-      validatePayload(payload, subscriptions, eventsResult.data ?? []);
+      const generated = await generateInsights(facts);
+      validatePayload(generated, subscriptions, events);
+      payload = attachInsightProvenance(generated, "ai", evidence);
       modelIdentifier = Deno.env.get("DEEPSEEK_MODEL") ?? "deepseek-v4-flash";
+      console.info(insightOutcomeLog("ai_generated", evidence));
     } catch (error) {
-      console.error("Insight generation fallback", error);
-      payload = deterministicFallback(facts, subscriptions);
+      const outcome = error instanceof InsightValidationError ? "validation_failed" : "ai_fallback";
+      console.warn(insightOutcomeLog(outcome, evidence));
+      payload = attachInsightProvenance(deterministicFallback(facts, subscriptions), "deterministic", evidence);
     }
 
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString();
@@ -83,11 +108,18 @@ Deno.serve(async (request) => {
       expires_at: expiresAt,
     }, { onConflict: "user_id,fact_fingerprint" });
     if (saveError) throw saveError;
-    return json({ report: payload, cached: false, fallback: !payload.is_ai_generated });
+    const report = deliverInsightReport(payload, evidence, false);
+    return json({
+      report,
+      cached: false,
+      fallback: report.provenance.source === "deterministic",
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not refresh insights";
     const status = message === "Missing bearer token" || message === "Invalid session" ? 401 : 500;
-    return json({ message }, status);
+    if (status == 401) return json({ message: "Unauthorized" }, status);
+    console.error(insightOutcomeLog("request_failed", insightEvidenceSummary(0, 0, 0)));
+    return json({ message: "Could not refresh insights" }, status);
   }
 });
 
@@ -126,15 +158,22 @@ async function generateInsights(facts: ReturnType<typeof buildFacts>): Promise<I
 }
 
 function validatePayload(payload: InsightPayload, subscriptions: FactSubscription[], events: Record<string, unknown>[]) {
-  if (typeof payload.summary !== "string" || payload.summary.length < 4 || payload.summary.length > 320 || !Array.isArray(payload.cards)) throw new Error("Invalid insight response");
+  if (typeof payload.summary !== "string" || payload.summary.length < 4 || payload.summary.length > 320 || !Array.isArray(payload.cards)) throw new InsightValidationError();
   const subscriptionIDs = new Set(subscriptions.map((item) => item.id));
   const eventIDs = new Set(events.map((item) => String(item.id)));
-  if (payload.cards.length > 3) throw new Error("Too many insight cards");
+  if (payload.cards.length > 3) throw new InsightValidationError();
   for (const card of payload.cards) {
-    if (typeof card?.title !== "string" || typeof card?.body !== "string" || card.title.length > 80 || card.body.length > 280) throw new Error("Invalid insight card");
+    if (typeof card?.title !== "string" || typeof card?.body !== "string" || card.title.length > 80 || card.body.length > 280) throw new InsightValidationError();
     const subscriptionIDsForCard = Array.isArray(card.subscription_ids) ? card.subscription_ids : [];
     const eventIDsForCard = Array.isArray(card.event_ids) ? card.event_ids : [];
-    if (subscriptionIDsForCard.length + eventIDsForCard.length === 0 || !subscriptionIDsForCard.every((id) => subscriptionIDs.has(id)) || !eventIDsForCard.every((id) => eventIDs.has(id))) throw new Error("Insight evidence is invalid");
+    if (subscriptionIDsForCard.length + eventIDsForCard.length === 0 || !subscriptionIDsForCard.every((id) => subscriptionIDs.has(id)) || !eventIDsForCard.every((id) => eventIDs.has(id))) throw new InsightValidationError();
+  }
+}
+
+class InsightValidationError extends Error {
+  constructor() {
+    super("Invalid insight response");
+    this.name = "InsightValidationError";
   }
 }
 

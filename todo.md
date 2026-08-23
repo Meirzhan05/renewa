@@ -45,6 +45,7 @@
 - [x] Add AI-backed, explainable spending insights with cached server reports and deterministic fallback.
 - [x] Add category, upcoming-renewal, and persisted monthly-spending graphs to Insights.
 - [x] Replace the empty Insights dashboard with a guided activation state and distinguish history-building, quiet-renewal, unavailable-conversion, and service-failure states without indefinite skeleton loading.
+- [x] Show whether an Insight summary is AI-generated, cached, or deterministic; retain facts and charts during degraded AI generation, with privacy-safe evidence context and retry.
 
 ## Inbox discovery
 
@@ -58,6 +59,13 @@
 - [x] Add opt-in full-mailbox onboarding discovery with resumable pages, explicit connection/scan feedback, and daily cursor-based monitoring; configure the protected Supabase scheduler before enabling it in production.
 - [x] Reconcile per-merchant email evidence into current, ended, or uncertain lifecycle outcomes so obsolete receipts never become actionable subscriptions; allow reversible unused-merchant suppression.
 - [x] Add opt-in Inbox Intelligence outcome alerts with durable, privacy-minimized delivery records, a manual-scan Live Activity, deep linking, APNs invalid-token cleanup, and deployment/runbook documentation; physical APNs delivery remains a release verification step.
-- [x] Redesign Inbox Intelligence as a scan-health dashboard with trustworthy background progress, a separate action queue, and privacy-minimized lifecycle learning details instead of persistent skeletons or ambiguous empty states.
+- [x] Redesign Inbox Intelligence as a quiet assistant-first surface: pending reviews stay primary, monitoring status stays compact, and settings, diagnostics, and lifecycle history are progressively disclosed.
+- [x] Add a compact Latest check proof-of-work card so Inbox Intelligence explains recent inbox activity without restoring a dashboard or exposing email content.
 - [x] Prioritize recent subscription evidence by limiting first-time historical inbox discovery to 180 days and provider-cursor recovery to 90 days.
+- [x] Rebuild Inbox Intelligence from the approved handoff as a concise native review queue, connection status, and real handled-activity feed, keeping unsupported automation and email facts out of the UI.
+- [x] Replace the legacy Inbox settings dashboard with the handoff’s compact provider chooser, in-context OAuth status, and a focused overflow menu; successful account connection refreshes state and starts the first scan.
+- [x] Use the current Gmail and Microsoft Outlook marks throughout Inbox Intelligence’s connection UI, without white app-icon backgrounds.
+- [x] Replace Inbox Intelligence’s initial spinner with a compact, delayed skeleton that mirrors the loaded page and avoids a full-screen loading state.
+- [x] Add one privacy-minimized Inbox Intelligence Quick question for recent, material lifecycle, merchant-identity, or billing-cycle ambiguity. Answers are durable, idempotent, owner-scoped, and can only unblock the existing confirmation-first review flow.
+- [ ] Configure hosted Microsoft OAuth credentials (`MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET`) and verify the callback redirect in a real Microsoft account. The deployed backend has the complete flow but cannot start Microsoft authorization without these external values.
 - [ ] Add verified Gmail Pub/Sub and Microsoft Graph event monitoring with debounced cursor scans, watch renewal, daily reconciliation, and truthful Inbox Intelligence monitoring health. Code and local verification are complete; hosted provider setup and staged rollout remain.

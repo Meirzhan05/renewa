@@ -20,4 +20,8 @@ select cron.schedule(
 );
 ```
 
-AI reports are cached for 24 hours per unchanged fact set. If the AI provider is unavailable, the Function returns a deterministic subscription summary and the iOS charts remain available. Roll back by removing the `insights-refresh` deployment or hiding its UI call; the history table and charts do not depend on AI output.
+AI reports are cached for 24 hours per unchanged fact set. Each non-empty report includes privacy-safe provenance: whether it was AI-generated or deterministic, whether this response reused a cache entry, the server generation time, and aggregate counts of the subscriptions, billing events, and snapshots considered. It never includes email text, message subjects, credentials, model prompts, provider errors, or secrets.
+
+If AI generation is unavailable, the Function returns a deterministic subscription summary and the iOS charts remain available. The client labels that state as a **Basic subscription summary** and offers a forced retry without removing the visible result. A forced retry bypasses the matching cache lookup; normal app visits reuse a valid matching cache entry. The Function logs only categorized outcomes (`cache_hit`, `ai_generated`, `ai_fallback`, `validation_failed`, or `request_failed`) with aggregate evidence counts.
+
+Deploy the Function before publishing a client that expects provenance fields. Older clients remain compatible because they use the existing report payload fields. Roll back by redeploying the prior Function or hiding its UI call; the history table and charts do not depend on AI output.

@@ -37,6 +37,16 @@ import {
   renewDueInboxMonitoring,
   stopInboxMonitoring,
 } from "../_shared/inbox-monitoring.ts";
+import {
+  billingCycleClarificationDraft,
+  identityClarificationDraft,
+  isClarificationAnswerAllowed,
+  lifecycleClarificationDraft,
+  shouldSupersedeClarification,
+  type InboxClarificationChoice,
+  type InboxClarificationDraft,
+  type InboxClarificationKind,
+} from "../_shared/inbox-clarification-policy.ts";
 
 type AdminClient = ReturnType<typeof adminClient>;
 
@@ -145,6 +155,8 @@ Deno.serve(async (request) => {
       }
       case "review":
         return json(await reviewCandidate(admin, user.id, body));
+      case "resolve_clarification":
+        return json(await resolveClarification(admin, user.id, body));
       case "suppress":
         return json(await suppressCandidate(admin, user.id, body));
       case "unsuppress":
@@ -180,7 +192,7 @@ Deno.serve(async (request) => {
         ? 401
         : message.endsWith(" is required") || message.startsWith("Invalid ")
         ? 400
-        : message === "Candidate not found" ||
+        : message === "Candidate not found" || message === "Clarification request not found" ||
             message === "Connection not found"
         ? 404
         : message === "Connect Google or Microsoft before scanning."
@@ -677,6 +689,74 @@ async function processConnectionJob(
       ],
     });
     if (identity.state !== "resolved") {
+      if (identity.state === "ambiguous") {
+        const providerMessageFingerprint = await sha256(
+          `${provider}:${event.message_id}`,
+        );
+        const { data: savedEvent, error: eventError } = await admin
+          .from("detected_billing_events")
+          .upsert({
+            user_id: userID,
+            scan_run_id: runID,
+            provider,
+            provider_message_id: providerMessageFingerprint,
+            event_type: event.event_type,
+            merchant_name: event.merchant_name,
+            canonical_merchant_key: key,
+            amount: event.amount,
+            currency: event.currency,
+            billing_cycle: event.billing_cycle,
+            event_date: event.event_date,
+            renewal_date: event.renewal_date,
+            source_received_at: sourceReceivedAt,
+            confidence: event.confidence,
+            evidence: event.evidence.slice(0, 280),
+            validation_state: "valid",
+            validation_issues: [],
+            schema_version: extractionSchemaVersion,
+            model_identifier: modelIdentifier(),
+          }, {
+            onConflict: "user_id,provider,provider_message_id,event_type",
+            ignoreDuplicates: true,
+          })
+          .select("id")
+          .maybeSingle();
+        if (eventError) throw eventError;
+        if (savedEvent) {
+          const lifecycle = await merchantLifecycle(admin, userID, key);
+          const bundleID = await upsertEvidenceBundle(
+            admin,
+            userID,
+            key,
+            lifecycle,
+            savedEvent.id,
+            identity.reason,
+          );
+          const draft = identityClarificationDraft({
+            event,
+            receivedAt: sourceReceivedAt,
+            candidateKeys: identity.candidate_keys,
+          });
+          if (draft) {
+            await upsertClarificationRequest(admin, userID, {
+              draft,
+              merchantName: event.merchant_name,
+              merchantKey: key,
+              evidenceBundleID: bundleID,
+              detectedEventID: savedEvent.id,
+              sourceReceivedAt,
+              context: {
+                candidate_keys: identity.candidate_keys,
+                evidence_events: [{
+                  event_type: event.event_type,
+                  merchant_name: event.merchant_name,
+                  received_at: sourceReceivedAt,
+                }],
+              },
+            });
+          }
+        }
+      }
       await updateRun(admin, runID, { withheld_ambiguities: 1 });
       continue;
     }
@@ -735,6 +815,59 @@ async function processConnectionJob(
       savedEvent.id,
       identity.reason,
     );
+    await supersedeResolvedClarifications(
+      admin,
+      userID,
+      identity.canonical_merchant_key,
+      lifecycle.state,
+      event.billing_cycle,
+    );
+    const lifecycleDraft = lifecycleClarificationDraft({
+      event,
+      receivedAt: sourceReceivedAt,
+      lifecycleState: lifecycle.state,
+    });
+    if (lifecycleDraft) {
+      await upsertClarificationRequest(admin, userID, {
+        draft: lifecycleDraft,
+        merchantName: event.merchant_name,
+        merchantKey: identity.canonical_merchant_key,
+        evidenceBundleID: bundleID,
+        detectedEventID: savedEvent.id,
+        sourceReceivedAt,
+        context: {
+          evidence_events: [{
+            event_type: event.event_type,
+            merchant_name: event.merchant_name,
+            received_at: sourceReceivedAt,
+          }],
+        },
+      });
+      continue;
+    }
+    const cycleDraft = billingCycleClarificationDraft({
+      event,
+      receivedAt: sourceReceivedAt,
+      lifecycleState: lifecycle.state,
+    });
+    if (cycleDraft) {
+      await upsertClarificationRequest(admin, userID, {
+        draft: cycleDraft,
+        merchantName: event.merchant_name,
+        merchantKey: identity.canonical_merchant_key,
+        evidenceBundleID: bundleID,
+        detectedEventID: savedEvent.id,
+        sourceReceivedAt,
+        context: {
+          evidence_events: [{
+            event_type: event.event_type,
+            merchant_name: event.merchant_name,
+            received_at: sourceReceivedAt,
+          }],
+        },
+      });
+      continue;
+    }
     let action: ReturnType<typeof classifyCandidateAction> | null = null;
     if (lifecycle.state === "current") {
       await resolveStaleCancellationCandidates(
@@ -924,6 +1057,122 @@ async function upsertEvidenceBundle(
   return String(bundle.id);
 }
 
+async function upsertClarificationRequest(
+  admin: AdminClient,
+  userID: string,
+  input: {
+    draft: InboxClarificationDraft;
+    merchantName: string;
+    merchantKey: string;
+    evidenceBundleID: string | null;
+    detectedEventID: string | null;
+    sourceReceivedAt: string;
+    context?: Record<string, unknown>;
+  },
+): Promise<void> {
+  const { data: existing, error: existingError } = await admin
+    .from("inbox_clarification_requests")
+    .select("id")
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", input.merchantKey)
+    .eq("kind", input.draft.kind)
+    .eq("status", "open")
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) return;
+
+  const { data: latest, error: latestError } = await admin
+    .from("inbox_clarification_requests")
+    .select("source_received_at")
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", input.merchantKey)
+    .eq("kind", input.draft.kind)
+    .neq("status", "open")
+    .order("source_received_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latestError) throw latestError;
+  if (latest && Date.parse(String(latest.source_received_at)) >= Date.parse(input.sourceReceivedAt)) return;
+
+  const { error } = await admin.from("inbox_clarification_requests").insert({
+    user_id: userID,
+    evidence_bundle_id: input.evidenceBundleID,
+    detected_event_id: input.detectedEventID,
+    canonical_merchant_key: input.merchantKey,
+    kind: input.draft.kind,
+    merchant_name: input.merchantName,
+    question: input.draft.question,
+    explanation: input.draft.explanation,
+    choices: input.draft.choices,
+    context: input.context ?? {},
+    priority: input.draft.priority,
+    source_received_at: input.sourceReceivedAt,
+    expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1_000).toISOString(),
+  });
+  if (error && error.code !== "23505") throw error;
+}
+
+async function supersedeResolvedClarifications(
+  admin: AdminClient,
+  userID: string,
+  merchantKey: string,
+  lifecycleState: ReturnType<typeof reconcileMerchantLifecycle>["state"],
+  billingCycle: BillingCycle | null,
+): Promise<void> {
+  const { data, error } = await admin.from("inbox_clarification_requests")
+    .select("id,kind")
+    .eq("user_id", userID)
+    .eq("canonical_merchant_key", merchantKey)
+    .eq("status", "open");
+  if (error) throw error;
+  const staleIDs = (data ?? []).filter((item) =>
+    shouldSupersedeClarification(item.kind as InboxClarificationKind, lifecycleState, billingCycle)
+  ).map((item) => item.id);
+  if (staleIDs.length === 0) return;
+  const { error: updateError } = await admin.from("inbox_clarification_requests")
+    .update({ status: "superseded", superseded_at: new Date().toISOString() })
+    .in("id", staleIDs)
+    .eq("user_id", userID)
+    .eq("status", "open");
+  if (updateError) throw updateError;
+}
+
+async function highestPriorityClarification(
+  admin: AdminClient,
+  userID: string,
+): Promise<Record<string, unknown> | null> {
+  const now = new Date().toISOString();
+  const { error: expiryError } = await admin.from("inbox_clarification_requests")
+    .update({ status: "expired", resolved_at: now })
+    .eq("user_id", userID)
+    .eq("status", "open")
+    .lt("expires_at", now);
+  if (expiryError) throw expiryError;
+  const { data, error } = await admin.from("inbox_clarification_requests")
+    .select("id,kind,merchant_name,question,explanation,choices,context,priority,source_received_at,created_at")
+    .eq("user_id", userID)
+    .eq("status", "open")
+    .gt("expires_at", now)
+    .order("priority", { ascending: false })
+    .order("source_received_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    id: data.id,
+    kind: data.kind,
+    merchant_name: data.merchant_name,
+    question: data.question,
+    explanation: data.explanation,
+    choices: data.choices,
+    evidence_events: Array.isArray((data.context as Record<string, unknown>)?.evidence_events)
+      ? (data.context as Record<string, unknown>).evidence_events
+      : [{ merchant_name: data.merchant_name, received_at: data.source_received_at }],
+    created_at: data.created_at,
+  };
+}
+
 async function merchantIsSuppressed(
   admin: AdminClient,
   userID: string,
@@ -1015,10 +1264,12 @@ async function scanStatus(
       detected: 0,
       pending_count: 0,
       candidates: [],
+      clarification: await highestPriorityClarification(admin, userID),
       runs: [],
       suppressed_merchants: await merchantSuppressions(admin, userID),
       connections: await connectionSummaries(admin, userID),
       learning_summary: await learningSummary(admin, userID),
+      recent_activity: await recentActivity(admin, userID),
       withheld_ambiguities: 0,
       errors: [],
     };
@@ -1074,6 +1325,7 @@ async function scanStatus(
     validation_failures: sum(runs, "validation_failures"),
     withheld_ambiguities: sum(runs, "withheld_ambiguities"),
     pending_count: pendingCandidates.length,
+    clarification: await highestPriorityClarification(admin, userID),
     runs: runs.map((run) => {
       const job = (jobs ?? []).find((item) => item.scan_run_id === run.id);
       return {
@@ -1098,6 +1350,7 @@ async function scanStatus(
     suppressed_merchants: await merchantSuppressions(admin, userID),
     connections: await connectionSummaries(admin, userID),
     learning_summary: await learningSummary(admin, userID),
+    recent_activity: await recentActivity(admin, userID),
     errors: uniqueStrings([
       ...runs.map((run) => run.error_message),
       ...(jobs ?? []).map((job) => job.error_message),
@@ -1149,6 +1402,50 @@ async function learningSummary(
       evidence: string | null;
     }>,
   );
+}
+
+async function recentActivity(
+  admin: AdminClient,
+  userID: string,
+): Promise<Array<Record<string, unknown>>> {
+  const { data: outcomes, error: outcomeError } = await admin
+    .from("subscription_candidate_review_outcomes")
+    .select("id,candidate_id,outcome,proposed_fields,applied_fields,created_at")
+    .eq("user_id", userID)
+    .order("created_at", { ascending: false })
+    .limit(6);
+  if (outcomeError) throw outcomeError;
+  if (!outcomes || outcomes.length === 0) return [];
+
+  const candidateIDs = outcomes.map((outcome) => String(outcome.candidate_id));
+  const { data: candidates, error: candidateError } = await admin
+    .from("subscription_candidates")
+    .select("id,merchant_name,amount,currency,event_type")
+    .eq("user_id", userID)
+    .in("id", candidateIDs);
+  if (candidateError) throw candidateError;
+
+  const candidateByID = new Map(
+    (candidates ?? []).map((candidate) => [String(candidate.id), candidate]),
+  );
+  return outcomes.flatMap((outcome) => {
+    const candidate = candidateByID.get(String(outcome.candidate_id));
+    const applied = isRecord(outcome.applied_fields) ? outcome.applied_fields : {};
+    const proposed = isRecord(outcome.proposed_fields) ? outcome.proposed_fields : {};
+    const merchantName = candidate?.merchant_name ??
+      stringOrNull(applied.merchant_name) ??
+      stringOrNull(proposed.merchant_name);
+    if (!merchantName) return [];
+    return [{
+      id: outcome.id,
+      merchant_name: merchantName,
+      outcome: outcome.outcome,
+      event_type: candidate?.event_type ?? null,
+      amount: candidate?.amount ?? numberOrNull(applied.amount) ?? numberOrNull(proposed.amount),
+      currency: candidate?.currency ?? stringOrNull(applied.currency) ?? stringOrNull(proposed.currency),
+      created_at: outcome.created_at,
+    }];
+  });
 }
 
 async function merchantSuppressions(
@@ -1535,6 +1832,155 @@ async function suppressCandidate(
     suppressed: true,
     idempotent: false,
   };
+}
+
+async function resolveClarification(
+  admin: AdminClient,
+  userID: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const requestID = requiredString(body.clarification_id, "clarification_id");
+  const answer = requiredString(body.answer, "answer");
+  const { data: request, error } = await admin.from("inbox_clarification_requests")
+    .select("id,kind,status,canonical_merchant_key,evidence_bundle_id,detected_event_id,choices,context")
+    .eq("id", requestID)
+    .eq("user_id", userID)
+    .maybeSingle();
+  if (error) throw error;
+  if (!request) throw new Error("Clarification request not found");
+  const choices = Array.isArray(request.choices)
+    ? request.choices as InboxClarificationChoice[]
+    : [];
+  if (!isClarificationAnswerAllowed(answer, choices)) {
+    throw new Error("Invalid clarification answer");
+  }
+  if (request.status !== "open") {
+    return {
+      clarification_id: request.id,
+      status: request.status,
+      idempotent: true,
+    };
+  }
+
+  const effect = answer === "not_sure"
+    ? "retained_uncertain"
+    : request.kind === "identity_check" && answer.startsWith("same:")
+    ? "alias_recorded"
+    : ["yes", "monthly", "yearly"].includes(answer)
+    ? "candidate_unblocked"
+    : "dismissed";
+  const { data: resolutionData, error: resolutionError } = await admin.rpc(
+    "resolve_inbox_clarification_request",
+    {
+      p_request_id: requestID,
+      p_user_id: userID,
+      p_answer: answer,
+      p_effect: effect,
+    },
+  ).single();
+  const resolution = resolutionData as { request_status: string; idempotent: boolean } | null;
+  if (resolutionError || !resolution) throw resolutionError ?? new Error("Could not resolve clarification");
+  if (resolution.idempotent) return {
+    clarification_id: request.id,
+    status: resolution.request_status,
+    idempotent: true,
+  };
+
+  if (request.kind === "identity_check" && answer.startsWith("same:")) {
+    const targetKey = answer.slice("same:".length);
+    const candidateKeyValue = (request.context as Record<string, unknown>)?.candidate_keys;
+    const candidateKeys = Array.isArray(candidateKeyValue)
+      ? candidateKeyValue.filter((value): value is string => typeof value === "string")
+      : [];
+    if (candidateKeys.includes(targetKey)) {
+      const { error: aliasError } = await admin.from("reviewed_merchant_aliases").upsert({
+        user_id: userID,
+        alias_key: request.canonical_merchant_key,
+        canonical_merchant_key: targetKey,
+      }, { onConflict: "user_id,alias_key" });
+      if (aliasError) throw aliasError;
+    }
+  }
+  if (["yes", "monthly", "yearly"].includes(answer)) {
+    await createCandidateFromClarification(admin, userID, request, answer);
+  }
+  return {
+    clarification_id: request.id,
+    status: resolution.request_status,
+    idempotent: false,
+  };
+}
+
+async function createCandidateFromClarification(
+  admin: AdminClient,
+  userID: string,
+  request: Record<string, unknown>,
+  answer: string,
+): Promise<void> {
+  const eventID = stringOrNull(request.detected_event_id);
+  if (!eventID || request.kind === "identity_check") return;
+  const { data: event, error: eventError } = await admin.from("detected_billing_events")
+    .select("id,scan_run_id,provider,merchant_name,canonical_merchant_key,amount,currency,billing_cycle,renewal_date,category,event_type,confidence,evidence")
+    .eq("id", eventID)
+    .eq("user_id", userID)
+    .maybeSingle();
+  if (eventError) throw eventError;
+  if (!event) return;
+  const billingCycle = request.kind === "billing_cycle_check"
+    ? answer as BillingCycle
+    : event.billing_cycle as BillingCycle | null;
+  if (!billingCycle || !event.amount || !event.currency) return;
+  const { data: subscriptions, error: subscriptionsError } = await admin
+    .from("subscriptions")
+    .select("id,name,source_key,canonical_merchant_key,brand_id,status")
+    .eq("user_id", userID);
+  if (subscriptionsError) throw subscriptionsError;
+  const clarificationEvent: BillingEvent = {
+    message_id: "clarification",
+    event_type: event.event_type,
+    merchant_name: event.merchant_name,
+    amount: Number(event.amount),
+    currency: event.currency,
+    billing_cycle: billingCycle,
+    event_date: null,
+    renewal_date: event.renewal_date,
+    category: event.category,
+    confidence: Number(event.confidence),
+    evidence: String(event.evidence),
+  };
+  const matched = uniqueSubscriptionMatch(
+    subscriptions ?? [],
+    String(event.merchant_name),
+    String(event.canonical_merchant_key),
+    event.provider as Provider,
+  );
+  const action = classifyCandidateAction(
+    clarificationEvent,
+    typeof matched?.id === "string" ? matched.id : null,
+  );
+  const issues = semanticValidationIssues(clarificationEvent, action, matched?.status ?? null);
+  if (issues.length > 0) return;
+  const { error: candidateError } = await admin.from("subscription_candidates").upsert({
+    user_id: userID,
+    scan_run_id: event.scan_run_id,
+    detected_event_id: event.id,
+    matched_subscription_id: matched?.id ?? null,
+    suggested_action: action,
+    merchant_name: event.merchant_name,
+    canonical_merchant_key: event.canonical_merchant_key,
+    evidence_bundle_id: request.evidence_bundle_id ?? null,
+    resolution_reason: "User clarified inbox evidence. Confirmation is still required.",
+    amount: event.amount,
+    currency: event.currency,
+    billing_cycle: billingCycle,
+    renewal_date: event.renewal_date,
+    category: event.category,
+    event_type: event.event_type,
+    confidence: event.confidence,
+    evidence: event.evidence,
+    validation_issues: [],
+  }, { onConflict: "detected_event_id", ignoreDuplicates: true });
+  if (candidateError) throw candidateError;
 }
 
 async function unsuppressMerchant(

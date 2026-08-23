@@ -87,7 +87,7 @@ export type MerchantLifecycle = {
 
 export type MerchantIdentityResolution =
   | { state: "resolved"; canonical_merchant_key: string; reason: string }
-  | { state: "ambiguous"; reason: string }
+  | { state: "ambiguous"; reason: string; candidate_keys: string[] }
   | { state: "unresolved"; reason: string };
 
 export type MerchantIdentityEvidence = {
@@ -217,7 +217,7 @@ export function resolveMerchantIdentity(
   const brand = brandIDForMerchant(input.merchant_name);
   if (brand && input.known_keys.includes(brand)) candidates.add(brand);
   if (candidates.size === 1) return { state: "resolved", canonical_merchant_key: [...candidates][0], reason: "canonical_or_reviewed_alias" };
-  if (candidates.size > 1) return { state: "ambiguous", reason: "competing_identity_evidence" };
+  if (candidates.size > 1) return { state: "ambiguous", reason: "competing_identity_evidence", candidate_keys: [...candidates] };
   return { state: "unresolved", reason: input.sender_domain ? "unverified_sender_domain" : "no_identity_evidence" };
 }
 

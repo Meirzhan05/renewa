@@ -1,5 +1,13 @@
 import Foundation
 
+struct EmailLatestCheckSummary: Equatable {
+    let inboxLabel: String
+    let completedAt: Date
+    let outcome: String
+    let checkedMessageCount: Int?
+    let likelyBillingMessageCount: Int?
+}
+
 struct EmailDiscoveryPresentationState: Equatable {
     enum DashboardState: Equatable {
         case noInbox
@@ -26,6 +34,7 @@ struct EmailDiscoveryPresentationState: Equatable {
     let errorCount: Int
     let withheldAmbiguities: Int
     let validationFailures: Int
+    let hasClarification: Bool
     let learningSummary: EmailScanLearningSummary?
     let connections: [EmailConnectionSummary]
 
@@ -39,6 +48,7 @@ struct EmailDiscoveryPresentationState: Equatable {
         errorCount = status?.errors.count ?? 0
         withheldAmbiguities = status?.withheldAmbiguities ?? 0
         validationFailures = status?.validationFailures ?? 0
+        hasClarification = status?.clarification != nil
         learningSummary = status?.learningSummary
         connections = status?.connections ?? []
     }
@@ -56,7 +66,7 @@ struct EmailDiscoveryPresentationState: Equatable {
         if isScanning { return .scanning }
         if monitoringState == .reconnectRequired { return .needsAttention }
         if errorCount > 0 || status == .failed || status == .partial { return .needsAttention }
-        if pendingCount > 0 { return .reviewReady }
+        if pendingCount > 0 || hasClarification { return .reviewReady }
         return .upToDate
     }
 
@@ -79,6 +89,37 @@ struct EmailDiscoveryPresentationState: Equatable {
 
     var lastScannedAt: Date? {
         connections.compactMap(\.lastScannedAt).max()
+    }
+
+    var latestCheck: EmailLatestCheckSummary? {
+        guard !isScanning,
+            dashboardState == .upToDate || dashboardState == .reviewReady,
+            let completedAt = lastScannedAt
+        else {
+            return nil
+        }
+
+        let inboxLabel: String
+        if connections.count == 1, let connection = connections.first {
+            inboxLabel = "\(connection.providerTitle) inbox"
+        } else {
+            inboxLabel = "\(connections.count) connected inboxes"
+        }
+
+        let checkedMessageCount = scanned > 0 ? scanned : nil
+        let likelyBillingMessageCount = candidateMessages > 0 ? candidateMessages : nil
+        let outcome =
+            pendingCount > 0
+            ? "New subscription changes are ready to review."
+            : "No new subscription changes need review."
+
+        return EmailLatestCheckSummary(
+            inboxLabel: inboxLabel,
+            completedAt: completedAt,
+            outcome: outcome,
+            checkedMessageCount: checkedMessageCount,
+            likelyBillingMessageCount: likelyBillingMessageCount
+        )
     }
 
     var endedCount: Int { learningSummary?.endedCount ?? 0 }

@@ -324,6 +324,49 @@ struct EmailScanLearningSummary: Codable, Hashable {
     }
 }
 
+struct EmailScanActivity: Codable, Hashable, Identifiable {
+    let id: UUID
+    let merchantName: String
+    let outcome: String
+    let eventType: String?
+    let amount: Decimal?
+    let currency: String?
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case merchantName = "merchant_name"
+        case outcome
+        case eventType = "event_type"
+        case amount
+        case currency
+        case createdAt = "created_at"
+    }
+
+    var title: String {
+        switch outcome {
+        case "confirmed": "Now tracking \(merchantName)"
+        case "corrected": "Updated \(merchantName)"
+        case "canceled": "Marked \(merchantName) as canceled"
+        case "suppressed": "Muted \(merchantName)"
+        case "ignored": "Skipped \(merchantName)"
+        default: "Handled \(merchantName)"
+        }
+    }
+
+    var detail: String {
+        var values: [String] = []
+        if let amount, let currency {
+            values.append(amount.currencyText(code: currency))
+        }
+        if let eventType {
+            values.append(eventType.replacingOccurrences(of: "_", with: " ").capitalized)
+        }
+        values.append(createdAt.formatted(.relative(presentation: .named)))
+        return values.joined(separator: " · ")
+    }
+}
+
 struct EmailSubscriptionCandidate: Identifiable, Codable, Hashable {
     let id: UUID
     let matchedSubscriptionID: UUID?
@@ -384,6 +427,67 @@ struct EmailEvidenceEvent: Codable, Hashable, Identifiable {
     }
 }
 
+enum InboxClarificationKind: String, Codable, Hashable {
+    case lifecycleCheck = "lifecycle_check"
+    case identityCheck = "identity_check"
+    case billingCycleCheck = "billing_cycle_check"
+}
+
+struct InboxClarificationChoice: Codable, Hashable, Identifiable {
+    let value: String
+    let title: String
+
+    var id: String { value }
+}
+
+struct InboxClarificationEvidence: Codable, Hashable, Identifiable {
+    let merchantName: String
+    let receivedAt: Date
+    let eventType: String?
+
+    var id: String { "\(merchantName)|\(receivedAt.timeIntervalSince1970)|\(eventType ?? "")" }
+
+    enum CodingKeys: String, CodingKey {
+        case merchantName = "merchant_name"
+        case receivedAt = "received_at"
+        case eventType = "event_type"
+    }
+}
+
+struct InboxClarificationRequest: Codable, Hashable, Identifiable {
+    let id: UUID
+    let kind: InboxClarificationKind
+    let merchantName: String
+    let question: String
+    let explanation: String
+    let choices: [InboxClarificationChoice]
+    let evidenceEvents: [InboxClarificationEvidence]
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case kind
+        case merchantName = "merchant_name"
+        case question
+        case explanation
+        case choices
+        case evidenceEvents = "evidence_events"
+        case createdAt = "created_at"
+    }
+}
+
+struct InboxClarificationResolution: Codable, Hashable {
+    let clarificationID: UUID
+    let status: String
+    let idempotent: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case clarificationID = "clarification_id"
+        case status
+        case idempotent
+    }
+}
+
 struct EmailMerchantSuppression: Identifiable, Codable, Hashable {
     let canonicalMerchantKey: String
     let createdAt: Date
@@ -414,11 +518,13 @@ struct EmailScanStatus: Codable, Equatable {
     let validationFailures: Int?
     let pendingCount: Int
     let candidates: [EmailSubscriptionCandidate]
+    let clarification: InboxClarificationRequest?
     let suppressedMerchants: [EmailMerchantSuppression]
     let connections: [EmailConnectionSummary]
     let errors: [String]
     let withheldAmbiguities: Int?
     let learningSummary: EmailScanLearningSummary?
+    let recentActivity: [EmailScanActivity]? = nil
     let runs: [EmailScanRunProgress]?
 
     enum CodingKeys: String, CodingKey {
@@ -432,11 +538,13 @@ struct EmailScanStatus: Codable, Equatable {
         case validationFailures = "validation_failures"
         case pendingCount = "pending_count"
         case candidates
+        case clarification
         case suppressedMerchants = "suppressed_merchants"
         case connections
         case errors
         case withheldAmbiguities = "withheld_ambiguities"
         case learningSummary = "learning_summary"
+        case recentActivity = "recent_activity"
         case runs
     }
 
@@ -565,17 +673,50 @@ struct InsightCard: Codable, Hashable, Identifiable {
     }
 }
 
+enum InsightSummarySource: String, Codable, Hashable {
+    case ai
+    case deterministic
+}
+
+struct InsightEvidenceSummary: Codable, Hashable {
+    let activeSubscriptionCount: Int
+    let billingEventCount: Int
+    let monthlySnapshotCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case activeSubscriptionCount = "active_subscription_count"
+        case billingEventCount = "billing_event_count"
+        case monthlySnapshotCount = "monthly_snapshot_count"
+    }
+}
+
+struct InsightProvenance: Codable, Hashable {
+    let source: InsightSummarySource
+    let generatedAt: Date
+    let isCached: Bool
+    let evidence: InsightEvidenceSummary
+
+    enum CodingKeys: String, CodingKey {
+        case source
+        case generatedAt = "generated_at"
+        case isCached = "is_cached"
+        case evidence
+    }
+}
+
 struct InsightReport: Codable, Hashable {
     let summary: String
     let cards: [InsightCard]
     let generatedAt: Date
     let isAIGenerated: Bool
+    let provenance: InsightProvenance?
 
     enum CodingKeys: String, CodingKey {
         case summary
         case cards
         case generatedAt = "generated_at"
         case isAIGenerated = "is_ai_generated"
+        case provenance
     }
 }
 

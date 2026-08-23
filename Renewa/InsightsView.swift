@@ -358,12 +358,17 @@ struct InsightsView: View {
     @ViewBuilder
     private var aiSummary: some View {
         if let report = store.insightReport {
+            let summaryState = InsightsSummaryPresentationState(report: report)
             RenewaCard {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 9) {
-                        HeroIcon(.sparkles, style: .solid, size: 21)
-                            .foregroundStyle(RenewaTheme.sage)
-                        Text(report.isAIGenerated ? "Renewa’s read" : "Your subscription snapshot")
+                        HeroIcon(
+                            summaryState.isAIDegraded ? .lightBulb : .sparkles,
+                            style: summaryState.isAIDegraded ? .outline : .solid,
+                            size: 21
+                        )
+                        .foregroundStyle(summaryState.isAIDegraded ? RenewaTheme.sand : RenewaTheme.sage)
+                        Text(summaryState.title)
                             .font(.renewa(16, weight: .bold))
                         if store.isRefreshingInsights {
                             Text("Updating…")
@@ -371,6 +376,9 @@ struct InsightsView: View {
                                 .foregroundStyle(RenewaTheme.muted)
                         }
                     }
+                    Text("\(summaryState.sourceLabel) · \(insightFreshness(summaryState.generatedAt))")
+                        .font(.renewa(12, weight: .semibold))
+                        .foregroundStyle(RenewaTheme.muted)
                     Text(report.summary)
                         .font(.renewa(16))
                         .foregroundStyle(RenewaTheme.ink)
@@ -383,6 +391,32 @@ struct InsightsView: View {
                                 .foregroundStyle(RenewaTheme.muted.opacity(0.82))
                         }
                         .padding(.top, 2)
+                    }
+                    if let evidenceLabel = summaryState.evidenceLabel {
+                        Text(evidenceLabel)
+                            .font(.renewa(12, weight: .medium))
+                            .foregroundStyle(RenewaTheme.muted)
+                    }
+                    if summaryState.isAIDegraded {
+                        Divider().overlay(RenewaTheme.divider)
+                        Text("AI is temporarily unavailable. This basic summary still uses your current subscription facts.")
+                            .font(.renewa(13))
+                            .foregroundStyle(RenewaTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button {
+                            Task { await store.loadInsights(force: true) }
+                        } label: {
+                            HStack(spacing: 7) {
+                                HeroIcon(.arrowPath, size: 16)
+                                Text("Try AI again")
+                            }
+                            .font(.renewa(14, weight: .semibold))
+                            .foregroundStyle(RenewaTheme.ink)
+                            .frame(minHeight: 38)
+                        }
+                        .buttonStyle(PressScaleStyle())
+                        .disabled(store.isLoadingInsightReport || store.isRefreshingInsights)
+                        .accessibilityHint("Requests a new AI analysis without removing this summary")
                     }
                 }
             }
@@ -399,6 +433,10 @@ struct InsightsView: View {
                 tint: RenewaTheme.sand
             )
         }
+    }
+
+    private func insightFreshness(_ date: Date) -> String {
+        "Updated \(date.formatted(.relative(presentation: .named)))"
     }
 
     private var trendSection: some View {

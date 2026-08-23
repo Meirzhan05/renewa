@@ -51,7 +51,7 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
-    func test_completedScanWithoutCandidates_explainsNoActionOutcome() {
+    func test_completedScanWithoutCandidates_staysUpToDateWithoutReview() {
         let state = EmailDiscoveryPresentationState(
             status: makeStatus(
                 status: .completed,
@@ -64,8 +64,93 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         )
 
         XCTAssertEqual(state.dashboardState, .upToDate)
+        XCTAssertEqual(state.pendingCount, 0)
         XCTAssertEqual(state.headline, "Daily checks are active")
         XCTAssertEqual(state.progressText, "Daily reconciliation is active while live inbox monitoring needs attention.")
+    }
+
+    @MainActor
+    func test_completedScan_buildsLatestCheckWithMeaningfulCounts() {
+        let completedAt = Date(timeIntervalSinceNow: -1_080)
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .completed,
+                scanned: 84,
+                candidateMessages: 3,
+                lastScannedAt: completedAt
+            )
+        )
+
+        XCTAssertEqual(state.latestCheck?.inboxLabel, "Google inbox")
+        XCTAssertEqual(state.latestCheck?.completedAt, completedAt)
+        XCTAssertEqual(state.latestCheck?.outcome, "No new subscription changes need review.")
+        XCTAssertEqual(state.latestCheck?.checkedMessageCount, 84)
+        XCTAssertEqual(state.latestCheck?.likelyBillingMessageCount, 3)
+    }
+
+    @MainActor
+    func test_reviewReadyScan_buildsLatestCheckWithoutRepeatingReviewCount() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .completed,
+                scanned: 24,
+                pendingCount: 2,
+                lastScannedAt: .now
+            )
+        )
+
+        XCTAssertEqual(state.latestCheck?.outcome, "New subscription changes are ready to review.")
+        XCTAssertEqual(state.latestCheck?.checkedMessageCount, 24)
+        XCTAssertNil(state.latestCheck?.likelyBillingMessageCount)
+    }
+
+    @MainActor
+    func test_completedScanWithoutCounts_omitsZeroFilledLatestCheckMetrics() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(status: .completed, lastScannedAt: .now)
+        )
+
+        XCTAssertNotNil(state.latestCheck)
+        XCTAssertNil(state.latestCheck?.checkedMessageCount)
+        XCTAssertNil(state.latestCheck?.likelyBillingMessageCount)
+    }
+
+    @MainActor
+    func test_noInboxAndActiveScan_doNotBuildStaleLatestCheck() {
+        let noInbox = EmailDiscoveryPresentationState(
+            status: makeStatus(status: .idle, connectionCount: 0, lastScannedAt: .now)
+        )
+        let activeScan = EmailDiscoveryPresentationState(
+            status: makeStatus(status: .running, scanned: 40, lastScannedAt: .now)
+        )
+
+        XCTAssertNil(noInbox.latestCheck)
+        XCTAssertNil(activeScan.latestCheck)
+    }
+
+    @MainActor
+    func test_multipleInboxes_buildAggregateLatestCheckLabel() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(status: .completed, connectionCount: 2, lastScannedAt: .now)
+        )
+
+        XCTAssertEqual(state.latestCheck?.inboxLabel, "2 connected inboxes")
+    }
+
+    @MainActor
+    func test_queuedScan_isPresentedAsScanningBeforeMessagesAreAvailable() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .queued,
+                stage: .queued,
+                connectionCount: 1
+            )
+        )
+
+        XCTAssertTrue(state.isScanning)
+        XCTAssertEqual(state.dashboardState, .scanning)
+        XCTAssertEqual(state.stageTitle, "Preparing your scan")
+        XCTAssertEqual(state.scanned, 0)
     }
 
     @MainActor
@@ -140,6 +225,39 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
+    func test_handledActivity_describesConfirmedSubscriptionWithoutEmailContent() {
+        let activity = EmailScanActivity(
+            id: UUID(),
+            merchantName: "Notion",
+            outcome: "confirmed",
+            eventType: "created",
+            amount: 10,
+            currency: "USD",
+            createdAt: .now
+        )
+
+        XCTAssertEqual(activity.title, "Now tracking Notion")
+        XCTAssertTrue(activity.detail.contains("10"))
+        XCTAssertTrue(activity.detail.contains("Created"))
+    }
+
+    @MainActor
+    func test_handledActivity_describesCanceledSubscription() {
+        let activity = EmailScanActivity(
+            id: UUID(),
+            merchantName: "Netflix",
+            outcome: "canceled",
+            eventType: "canceled",
+            amount: nil,
+            currency: nil,
+            createdAt: .now
+        )
+
+        XCTAssertEqual(activity.title, "Marked Netflix as canceled")
+        XCTAssertTrue(activity.detail.contains("Canceled"))
+    }
+
+    @MainActor
     private func makeStatus(
         status: EmailScanAggregateStatus,
         stage: EmailScanStage = .idle,
@@ -149,14 +267,16 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         pendingCount: Int = 0,
         errors: [String] = [],
         learningSummary: EmailScanLearningSummary? = nil,
-        monitoringHealth: String? = nil
+        clarification: InboxClarificationRequest? = nil,
+        monitoringHealth: String? = nil,
+        lastScannedAt: Date? = nil
     ) -> EmailScanStatus {
         let connections = (0..<connectionCount).map { index in
             EmailConnectionSummary(
                 id: UUID(),
                 provider: index == 0 ? "google" : "microsoft",
                 redactedEmail: "me••@example.com",
-                lastScannedAt: nil,
+                lastScannedAt: lastScannedAt,
                 health: "connected",
                 scanStatus: "idle",
                 automaticMonitoringEnabled: true,
@@ -175,6 +295,7 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             validationFailures: 0,
             pendingCount: pendingCount,
             candidates: [],
+            clarification: clarification,
             suppressedMerchants: [],
             connections: connections,
             errors: errors,
@@ -209,5 +330,27 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             evidenceEvents: nil,
             createdAt: .now
         )
+    }
+
+    @MainActor
+    func test_clarificationWithoutCandidate_marksInboxReadyForReview() {
+        let clarification = InboxClarificationRequest(
+            id: UUID(),
+            kind: .lifecycleCheck,
+            merchantName: "ChatGPT",
+            question: "Is ChatGPT still active for you?",
+            explanation: "Recent billing evidence needs confirmation.",
+            choices: [
+                InboxClarificationChoice(value: "yes", title: "Yes, it’s active"),
+                InboxClarificationChoice(value: "not_sure", title: "Not sure"),
+            ],
+            evidenceEvents: [
+                InboxClarificationEvidence(merchantName: "ChatGPT", receivedAt: .now, eventType: "renewed")
+            ],
+            createdAt: .now
+        )
+        let state = EmailDiscoveryPresentationState(status: makeStatus(status: .completed, clarification: clarification))
+
+        XCTAssertEqual(state.dashboardState, .reviewReady)
     }
 }
