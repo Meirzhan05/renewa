@@ -309,6 +309,7 @@ async function startScan(
     detected: 0,
     pending_count: 0,
     candidates: [],
+    suppressed_merchants: await merchantSuppressions(admin, userID),
     connections: await connectionSummaries(admin, userID),
     errors: [],
     reused: false,
