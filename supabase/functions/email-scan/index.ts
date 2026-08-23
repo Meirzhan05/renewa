@@ -22,10 +22,31 @@ import {
   redactEmailAddress,
   resolveMerchantIdentity,
   reviewTransitionResult,
+  sanitizeMailContent,
   SubscriptionCategory,
   tintForCategory,
   validateExtractionEnvelope,
 } from "../_shared/email-discovery.ts";
+import {
+  admitCandidate,
+  classifyCandidates,
+  groupByMerchant,
+} from "../_shared/discovery-classifier.ts";
+import {
+  agenticDiscoveryEnabled,
+  makeChatFn,
+  resolveClassifierConfig,
+  resolveReasonerConfig,
+} from "../_shared/llm-client.ts";
+import {
+  type MerchantAssessment,
+  type MerchantScope,
+  runMerchantReasoner,
+  type ToolExecutor,
+  type ToolMatch,
+} from "../_shared/agentic-reasoner.ts";
+import { verifyAssessment } from "../_shared/discovery-verify.ts";
+import { routeAssessment } from "../_shared/discovery-routing.ts";
 import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
 import {
   cursorRecoveryLookbackDays,
@@ -666,6 +687,26 @@ async function processConnectionJob(
 
   let detected = 0;
   let validationFailures = 0;
+  let candidateCount = likely.length;
+  // Agentic pipeline (flag-gated): classify → group → per-merchant reason → verify → route.
+  // The legacy per-message path below is the flag-off default and stays untouched.
+  if (agenticDiscoveryEnabled()) {
+    const agentResult = await runAgenticDiscovery({
+      admin,
+      userID,
+      runID,
+      provider,
+      accessToken: tokens.access_token,
+      providerBatch,
+      subscriptions: (subscriptions ?? []) as Array<Record<string, unknown>>,
+      reviewedAliases: (reviewedAliases ?? []) as Array<
+        { alias_key: string; canonical_merchant_key: string }
+      >,
+      priorsByMerchant,
+    });
+    detected = agentResult.presented;
+    candidateCount = agentResult.candidates;
+  } else {
   const extractionResults = await mapWithConcurrency(
     likely,
     3,
@@ -988,10 +1029,11 @@ async function processConnectionJob(
     if (candidateError) throw candidateError;
     detected += 1;
   }
+  }
 
   const runMetrics = await addRunMetrics(admin, runID, {
     messages_scanned: providerBatch.metadata.length,
-    candidate_messages: likely.length,
+    candidate_messages: candidateCount,
     events_detected: detected,
     validation_failures: validationFailures,
   });
@@ -1039,6 +1081,419 @@ async function processConnectionJob(
     error_message: null,
   });
   return false;
+}
+
+// --- Agentic discovery pipeline -------------------------------------------------------
+// Flag-gated alternative to the legacy per-message extraction: classify all fetched mail,
+// group by merchant, run a bounded agentic loop per merchant, verify grounding, and route
+// on the confidence ladder. Every surfaced path still ends at human confirmation.
+
+const MAX_MERCHANTS_PER_RUN = 12;
+const AGENT_GLOBAL_TOKEN_BUDGET = 120_000;
+const assessmentSchemaVersion = "merchant-assessment-v1";
+
+type AgenticRunResult = {
+  candidates: number;
+  presented: number;
+  clarifications: number;
+  nearMisses: number;
+  abstained: number;
+  toolCalls: number;
+  tokens: number;
+  merchants: number;
+};
+
+async function runAgenticDiscovery(input: {
+  admin: AdminClient;
+  userID: string;
+  runID: string;
+  provider: Provider;
+  accessToken: string;
+  providerBatch: ProviderBatch;
+  subscriptions: Array<Record<string, unknown>>;
+  reviewedAliases: Array<{ alias_key: string; canonical_merchant_key: string }>;
+  priorsByMerchant: Map<string, MerchantReviewPrior[]>;
+}): Promise<AgenticRunResult> {
+  const { admin, userID, runID, provider, accessToken, providerBatch } = input;
+  const metadata = providerBatch.metadata;
+  const metaByID = new Map(metadata.map((meta) => [meta.id, meta]));
+
+  // Tier-1 classification with graceful fallback: any message the classifier omits (or all
+  // of them, on outage) falls through to the deterministic keyword gate in admitCandidate.
+  const classifierConfig = resolveClassifierConfig();
+  const classifications = classifierConfig
+    ? await classifyCandidates(metadata, makeChatFn(classifierConfig))
+    : new Map();
+
+  const admitted: Array<{ meta: MailMetadata; merchant_guess: string }> = [];
+  for (const meta of metadata) {
+    const classification = classifications.get(meta.id);
+    if (admitCandidate(classification, meta)) {
+      admitted.push({ meta, merchant_guess: classification?.merchant_guess ?? "" });
+    }
+  }
+  const bundles = groupByMerchant(admitted);
+  const aliasMap = new Map(
+    input.reviewedAliases.map((alias) => [alias.alias_key, alias.canonical_merchant_key]),
+  );
+
+  const reasonerConfig = resolveReasonerConfig();
+  const chat = makeChatFn(reasonerConfig);
+  const allKnownIDs = new Set(metadata.map((meta) => meta.id));
+
+  const result: AgenticRunResult = {
+    candidates: admitted.length,
+    presented: 0,
+    clarifications: 0,
+    nearMisses: 0,
+    abstained: 0,
+    toolCalls: 0,
+    tokens: 0,
+    merchants: 0,
+  };
+
+  for (const bundle of bundles.slice(0, MAX_MERCHANTS_PER_RUN)) {
+    if (result.tokens >= AGENT_GLOBAL_TOKEN_BUDGET) break; // per-run global budget
+    const canonical = aliasMap.get(bundle.canonical_merchant_key) ??
+      bundle.canonical_merchant_key;
+    const seedMetas = bundle.message_ids
+      .map((id) => metaByID.get(id))
+      .filter((meta): meta is MailMetadata => Boolean(meta));
+    if (seedMetas.length === 0) continue;
+    const seed: ToolMatch[] = seedMetas.map((meta) => ({
+      message_id: meta.id,
+      subject: meta.subject,
+      sender: meta.sender,
+      snippet: meta.snippet,
+      received_at: meta.received_at,
+    }));
+    const merchantDomains = [
+      ...new Set(seedMetas.map((meta) => senderDomain(meta.sender)).filter(Boolean)),
+    ] as string[];
+    const scope: MerchantScope = {
+      canonical_merchant_key: canonical,
+      merchant_domains: merchantDomains,
+      known_message_ids: new Set(allKnownIDs),
+    };
+    const execute = buildToolExecutor(provider, accessToken, metaByID, providerBatch.fullMessage);
+
+    const reasoned = await runMerchantReasoner({
+      canonical_merchant_key: canonical,
+      merchant_guess: bundle.merchant_guess,
+      seed,
+      scope,
+      chat,
+      execute,
+    });
+    result.toolCalls += reasoned.toolCalls;
+    result.tokens += reasoned.tokens;
+    result.merchants += 1;
+
+    const evidenceTexts = seedMetas.map((meta) => `${meta.subject}\n${meta.snippet}`);
+    const verified = await verifyAssessment(reasoned.assessment, evidenceTexts, chat);
+    if (verified.existence === "low") result.abstained += 1;
+
+    const outcome = routeAssessment(verified);
+    const sourceReceivedAt = latestReceivedAt(seedMetas);
+
+    if (outcome.kind === "near_miss") {
+      await insertNearMiss(admin, userID, runID, verified, outcome.reason);
+      result.nearMisses += 1;
+      continue;
+    }
+
+    // present or clarify: persist a detected event + evidence bundle, then route it.
+    const savedEventID = await saveAgenticEvent(
+      admin,
+      userID,
+      runID,
+      provider,
+      canonical,
+      verified,
+      sourceReceivedAt,
+      reasonerConfig.model,
+    );
+    if (!savedEventID) continue;
+    const lifecycle = {
+      state: "current" as const,
+      reason: "projected_current_renewal" as const,
+      supportingEventID: savedEventID,
+    };
+    const bundleID = await upsertEvidenceBundle(
+      admin,
+      userID,
+      canonical,
+      lifecycle,
+      savedEventID,
+      "agentic_assessment",
+    );
+
+    if (outcome.kind === "clarify") {
+      await upsertClarificationRequest(admin, userID, {
+        draft: agenticClarificationDraft(outcome.field, verified),
+        merchantName: verified.merchant_name,
+        merchantKey: canonical,
+        evidenceBundleID: bundleID,
+        detectedEventID: savedEventID,
+        sourceReceivedAt,
+        context: {
+          evidence_events: [{
+            event_type: verified.event_type ?? "created",
+            merchant_name: verified.merchant_name,
+            received_at: sourceReceivedAt,
+          }],
+        },
+      });
+      result.clarifications += 1;
+      continue;
+    }
+
+    // present: the human-confirmation gate is the subscription_candidates review below.
+    if (await merchantIsSuppressed(admin, userID, canonical)) continue;
+    const matched = uniqueSubscriptionMatch(
+      input.subscriptions,
+      verified.merchant_name,
+      canonical,
+      provider,
+    );
+    const matchedID = typeof matched?.id === "string" ? matched.id : null;
+    const presentedEvent = assessmentToBillingEvent(verified);
+    const action = classifyCandidateAction(presentedEvent, matchedID);
+    const validationIssues = semanticValidationIssues(
+      presentedEvent,
+      action,
+      matched?.status ?? null,
+    );
+    const { error: candidateError } = await admin.from("subscription_candidates").insert({
+      user_id: userID,
+      scan_run_id: runID,
+      detected_event_id: savedEventID,
+      matched_subscription_id: matchedID,
+      suggested_action: action,
+      merchant_name: verified.merchant_name,
+      canonical_merchant_key: canonical,
+      evidence_bundle_id: bundleID,
+      resolution_reason: "agentic_assessment",
+      amount: verified.amount,
+      currency: verified.currency,
+      billing_cycle: verified.billing_cycle,
+      renewal_date: verified.renewal_date,
+      category: verified.category ?? "other",
+      event_type: verified.event_type ?? "created",
+      confidence: verified.confidence,
+      evidence: presentedEvent.evidence.slice(0, 280),
+      validation_issues: validationIssues,
+    });
+    if (candidateError) throw candidateError;
+    result.presented += 1;
+  }
+
+  await updateRun(admin, runID, {
+    agent_merchants: result.merchants,
+    agent_tool_calls: result.toolCalls,
+    agent_tokens: result.tokens,
+    agent_presented: result.presented,
+    agent_clarifications: result.clarifications,
+    agent_near_misses: result.nearMisses,
+    agent_abstained: result.abstained,
+  });
+  return result;
+}
+
+/** Read-only, provider-scoped tool executor. Gmail supports live search; Microsoft degrades
+ * to seed-only (search/get_more return empty) — fetch works on both via providerBatch. */
+function buildToolExecutor(
+  provider: Provider,
+  accessToken: string,
+  metaByID: Map<string, MailMetadata>,
+  fullMessage: (metadata: MailMetadata) => Promise<MailMessage>,
+): ToolExecutor {
+  const discovered = new Map<string, MailMetadata>();
+  return async (request) => {
+    if (request.tool === "fetch") {
+      const meta = metaByID.get(request.message_id) ?? discovered.get(request.message_id);
+      if (!meta) return { tool: "fetch", message: null };
+      try {
+        const full = await fullMessage(meta);
+        return {
+          tool: "fetch",
+          message: {
+            message_id: meta.id,
+            subject: meta.subject,
+            sender: meta.sender,
+            received_at: meta.received_at,
+            content: sanitizeMailContent(full.content),
+          },
+        };
+      } catch {
+        return { tool: "fetch", message: null };
+      }
+    }
+    const query = request.tool === "search_inbox"
+      ? request.query
+      : `from:${request.sender}`;
+    const matches = provider === "google"
+      ? await gmailSearch(accessToken, query, 8)
+      : [];
+    for (const meta of matches) discovered.set(meta.id, meta);
+    return {
+      tool: request.tool,
+      matches: matches.map((meta) => ({
+        message_id: meta.id,
+        subject: meta.subject,
+        sender: meta.sender,
+        snippet: meta.snippet,
+        received_at: meta.received_at,
+      })),
+    };
+  };
+}
+
+async function gmailSearch(
+  accessToken: string,
+  query: string,
+  cap: number,
+): Promise<MailMetadata[]> {
+  const params = new URLSearchParams({ q: query, maxResults: String(cap) });
+  const response = await providerFetch(
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
+    accessToken,
+    "A Gmail search could not be completed.",
+  );
+  const payload = await response.json();
+  const ids: string[] = (payload.messages ?? [])
+    .map((message: { id?: string }) => message.id)
+    .filter((id: unknown): id is string => typeof id === "string")
+    .slice(0, cap);
+  const metas = await mapWithConcurrency(ids, 4, async (id) => {
+    try {
+      return await fetchGmailMetadata(accessToken, id);
+    } catch {
+      return null;
+    }
+  });
+  return metas.filter((meta): meta is MailMetadata => meta !== null);
+}
+
+function latestReceivedAt(metas: MailMetadata[]): string {
+  let latest = metas[0]?.received_at ?? new Date().toISOString();
+  for (const meta of metas) {
+    if (Date.parse(meta.received_at) > Date.parse(latest)) latest = meta.received_at;
+  }
+  return latest;
+}
+
+function assessmentToBillingEvent(a: MerchantAssessment): BillingEvent {
+  return {
+    message_id: a.evidence_refs[0] ?? a.canonical_merchant_key,
+    event_type: a.event_type ?? "created",
+    merchant_name: a.merchant_name,
+    amount: a.amount,
+    currency: a.currency,
+    billing_cycle: a.billing_cycle,
+    event_date: a.event_date,
+    renewal_date: a.renewal_date,
+    category: a.category ?? "other",
+    confidence: a.confidence,
+    evidence: a.evidence_refs.length > 0
+      ? `Agentic assessment from ${a.evidence_refs.length} message(s).`
+      : "Agentic assessment.",
+  };
+}
+
+function agenticClarificationDraft(
+  field: string,
+  a: MerchantAssessment,
+): InboxClarificationDraft {
+  if (field === "billing_cycle") {
+    return {
+      kind: "billing_cycle_check",
+      question: `How often do you pay for ${a.merchant_name}?`,
+      explanation: "We found a credible recent charge, but the billing frequency was not clear.",
+      choices: [
+        { value: "monthly", title: "Monthly" },
+        { value: "yearly", title: "Yearly" },
+        { value: "not_sure", title: "Not sure" },
+      ],
+      priority: 70,
+    };
+  }
+  return {
+    kind: "lifecycle_check",
+    question: `Is ${a.merchant_name} still active for you?`,
+    explanation: "We found billing evidence but could not fully confirm the details.",
+    choices: [
+      { value: "yes", title: "Yes, it’s active" },
+      { value: "no", title: "No, it ended" },
+      { value: "not_sure", title: "Not sure" },
+    ],
+    priority: 88,
+  };
+}
+
+async function saveAgenticEvent(
+  admin: AdminClient,
+  userID: string,
+  runID: string,
+  provider: Provider,
+  canonical: string,
+  a: MerchantAssessment,
+  sourceReceivedAt: string,
+  model: string,
+): Promise<string | null> {
+  const fingerprint = await sha256(
+    `${provider}:agent:${canonical}:${a.evidence_refs[0] ?? runID}`,
+  );
+  const { data: savedEvent, error } = await admin
+    .from("detected_billing_events")
+    .upsert({
+      user_id: userID,
+      scan_run_id: runID,
+      provider,
+      provider_message_id: fingerprint,
+      event_type: a.event_type ?? "created",
+      merchant_name: a.merchant_name,
+      canonical_merchant_key: canonical,
+      amount: a.amount,
+      currency: a.currency,
+      billing_cycle: a.billing_cycle,
+      event_date: a.event_date,
+      renewal_date: a.renewal_date,
+      source_received_at: sourceReceivedAt,
+      confidence: a.confidence,
+      evidence: `Agentic assessment (${a.existence}/${a.completeness}).`.slice(0, 280),
+      validation_state: "valid",
+      validation_issues: [],
+      schema_version: assessmentSchemaVersion,
+      model_identifier: model,
+    }, {
+      onConflict: "user_id,provider,provider_message_id,event_type",
+      ignoreDuplicates: false,
+    })
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  return savedEvent ? String(savedEvent.id) : null;
+}
+
+async function insertNearMiss(
+  admin: AdminClient,
+  userID: string,
+  runID: string,
+  a: MerchantAssessment,
+  reason: string,
+): Promise<void> {
+  const { error } = await admin.from("discovery_near_misses").insert({
+    user_id: userID,
+    run_id: runID,
+    canonical_merchant_key: a.canonical_merchant_key,
+    merchant_name: a.merchant_name.slice(0, 120),
+    existence: a.existence,
+    completeness: a.completeness,
+    missing_fields: a.missing_fields,
+    reason: reason.slice(0, 200),
+  });
+  if (error && error.code !== "23505") throw error;
 }
 
 async function merchantLifecycle(
