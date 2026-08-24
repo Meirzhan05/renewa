@@ -1758,6 +1758,7 @@ private struct InboxClarificationSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let clarification: InboxClarificationRequest
+    @State private var pendingChoice: String?
 
     var body: some View {
         NavigationStack {
@@ -1795,10 +1796,16 @@ private struct InboxClarificationSheet: View {
 
                     VStack(spacing: 10) {
                         ForEach(clarification.choices) { choice in
+                            let isPending = pendingChoice == choice.value && store.isResolvingInboxClarification
                             Button {
+                                pendingChoice = choice.value
                                 Task {
                                     if await store.resolveInboxClarification(clarification, answer: choice.value) {
                                         dismiss()
+                                    } else {
+                                        // Failure keeps the sheet open (the error is surfaced by the
+                                        // store) so the question is never silently consumed.
+                                        pendingChoice = nil
                                     }
                                 }
                             } label: {
@@ -1806,8 +1813,14 @@ private struct InboxClarificationSheet: View {
                                     Text(choice.title)
                                         .font(.renewa(15, weight: .semibold))
                                     Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 13, weight: .bold))
+                                    if isPending {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                            .tint(RenewaTheme.sage)
+                                    } else {
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 13, weight: .bold))
+                                    }
                                 }
                                 .foregroundStyle(RenewaTheme.ink)
                                 .frame(maxWidth: .infinity)
@@ -1818,6 +1831,7 @@ private struct InboxClarificationSheet: View {
                                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                                         .stroke(RenewaTheme.divider, lineWidth: 1)
                                 }
+                                .opacity(store.isResolvingInboxClarification && !isPending ? 0.5 : 1)
                             }
                             .buttonStyle(PressScaleStyle())
                             .disabled(store.isResolvingInboxClarification)

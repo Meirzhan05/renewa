@@ -2404,30 +2404,8 @@ async function resolveClarification(
     };
   }
 
-  const effect = answer === "not_sure"
-    ? "retained_uncertain"
-    : request.kind === "identity_check" && answer.startsWith("same:")
-    ? "alias_recorded"
-    : ["yes", "monthly", "yearly"].includes(answer)
-    ? "candidate_unblocked"
-    : "dismissed";
-  const { data: resolutionData, error: resolutionError } = await admin.rpc(
-    "resolve_inbox_clarification_request",
-    {
-      p_request_id: requestID,
-      p_user_id: userID,
-      p_answer: answer,
-      p_effect: effect,
-    },
-  ).single();
-  const resolution = resolutionData as { request_status: string; idempotent: boolean } | null;
-  if (resolutionError || !resolution) throw resolutionError ?? new Error("Could not resolve clarification");
-  if (resolution.idempotent) return {
-    clarification_id: request.id,
-    status: resolution.request_status,
-    idempotent: true,
-  };
-
+  // Apply side effects BEFORE marking the request resolved, so a failure here (e.g. candidate
+  // creation) leaves the clarification OPEN for retry instead of silently consuming it.
   if (request.kind === "identity_check" && answer.startsWith("same:")) {
     const targetKey = answer.slice("same:".length);
     const candidateKeyValue = (request.context as Record<string, unknown>)?.candidate_keys;
@@ -2455,10 +2433,29 @@ async function resolveClarification(
   if (["yes", "monthly", "yearly"].includes(answer)) {
     await createCandidateFromClarification(admin, userID, request, answer);
   }
+
+  const effect = answer === "not_sure"
+    ? "retained_uncertain"
+    : request.kind === "identity_check" && answer.startsWith("same:")
+    ? "alias_recorded"
+    : ["yes", "monthly", "yearly"].includes(answer)
+    ? "candidate_unblocked"
+    : "dismissed";
+  const { data: resolutionData, error: resolutionError } = await admin.rpc(
+    "resolve_inbox_clarification_request",
+    {
+      p_request_id: requestID,
+      p_user_id: userID,
+      p_answer: answer,
+      p_effect: effect,
+    },
+  ).single();
+  const resolution = resolutionData as { request_status: string; idempotent: boolean } | null;
+  if (resolutionError || !resolution) throw resolutionError ?? new Error("Could not resolve clarification");
   return {
     clarification_id: request.id,
     status: resolution.request_status,
-    idempotent: false,
+    idempotent: resolution.idempotent,
   };
 }
 
