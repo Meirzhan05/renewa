@@ -1,0 +1,25 @@
+{
+  "name": "renewa-agent-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Persistent backend worker running the Renewa inbox agentic-discovery pipeline on LangGraph.",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "start": "node src/worker.ts"
+  },
+  "dependencies": {
+    "@langchain/langgraph": "^1.4.12",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.0"
+  }
+}
