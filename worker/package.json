@@ -10,11 +10,13 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "start": "node src/worker.ts"
+    "start": "node --env-file-if-exists=.env src/worker.ts",
+    "trace": "node --env-file-if-exists=.env scripts/trace-scan.ts"
   },
   "dependencies": {
     "@langchain/langgraph": "^1.4.12",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
+    "langsmith": "^0.9.0",
     "pg": "^8.13.1"
   },
   "devDependencies": {
