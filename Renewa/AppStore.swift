@@ -108,6 +108,12 @@ final class AppStore {
     }
 
     func bootstrap() async {
+        #if DEBUG
+            if RenewaPreviewFixture.isEnabled {
+                RenewaPreviewFixture.apply(to: self)
+                return
+            }
+        #endif
         guard AppConfiguration.current.isConfigured else {
             state = .configurationRequired
             return
