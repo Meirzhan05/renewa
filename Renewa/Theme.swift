@@ -21,6 +21,14 @@ enum RenewaTheme {
     static let clay = Color(red: 0.639, green: 0.400, blue: 0.247)
     /// Tint behind `clay` — badges and urgent chips.
     static let clayTint = Color(red: 0.949, green: 0.886, blue: 0.839)
+
+    /// The middle rung of the ink ladder: `ink` → `muted` → `mutedBody` → `mutedSoft`.
+    /// Secondary prose that should stay readable without competing with a heading.
+    static let mutedBody = Color(red: 0.541, green: 0.510, blue: 0.447)
+    /// Ink for money the reader gets back, a shade deeper than `sage` so it holds at small sizes.
+    static let positive = Color(red: 0.247, green: 0.478, blue: 0.353)
+    /// Tint behind `sage` — the quiet counterpart to `clayTint`.
+    static let sageTint = Color(red: 0.902, green: 0.937, blue: 0.902)
 }
 
 enum RenewaMotion {

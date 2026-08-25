@@ -477,7 +477,8 @@ struct OverviewView: View {
         let earlier = store.spendingSnapshots.filter { $0.periodStart < currentMonthStart }
         guard let latest = earlier.map(\.periodStart).max() else { return nil }
 
-        let totals = earlier
+        let totals =
+            earlier
             .filter { $0.periodStart == latest }
             .compactMap(store.convertedMonthlyCost(for:))
         guard !totals.isEmpty else { return nil }
@@ -789,64 +790,6 @@ enum SpendSegmentLayout {
         guard total > usable else { return raw }
 
         return raw.map { $0 * usable / total }
-    }
-}
-
-/// A wrapping row — legend chips and suggestion chips both need one, and `HStack` can't wrap.
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 8
-    var lineSpacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? .infinity
-        let rows = rows(for: subviews, in: width)
-        let height = rows.reduce(CGFloat.zero) { $0 + $1.height } + lineSpacing * CGFloat(max(rows.count - 1, 0))
-        let widest = rows.map(\.width).max() ?? 0
-        return CGSize(width: proposal.width ?? widest, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in rows(for: subviews, in: bounds.width) {
-            var x = bounds.minX
-            for index in row.indices {
-                let size = subviews[index].sizeThatFits(.unspecified)
-                subviews[index].place(
-                    at: CGPoint(x: x, y: y + (row.height - size.height) / 2),
-                    proposal: ProposedViewSize(size)
-                )
-                x += size.width + spacing
-            }
-            y += row.height + lineSpacing
-        }
-    }
-
-    private struct Row {
-        var indices: [Int] = []
-        var width: CGFloat = 0
-        var height: CGFloat = 0
-    }
-
-    private func rows(for subviews: Subviews, in width: CGFloat) -> [Row] {
-        var rows: [Row] = []
-        var current = Row()
-
-        for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            let advance = current.indices.isEmpty ? size.width : current.width + spacing + size.width
-
-            if !current.indices.isEmpty, advance > width {
-                rows.append(current)
-                current = Row(indices: [index], width: size.width, height: size.height)
-            } else {
-                current.indices.append(index)
-                current.width = advance
-                current.height = max(current.height, size.height)
-            }
-        }
-
-        if !current.indices.isEmpty { rows.append(current) }
-        return rows
     }
 }
 
