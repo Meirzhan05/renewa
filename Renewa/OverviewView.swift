@@ -685,7 +685,12 @@ struct SubscriptionCard: View {
         }
         .padding(16)
         .background(RenewaTheme.surface, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        // .contextMenuPreview as well as .interaction: without it the long-press lift is a
+        // square-cornered platter and the card's rounded corners read as pale wedges.
+        .contentShape(
+            [.interaction, .contextMenuPreview],
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+        )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(card.accessibilityLabel)
     }
@@ -738,7 +743,10 @@ private struct InactiveSubscriptionRow: View {
                 .foregroundStyle(RenewaTheme.muted)
         }
         .opacity(0.62)
-        .contentShape(Rectangle())
+        .contentShape(
+            [.interaction, .contextMenuPreview],
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
     }
 }
 
