@@ -18,6 +18,7 @@ import {
   isLikelyBillingCandidate,
   MailMessage,
   MailMetadata,
+  projectRenewalDate,
   reconcileMerchantLifecycle,
   redactEmailAddress,
   resolveMerchantIdentity,
@@ -2430,16 +2431,26 @@ async function resolveClarification(
       { billing_cycle: answer },
     );
   }
-  if (["yes", "monthly", "yearly"].includes(answer)) {
-    await createCandidateFromClarification(admin, userID, request, answer);
+  const isActionableAnswer = ["yes", "monthly", "yearly"].includes(answer);
+  let candidateResult: ClarificationCandidateResult | null = null;
+  if (isActionableAnswer) {
+    candidateResult = await createCandidateFromClarification(admin, userID, request, answer);
+    if (!candidateResult.created) {
+      // Observable: an actionable answer that produced no candidate is never silently dropped.
+      console.warn(
+        `clarification ${requestID} answered '${answer}' produced no candidate: ${candidateResult.reason ?? "unknown"}`,
+      );
+    }
   }
 
   const effect = answer === "not_sure"
     ? "retained_uncertain"
     : request.kind === "identity_check" && answer.startsWith("same:")
     ? "alias_recorded"
-    : ["yes", "monthly", "yearly"].includes(answer)
+    : candidateResult?.created
     ? "candidate_unblocked"
+    : isActionableAnswer
+    ? "answered_no_candidate"
     : "dismissed";
   const { data: resolutionData, error: resolutionError } = await admin.rpc(
     "resolve_inbox_clarification_request",
@@ -2459,25 +2470,40 @@ async function resolveClarification(
   };
 }
 
+type ClarificationCandidateResult = { created: boolean; reason?: string };
+
+// Soft validation issues that apply to AUTO-detected events but must not drop a HUMAN-clarified
+// one: the user just confirmed the cycle, and renewal_date is projected (not required) below.
+const CLARIFIED_SOFT_ISSUES = new Set(["low_model_confidence", "missing_renewal_date"]);
+
 async function createCandidateFromClarification(
   admin: AdminClient,
   userID: string,
   request: Record<string, unknown>,
   answer: string,
-): Promise<void> {
+): Promise<ClarificationCandidateResult> {
   const eventID = stringOrNull(request.detected_event_id);
-  if (!eventID || request.kind === "identity_check") return;
+  if (!eventID || request.kind === "identity_check") {
+    return { created: false, reason: "not_applicable" };
+  }
   const { data: event, error: eventError } = await admin.from("detected_billing_events")
-    .select("id,scan_run_id,provider,merchant_name,canonical_merchant_key,amount,currency,billing_cycle,renewal_date,category,event_type,confidence,evidence")
+    .select("id,scan_run_id,provider,merchant_name,canonical_merchant_key,amount,currency,billing_cycle,event_date,source_received_at,renewal_date,category,event_type,confidence,evidence")
     .eq("id", eventID)
     .eq("user_id", userID)
     .maybeSingle();
   if (eventError) throw eventError;
-  if (!event) return;
+  if (!event) return { created: false, reason: "event_not_found" };
   const billingCycle = request.kind === "billing_cycle_check"
     ? answer as BillingCycle
     : event.billing_cycle as BillingCycle | null;
-  if (!billingCycle || !event.amount || !event.currency) return;
+  if (!billingCycle || !event.amount || !event.currency) {
+    return { created: false, reason: "missing_price_or_cycle" };
+  }
+  // Renewal date is projected from the now-known cycle, not required from the email. A stated
+  // renewal date is kept; otherwise derive it from the charge date (event_date, else receipt time).
+  const baseDate = isoDatePart(event.event_date) ?? isoDatePart(event.source_received_at);
+  const renewalDate = stringOrNull(event.renewal_date) ??
+    (baseDate ? projectRenewalDate(billingCycle, baseDate) : null);
   const { data: subscriptions, error: subscriptionsError } = await admin
     .from("subscriptions")
     .select("id,name,source_key,canonical_merchant_key,brand_id,status")
@@ -2490,8 +2516,8 @@ async function createCandidateFromClarification(
     amount: Number(event.amount),
     currency: event.currency,
     billing_cycle: billingCycle,
-    event_date: null,
-    renewal_date: event.renewal_date,
+    event_date: isoDatePart(event.event_date),
+    renewal_date: renewalDate,
     category: event.category,
     confidence: Number(event.confidence),
     evidence: String(event.evidence),
@@ -2506,8 +2532,13 @@ async function createCandidateFromClarification(
     clarificationEvent,
     typeof matched?.id === "string" ? matched.id : null,
   );
-  const issues = semanticValidationIssues(clarificationEvent, action, matched?.status ?? null);
-  if (issues.length > 0) return;
+  // The gate is tuned for auto-detection; drop the soft issues for a human-clarified event. Hard
+  // issues (missing amount/currency, merchant_match_required, reactivation) still block.
+  const blockingIssues = semanticValidationIssues(clarificationEvent, action, matched?.status ?? null)
+    .filter((issue) => !CLARIFIED_SOFT_ISSUES.has(issue));
+  if (blockingIssues.length > 0) {
+    return { created: false, reason: blockingIssues.join(",") };
+  }
   const { error: candidateError } = await admin.from("subscription_candidates").upsert({
     user_id: userID,
     scan_run_id: event.scan_run_id,
@@ -2521,7 +2552,7 @@ async function createCandidateFromClarification(
     amount: event.amount,
     currency: event.currency,
     billing_cycle: billingCycle,
-    renewal_date: event.renewal_date,
+    renewal_date: renewalDate,
     category: event.category,
     event_type: event.event_type,
     confidence: event.confidence,
@@ -2529,6 +2560,25 @@ async function createCandidateFromClarification(
     validation_issues: [],
   }, { onConflict: "detected_event_id", ignoreDuplicates: true });
   if (candidateError) throw candidateError;
+  // ignoreDuplicates returns no row, so confirm the candidate exists rather than assuming success.
+  const { data: candidateRow, error: candidateReadError } = await admin
+    .from("subscription_candidates")
+    .select("id")
+    .eq("detected_event_id", event.id)
+    .eq("user_id", userID)
+    .maybeSingle();
+  if (candidateReadError) throw candidateReadError;
+  return candidateRow
+    ? { created: true }
+    : { created: false, reason: "candidate_not_persisted" };
+}
+
+/** The YYYY-MM-DD part of an ISO date or timestamp, or null when absent/invalid. */
+function isoDatePart(value: unknown): string | null {
+  const text = stringOrNull(value);
+  if (!text) return null;
+  const day = text.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null;
 }
 
 async function unsuppressMerchant(
