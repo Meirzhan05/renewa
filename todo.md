@@ -47,6 +47,7 @@
 - [x] Add category, upcoming-renewal, and persisted monthly-spending graphs to Insights.
 - [x] Replace the empty Insights dashboard with a guided activation state and distinguish history-building, quiet-renewal, unavailable-conversion, and service-failure states without indefinite skeleton loading.
 - [x] Show whether an Insight summary is AI-generated, cached, or deterministic; retain facts and charts during degraded AI generation, with privacy-safe evidence context and retry.
+- [x] Rebuild Insights from the `Insights.dc.html` design: a written summary that reveals itself and sets its figures in serif, a scrubbable six-month trend over recorded snapshots, month-over-month category rows that open onto what is tracked today, and the report's cards as reviewable findings with a detail sheet.
 
 ## Inbox discovery
 
