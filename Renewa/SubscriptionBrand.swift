@@ -53,6 +53,8 @@ struct SubscriptionBrand: Identifiable, Hashable {
 struct SubscriptionBrandIcon: View {
     let subscription: Subscription
     var size: CGFloat = 54
+    /// Fill behind the mark — override when the tile sits on a surface of its own colour.
+    var background: Color = RenewaTheme.surface
 
     var body: some View {
         let brand = SubscriptionBrand.find(id: subscription.brandID)
@@ -64,7 +66,7 @@ struct SubscriptionBrandIcon: View {
         }
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(RenewaTheme.surface)
+                .fill(background)
 
             if let remoteURL {
                 AsyncImage(url: remoteURL, transaction: .init(animation: .easeInOut(duration: 0.18))) { phase in

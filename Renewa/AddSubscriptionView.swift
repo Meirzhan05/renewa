@@ -26,6 +26,11 @@ struct AddSubscriptionView: View {
         GridItem(.flexible(), spacing: 10)
     ]
 
+    /// `prefilledName` seeds the form from a Home suggestion chip; the brand logo still resolves from it.
+    init(prefilledName: String? = nil) {
+        _name = State(initialValue: prefilledName ?? "")
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {

@@ -13,6 +13,7 @@
 - [x] Remove the exchange-rate status title from the home-page spending summary.
 - [x] Replace the home-page avatar with a calendar shortcut to a Logo.dev-powered upcoming-payments view.
 - [x] Redesign the upcoming-payments destination as a navigable month calendar that projects active recurring subscription deadlines, supports selected-day payment details, preserves accessible date labels, and animates month/date changes while honoring Reduce Motion.
+- [x] Rebuild Home from the `Home Reimagined` design: one spend card carrying the period toggle, month-over-month delta, category split with shares, and the next charge; per-subscription cards with cadence, period cost, urgency, and billing-cycle progress; and a suggestion prompt for services Renewa hasn't seen. Category colours, surface tokens, and currency formatting were realigned to the design across the app.
 
 ## Subscription experience
 
@@ -46,6 +47,7 @@
 - [x] Add category, upcoming-renewal, and persisted monthly-spending graphs to Insights.
 - [x] Replace the empty Insights dashboard with a guided activation state and distinguish history-building, quiet-renewal, unavailable-conversion, and service-failure states without indefinite skeleton loading.
 - [x] Show whether an Insight summary is AI-generated, cached, or deterministic; retain facts and charts during degraded AI generation, with privacy-safe evidence context and retry.
+- [x] Rebuild Insights from the `Insights.dc.html` design: a written summary that reveals itself and sets its figures in serif, a scrubbable six-month trend over recorded snapshots, month-over-month category rows that open onto what is tracked today, and the report's cards as reviewable findings with a detail sheet.
 
 ## Inbox discovery
 

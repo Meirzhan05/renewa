@@ -1,15 +1,34 @@
 import SwiftUI
 
 enum RenewaTheme {
-    static let background = Color(red: 0.965, green: 0.947, blue: 0.902)
-    static let surface = Color(red: 0.985, green: 0.974, blue: 0.944)
-    static let ink = Color(red: 0.105, green: 0.094, blue: 0.078)
-    static let muted = Color(red: 0.49, green: 0.46, blue: 0.39)
+    static let background = Color(red: 0.937, green: 0.925, blue: 0.886)
+    static let surface = Color(red: 0.973, green: 0.961, blue: 0.929)
+    static let ink = Color(red: 0.129, green: 0.118, blue: 0.094)
+    static let muted = Color(red: 0.436, green: 0.408, blue: 0.345)
     static let divider = Color(red: 0.87, green: 0.83, blue: 0.73)
-    static let sage = Color(red: 0.35, green: 0.59, blue: 0.49)
+    static let sage = Color(red: 0.357, green: 0.541, blue: 0.447)
     static let sageLight = Color(red: 0.77, green: 0.84, blue: 0.71)
     static let sand = Color(red: 0.84, green: 0.77, blue: 0.62)
-    static let coral = Color(red: 0.72, green: 0.43, blue: 0.31)
+    static let coral = Color(red: 0.694, green: 0.475, blue: 0.353)
+
+    /// The lightest ink on sand: labels, units, and the trailing half of a metadata line.
+    static let mutedSoft = Color(red: 0.659, green: 0.620, blue: 0.545)
+    /// Hairline used to split the inside of a card, a shade lighter than `divider`.
+    static let hairline = Color(red: 0.929, green: 0.906, blue: 0.851)
+    /// Unfilled portion of a progress track sitting on `surface`.
+    static let track = Color(red: 0.914, green: 0.890, blue: 0.831)
+    /// Warning ink for a renewal that lands inside the next week.
+    static let clay = Color(red: 0.639, green: 0.400, blue: 0.247)
+    /// Tint behind `clay` — badges and urgent chips.
+    static let clayTint = Color(red: 0.949, green: 0.886, blue: 0.839)
+
+    /// The middle rung of the ink ladder: `ink` → `muted` → `mutedBody` → `mutedSoft`.
+    /// Secondary prose that should stay readable without competing with a heading.
+    static let mutedBody = Color(red: 0.541, green: 0.510, blue: 0.447)
+    /// Ink for money the reader gets back, a shade deeper than `sage` so it holds at small sizes.
+    static let positive = Color(red: 0.247, green: 0.478, blue: 0.353)
+    /// Tint behind `sage` — the quiet counterpart to `clayTint`.
+    static let sageTint = Color(red: 0.902, green: 0.937, blue: 0.902)
 }
 
 enum RenewaMotion {

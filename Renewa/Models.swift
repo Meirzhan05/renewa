@@ -31,14 +31,15 @@ enum SubscriptionCategory: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String { rawValue.capitalized }
 
+    // Six hues that stay legible side by side in a single spend bar.
     var color: Color {
         switch self {
-        case .entertainment: RenewaTheme.sage
-        case .work: RenewaTheme.sageLight
-        case .cloud: RenewaTheme.sand
-        case .health: .pink.opacity(0.7)
-        case .learning: .blue.opacity(0.55)
-        case .other: RenewaTheme.muted.opacity(0.5)
+        case .entertainment: Color(hex: "B1795A")
+        case .work: Color(hex: "5B8A72")
+        case .cloud: Color(hex: "8BA6B8")
+        case .health: Color(hex: "C98D84")
+        case .learning: Color(hex: "9B8BB4")
+        case .other: Color(hex: "D6CDB8")
         }
     }
 }
@@ -738,7 +739,8 @@ extension Decimal {
     func currencyText(code: String = "USD") -> String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
-        formatter.locale = Locale(identifier: "en_US_POSIX")
+        // en_US rather than POSIX: the symbol abuts the amount and thousands stay grouped.
+        formatter.locale = Locale(identifier: "en_US")
         formatter.currencyCode = code
         formatter.currencySymbol =
             [

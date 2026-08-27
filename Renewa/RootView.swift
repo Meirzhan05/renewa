@@ -157,6 +157,7 @@ struct MainTabView: View {
     @Environment(AppStore.self) private var store
     @State private var selectedTab: AppTab = .home
     @State private var showingAdd = false
+    @State private var prefilledSubscriptionName: String?
     @State private var tabNavigationDirection: TabNavigationDirection = .forward
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -186,7 +187,15 @@ struct MainTabView: View {
                         if showsCalendarForQA {
                             PaymentCalendarView()
                         } else {
-                            OverviewView()
+                            OverviewView(
+                                onScanInbox: {
+                                    selectTab(.inbox)
+                                },
+                                onAddSuggestion: { name in
+                                    prefilledSubscriptionName = name
+                                    showingAdd = true
+                                }
+                            )
                         }
                     }
                 case .insights:
@@ -220,8 +229,8 @@ struct MainTabView: View {
             .padding(.horizontal, 18)
             .padding(.bottom, 10)
         }
-        .sheet(isPresented: $showingAdd) {
-            AddSubscriptionView()
+        .sheet(isPresented: $showingAdd, onDismiss: { prefilledSubscriptionName = nil }) {
+            AddSubscriptionView(prefilledName: prefilledSubscriptionName)
                 .presentationDetents([.large])
                 .presentationCornerRadius(30)
         }
