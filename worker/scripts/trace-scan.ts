@@ -11,7 +11,7 @@
 
 import { readFileSync } from "node:fs";
 import { MemorySaver } from "@langchain/langgraph";
-import { buildGraph, type ClarifyPayload, type RouteOutcome } from "../src/graph/graph.ts";
+import { buildGraph, type RouteOutcome } from "../src/graph/graph.ts";
 import { createScanExecutor } from "../src/executor.ts";
 import type { MailMetadata } from "../src/domain/email.ts";
 import { makeChatFn, resolveClassifierConfig, resolveReasonerConfig } from "../src/llm/client.ts";
@@ -51,9 +51,6 @@ async function main(): Promise<void> {
   console.log("\nScanning…\n");
   const final = await app.invoke({ rawMessages }, config);
 
-  const snapshot = await app.getState(config);
-  const interrupts = (snapshot.tasks ?? []).flatMap((t) => t.interrupts ?? []);
-
   console.log("=== Outcomes ===");
   for (const outcome of (final.results ?? []) as RouteOutcome[]) {
     const a = outcome.assessment;
@@ -62,15 +59,6 @@ async function main(): Promise<void> {
         ? `(${outcome.reason})`
         : `${a.amount ?? "?"} ${a.currency ?? ""} ${a.billing_cycle ?? ""}`.trim();
     console.log(`  ${outcome.kind.padEnd(10)} ${a.merchant_name.padEnd(20)} ${detail}`);
-  }
-
-  if (interrupts.length > 0) {
-    console.log("\n=== Paused on clarification(s) ===");
-    for (const it of interrupts) {
-      const p = it.value as ClarifyPayload;
-      console.log(`  ${p.merchant}: "${p.question}" [${p.choices.map((c) => c.value).join(" / ")}]`);
-    }
-    console.log("\n(The trace captures everything up to the pause. Resuming needs the answer.)");
   }
 
   console.log(tracingEnabled() ? "\nOpen https://smith.langchain.com to view the trace." : "");

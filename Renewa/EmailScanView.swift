@@ -7,7 +7,6 @@ struct EmailScanView: View {
     @State private var appeared = false
     @State private var scanPulse = false
     @State private var reviewCandidate: EmailSubscriptionCandidate?
-    @State private var clarificationRequest: InboxClarificationRequest?
     @State private var suppressionCandidate: EmailSubscriptionCandidate?
     @State private var disconnectTarget: EmailConnectionSummary?
     @State private var learningItem: EmailScanLearningItem?
@@ -74,11 +73,6 @@ struct EmailScanView: View {
         .sheet(item: $reviewCandidate) { candidate in
             EmailCandidateReviewSheet(candidate: candidate)
                 .presentationDetents([.large])
-                .presentationCornerRadius(30)
-        }
-        .sheet(item: $clarificationRequest) { clarification in
-            InboxClarificationSheet(clarification: clarification)
-                .presentationDetents([.medium, .large])
                 .presentationCornerRadius(30)
         }
         .sheet(item: $learningItem) { item in
@@ -235,13 +229,6 @@ struct EmailScanView: View {
             if presentation.isScanning {
                 scanProgress
                     .padding(.top, 22)
-            } else if let clarification = store.emailScanStatus?.clarification {
-                quickQuestion(clarification)
-                    .padding(.top, 22)
-                if !pendingCandidates.isEmpty {
-                    reviewQueue
-                        .padding(.top, 22)
-                }
             } else if pendingCandidates.isEmpty {
                 caughtUpState
                     .padding(.top, 26)
@@ -449,55 +436,6 @@ struct EmailScanView: View {
                 }
             }
         }
-    }
-
-    private func quickQuestion(_ clarification: InboxClarificationRequest) -> some View {
-        Button {
-            clarificationRequest = clarification
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 8) {
-                    Image(systemName: "questionmark.circle.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(RenewaTheme.sage)
-                    Text("Quick question")
-                        .font(.renewa(13, weight: .bold))
-                        .foregroundStyle(RenewaTheme.ink)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(RenewaTheme.muted)
-                }
-
-                Text(clarification.question)
-                    .font(.renewa(16, weight: .bold))
-                    .foregroundStyle(RenewaTheme.ink)
-                    .multilineTextAlignment(.leading)
-                    .padding(.top, 12)
-
-                Text(clarification.explanation)
-                    .font(.renewa(12, weight: .medium))
-                    .foregroundStyle(RenewaTheme.muted)
-                    .multilineTextAlignment(.leading)
-                    .padding(.top, 5)
-
-                Text("Your answer helps us prepare a review. It won’t change a subscription by itself.")
-                    .font(.renewa(11, weight: .medium))
-                    .foregroundStyle(Color(red: 0.50, green: 0.47, blue: 0.40))
-                    .multilineTextAlignment(.leading)
-                    .padding(.top, 12)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(red: 0.985, green: 0.974, blue: 0.953), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(RenewaTheme.divider, lineWidth: 1)
-            }
-        }
-        .buttonStyle(PressScaleStyle())
-        .accessibilityLabel("Quick question: \(clarification.question)")
-        .accessibilityHint("Opens the supporting evidence and answer choices")
     }
 
     private func compactCandidateRow(_ candidate: EmailSubscriptionCandidate) -> some View {
@@ -1750,110 +1688,6 @@ private struct EmailScanLearningDetailSheet: View {
             Text(value)
                 .font(.renewa(13, weight: .semibold))
                 .multilineTextAlignment(.trailing)
-        }
-    }
-}
-
-private struct InboxClarificationSheet: View {
-    @Environment(AppStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
-    let clarification: InboxClarificationRequest
-    @State private var pendingChoice: String?
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("Quick question")
-                            .font(.renewa(13, weight: .bold))
-                            .foregroundStyle(RenewaTheme.sage)
-                        Text(clarification.question)
-                            .font(.renewa(24, weight: .bold))
-                        Text(clarification.explanation)
-                            .font(.renewa(14, weight: .medium))
-                            .foregroundStyle(RenewaTheme.muted)
-                    }
-
-                    if !clarification.evidenceEvents.isEmpty {
-                        RenewaCard {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("Why we’re asking")
-                                    .font(.renewa(14, weight: .bold))
-                                ForEach(clarification.evidenceEvents) { event in
-                                    HStack(alignment: .top, spacing: 9) {
-                                        Image(systemName: "calendar")
-                                            .font(.system(size: 14, weight: .semibold))
-                                            .foregroundStyle(RenewaTheme.sage)
-                                        Text("\(event.merchantName) · \(event.receivedAt.formatted(date: .abbreviated, time: .omitted))")
-                                            .font(.renewa(13, weight: .medium))
-                                            .foregroundStyle(RenewaTheme.muted)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    VStack(spacing: 10) {
-                        ForEach(clarification.choices) { choice in
-                            let isPending = pendingChoice == choice.value && store.isResolvingInboxClarification
-                            Button {
-                                pendingChoice = choice.value
-                                Task {
-                                    if await store.resolveInboxClarification(clarification, answer: choice.value) {
-                                        dismiss()
-                                    } else {
-                                        // Failure keeps the sheet open (the error is surfaced by the
-                                        // store) so the question is never silently consumed.
-                                        pendingChoice = nil
-                                    }
-                                }
-                            } label: {
-                                HStack {
-                                    Text(choice.title)
-                                        .font(.renewa(15, weight: .semibold))
-                                    Spacer()
-                                    if isPending {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                            .tint(RenewaTheme.sage)
-                                    } else {
-                                        Image(systemName: "chevron.right")
-                                            .font(.system(size: 13, weight: .bold))
-                                    }
-                                }
-                                .foregroundStyle(RenewaTheme.ink)
-                                .frame(maxWidth: .infinity)
-                                .frame(minHeight: 52)
-                                .padding(.horizontal, 16)
-                                .background(Color.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                        .stroke(RenewaTheme.divider, lineWidth: 1)
-                                }
-                                .opacity(store.isResolvingInboxClarification && !isPending ? 0.5 : 1)
-                            }
-                            .buttonStyle(PressScaleStyle())
-                            .disabled(store.isResolvingInboxClarification)
-                        }
-                    }
-
-                    Text("This answer only helps Renewa understand the evidence. Any subscription change still needs your confirmation.")
-                        .font(.renewa(12, weight: .medium))
-                        .foregroundStyle(RenewaTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(24)
-                .padding(.bottom, 20)
-            }
-            .background(RenewaTheme.background)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { dismiss() }
-                        .font(.renewa(14, weight: .semibold))
-                }
-            }
-            .accessibilityElement(children: .contain)
         }
     }
 }

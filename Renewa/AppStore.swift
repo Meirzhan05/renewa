@@ -37,8 +37,6 @@ final class AppStore {
     var isLoadingEmailDiscovery = false
     var isReviewingEmailCandidate = false
     var emailCandidatePendingID: UUID?
-    var isResolvingInboxClarification = false
-    var inboxClarificationPendingID: UUID?
     var isLoadingInsights = false
     var isLoadingInsightReport = false
     var isRefreshingInsights = false
@@ -495,41 +493,6 @@ final class AppStore {
             }
             if decision == .confirm {
                 try await refreshSubscriptions()
-            }
-            return true
-        } catch {
-            reportAuthenticatedOperationError(error)
-            return false
-        }
-    }
-
-    func resolveInboxClarification(
-        _ clarification: InboxClarificationRequest,
-        answer: String
-    ) async -> Bool {
-        guard session != nil else { return false }
-        isResolvingInboxClarification = true
-        inboxClarificationPendingID = clarification.id
-        defer {
-            isResolvingInboxClarification = false
-            inboxClarificationPendingID = nil
-        }
-        do {
-            _ = try await performAuthenticated { accessToken in
-                try await self.client.resolveInboxClarification(
-                    id: clarification.id,
-                    answer: answer,
-                    accessToken: accessToken
-                )
-            }
-            let status = try await performAuthenticated { accessToken in
-                try await self.client.emailScanStatus(
-                    scanID: self.emailScanStatus?.scanID,
-                    accessToken: accessToken
-                )
-            }
-            withAnimation(RenewaMotion.standard) {
-                emailScanStatus = status
             }
             return true
         } catch {

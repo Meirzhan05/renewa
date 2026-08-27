@@ -1,12 +1,11 @@
 // The agentic discovery pipeline as a LangGraph state machine. One graph processes a whole scan:
-// classify → group → then walk each merchant through reason ↔ tools ↔ verify ↔ route. The
-// clarify branch is a durable `interrupt()` — the graph freezes (checkpointed to Postgres in the
-// worker), the user answers days later, and `Command({ resume })` continues the *same* run with
-// the answer folded in. That continuity is the whole reason for moving off the ephemeral edge
-// function. Model output is untrusted: it PROPOSES tool calls; `authorizeToolCall` AUTHORIZES
-// them against merchant scope, and the budget guarantees termination.
+// classify → group → then walk each merchant through reason ↔ tools ↔ verify ↔ route. A verified,
+// confident merchant is surfaced as a candidate the person confirms; everything else is a
+// near-miss. Run state is checkpointed to Postgres in the worker so a long scan survives restarts.
+// Model output is untrusted: it PROPOSES tool calls; `authorizeToolCall` AUTHORIZES them against
+// merchant scope, and the budget guarantees termination.
 
-import { Annotation, END, interrupt, START, StateGraph } from "@langchain/langgraph";
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import {
   admitCandidate,
@@ -15,12 +14,7 @@ import {
   type MerchantBundle,
 } from "../domain/classifier.ts";
 import { computeCadenceFeatures, reconcileRecurrence } from "../domain/cadence.ts";
-import {
-  billingCycles,
-  senderDomain,
-  type BillingCycle,
-  type MailMetadata,
-} from "../domain/email.ts";
+import { senderDomain, type MailMetadata } from "../domain/email.ts";
 import {
   assessmentSchemaHint,
   authorizeToolCall,
@@ -29,7 +23,6 @@ import {
   parseAssessment,
   reasonerSystemPrompt,
   reasonerToolSchemas,
-  recomputeCompleteness,
   type MerchantAssessment,
   type MerchantScope,
   type ReasonerBudget,
@@ -42,18 +35,7 @@ import type { ChatFn, ChatMessage } from "../llm/client.ts";
 
 export type RouteOutcome =
   | { kind: "present"; assessment: MerchantAssessment }
-  | { kind: "clarify"; field: string; assessment: MerchantAssessment }
   | { kind: "near_miss"; reason: string; assessment: MerchantAssessment };
-
-// The payload surfaced to the human when the graph interrupts for a clarification.
-export type ClarifyPayload = {
-  kind: "billing_cycle_check" | "lifecycle_check";
-  merchant: string;
-  canonical_merchant_key: string;
-  field: string;
-  question: string;
-  choices: Array<{ value: string; title: string }>;
-};
 
 export type GraphDeps = {
   // Tier-2 reasoner/verifier model.
@@ -90,7 +72,6 @@ const StateAnnotation = Annotation.Root({
   assessment: Annotation<MerchantAssessment | null>({ default: () => null, reducer: (_p, n) => n }),
   toolPending: Annotation<boolean>({ default: () => false, reducer: (_p, n) => n }),
   routeKind: Annotation<string>({ default: () => "", reducer: (_p, n) => n }),
-  routeField: Annotation<string | null>({ default: () => null, reducer: (_p, n) => n }),
   routeReason: Annotation<string | null>({ default: () => null, reducer: (_p, n) => n }),
 });
 
@@ -112,26 +93,6 @@ function scopeFromState(state: GraphState): MerchantScope {
     merchant_domains: state.scopeDomains,
     known_message_ids: new Set(state.knownIds),
   };
-}
-
-function draftQuestion(field: string, a: MerchantAssessment): string {
-  return field === "billing_cycle"
-    ? `How often do you pay for ${a.merchant_name}?`
-    : `Is ${a.merchant_name} still active for you?`;
-}
-
-function draftChoices(field: string): Array<{ value: string; title: string }> {
-  return field === "billing_cycle"
-    ? [
-        { value: "monthly", title: "Monthly" },
-        { value: "yearly", title: "Yearly" },
-        { value: "not_sure", title: "Not sure" },
-      ]
-    : [
-        { value: "yes", title: "Yes, it’s active" },
-        { value: "no", title: "No, it ended" },
-        { value: "not_sure", title: "Not sure" },
-      ];
 }
 
 export function buildGraph(deps: GraphDeps, checkpointer?: BaseCheckpointSaver) {
@@ -303,7 +264,6 @@ export function buildGraph(deps: GraphDeps, checkpointer?: BaseCheckpointSaver) 
     const outcome = routeAssessment(assessment, deps.routing ?? DEFAULT_ROUTING_OPTIONS);
     return {
       routeKind: outcome.kind,
-      routeField: outcome.kind === "clarify" ? outcome.field : null,
       routeReason: outcome.kind === "near_miss" ? outcome.reason : null,
     };
   }
@@ -324,34 +284,6 @@ export function buildGraph(deps: GraphDeps, checkpointer?: BaseCheckpointSaver) 
     };
   }
 
-  // Human-in-the-loop. First entry throws to pause the whole run (checkpointed); on resume
-  // `interrupt` returns the user's answer and the run continues with it folded in.
-  function clarifyNode(state: GraphState): Partial<GraphState> {
-    const field = state.routeField ?? "billing_cycle";
-    const assessment = state.assessment!;
-    const payload: ClarifyPayload = {
-      kind: field === "billing_cycle" ? "billing_cycle_check" : "lifecycle_check",
-      merchant: assessment.merchant_name,
-      canonical_merchant_key: state.canonical,
-      field,
-      question: draftQuestion(field, assessment),
-      choices: draftChoices(field),
-    };
-    const answer = String(interrupt(payload));
-
-    let answered: MerchantAssessment = { ...assessment };
-    if (field === "billing_cycle" && (billingCycles as readonly string[]).includes(answer)) {
-      answered.billing_cycle = answer as BillingCycle;
-    }
-    answered = recomputeCompleteness(answered);
-
-    const outcome: RouteOutcome =
-      answer === "not_sure" || answer === "no"
-        ? { kind: "near_miss", reason: `user_${answer}`, assessment: answered }
-        : { kind: "present", assessment: answered };
-    return { results: [outcome], cursor: state.cursor + 1 };
-  }
-
   const graph = new StateGraph(StateAnnotation)
     .addNode("classify", classifyNode)
     .addNode("select", selectNode)
@@ -360,7 +292,6 @@ export function buildGraph(deps: GraphDeps, checkpointer?: BaseCheckpointSaver) 
     .addNode("verify", verifyNode)
     .addNode("route", routeNode)
     .addNode("present", presentNode)
-    .addNode("clarify", clarifyNode)
     .addNode("nearmiss", nearMissNode)
     .addEdge(START, "classify")
     .addEdge("classify", "select")
@@ -377,12 +308,10 @@ export function buildGraph(deps: GraphDeps, checkpointer?: BaseCheckpointSaver) 
     .addEdge("verify", "route")
     .addConditionalEdges(
       "route",
-      (s: GraphState) =>
-        s.routeKind === "present" ? "present" : s.routeKind === "clarify" ? "clarify" : "nearmiss",
-      ["present", "clarify", "nearmiss"],
+      (s: GraphState) => (s.routeKind === "present" ? "present" : "nearmiss"),
+      ["present", "nearmiss"],
     )
     .addEdge("present", "select")
-    .addEdge("clarify", "select")
     .addEdge("nearmiss", "select");
 
   return graph.compile(checkpointer ? { checkpointer } : undefined);

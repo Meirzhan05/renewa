@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { firstMissingField, routeAssessment } from "../src/domain/routing.ts";
+import { routeAssessment } from "../src/domain/routing.ts";
 import { parseAssessment } from "../src/domain/reasoner.ts";
 
 function assess(json: Record<string, unknown>) {
@@ -14,10 +14,9 @@ test("high existence + complete + confident → present", () => {
   assert.equal(out.kind, "present");
 });
 
-test("high existence + missing cycle → clarify on billing_cycle", () => {
+test("high existence + missing cycle → present (person completes it at confirmation)", () => {
   const out = routeAssessment(assess({ existence: "high", amount: 20, currency: "USD", confidence: 0.7 }));
-  assert.equal(out.kind, "clarify");
-  assert.equal(out.kind === "clarify" && out.field, "billing_cycle");
+  assert.equal(out.kind, "present");
 });
 
 test("low existence → near_miss carrying the abstain reason", () => {
@@ -31,9 +30,4 @@ test("high existence but under-confident → near_miss", () => {
     assess({ existence: "high", amount: 9.99, currency: "USD", billing_cycle: "monthly", confidence: 0.1 }),
   );
   assert.equal(out.kind, "near_miss");
-});
-
-test("firstMissingField prefers billing_cycle", () => {
-  const a = assess({ existence: "high", confidence: 0.7 }); // amount+currency+cycle all missing
-  assert.equal(firstMissingField(a), "billing_cycle");
 });

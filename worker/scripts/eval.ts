@@ -36,8 +36,8 @@ const reasoner = makeChatFn(resolveReasonerConfig());
 const classifierConfig = resolveClassifierConfig();
 const classifier = classifierConfig ? makeChatFn(classifierConfig) : reasoner;
 
-// Baseline: the existing per-merchant graph. A merchant is "surfaced" when it routes to present or
-// clarify (a candidate shown to the user); near_miss is an abstain.
+// Baseline: the existing per-merchant graph. A merchant is "surfaced" when it routes to present
+// (a candidate shown to the user); near_miss is an abstain.
 const baselineRunner: Runner = async (messages: MailMetadata[]) => {
   const app = buildGraph(
     { chat: reasoner, classifierChat: classifier, executeTool: createScanExecutor(messages) },

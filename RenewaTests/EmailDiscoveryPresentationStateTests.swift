@@ -267,7 +267,6 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         pendingCount: Int = 0,
         errors: [String] = [],
         learningSummary: EmailScanLearningSummary? = nil,
-        clarification: InboxClarificationRequest? = nil,
         monitoringHealth: String? = nil,
         lastScannedAt: Date? = nil
     ) -> EmailScanStatus {
@@ -295,7 +294,6 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             validationFailures: 0,
             pendingCount: pendingCount,
             candidates: [],
-            clarification: clarification,
             suppressedMerchants: [],
             connections: connections,
             errors: errors,
@@ -332,25 +330,4 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         )
     }
 
-    @MainActor
-    func test_clarificationWithoutCandidate_marksInboxReadyForReview() {
-        let clarification = InboxClarificationRequest(
-            id: UUID(),
-            kind: .lifecycleCheck,
-            merchantName: "ChatGPT",
-            question: "Is ChatGPT still active for you?",
-            explanation: "Recent billing evidence needs confirmation.",
-            choices: [
-                InboxClarificationChoice(value: "yes", title: "Yes, it’s active"),
-                InboxClarificationChoice(value: "not_sure", title: "Not sure"),
-            ],
-            evidenceEvents: [
-                InboxClarificationEvidence(merchantName: "ChatGPT", receivedAt: .now, eventType: "renewed")
-            ],
-            createdAt: .now
-        )
-        let state = EmailDiscoveryPresentationState(status: makeStatus(status: .completed, clarification: clarification))
-
-        XCTAssertEqual(state.dashboardState, .reviewReady)
-    }
 }

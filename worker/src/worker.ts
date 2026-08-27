@@ -1,15 +1,13 @@
-// The persistent backend service. A long-lived loop that (1) resumes any clarifications the user
-// has answered since the last tick, then (2) claims and runs the next pending scan. Run state is
-// durable in the PostgresSaver checkpointer, so an interrupted scan survives restarts and resumes
-// exactly where it paused — the capability the ephemeral edge function could not provide.
+// The persistent backend service. A long-lived loop that claims and runs the next pending scan.
+// Run state is durable in the PostgresSaver checkpointer, so a long scan survives restarts and
+// resumes exactly where it paused — the capability the ephemeral edge function could not provide.
 
-import { Command } from "@langchain/langgraph";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { Pool } from "pg";
 import { loadConfig } from "./config.ts";
-import { PgJobStore, type JobStore, type OpenClarification, type ScanJob } from "./db.ts";
+import { PgJobStore, type JobStore, type ScanJob } from "./db.ts";
 import { createScanExecutor } from "./executor.ts";
-import { buildGraph, type ClarifyPayload, type RouteOutcome } from "./graph/graph.ts";
+import { buildGraph, type RouteOutcome } from "./graph/graph.ts";
 import { isAutonomousModeEnabled, runTwoTierScan } from "./agent/pipeline.ts";
 import { inMemoryReconcileReaders } from "./agent/tools.ts";
 import type { ProposalCandidate } from "./agent/types.ts";
@@ -22,28 +20,8 @@ import {
 
 type CompiledGraph = ReturnType<typeof buildGraph>;
 
-type PendingInterrupt = { interruptId: string; payload: ClarifyPayload };
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Read whatever interrupts a run is currently paused on. Empty when the run finished. */
-async function pendingInterrupts(app: CompiledGraph, threadId: string): Promise<PendingInterrupt[]> {
-  const snapshot = await app.getState({ configurable: { thread_id: threadId } });
-  const tasks = (snapshot.tasks ?? []) as ReadonlyArray<{
-    interrupts?: ReadonlyArray<{ value?: unknown; id?: string }>;
-  }>;
-  const out: PendingInterrupt[] = [];
-  for (const task of tasks) {
-    for (const [index, interrupt] of (task.interrupts ?? []).entries()) {
-      out.push({
-        interruptId: String(interrupt.id ?? `${threadId}:${out.length + index}`),
-        payload: interrupt.value as ClarifyPayload,
-      });
-    }
-  }
-  return out;
 }
 
 async function collectResults(app: CompiledGraph, threadId: string): Promise<RouteOutcome[]> {
@@ -52,26 +30,10 @@ async function collectResults(app: CompiledGraph, threadId: string): Promise<Rou
   return values.results ?? [];
 }
 
-/**
- * Drive one run to its next stopping point — either a clarification interrupt (persist + await the
- * user) or completion (persist outcomes). `resume` is set when continuing an answered clarification.
- */
-async function driveRun(
-  app: CompiledGraph,
-  store: JobStore,
-  job: ScanJob,
-  resume?: string,
-): Promise<void> {
+/** Drive one run to completion and persist its outcomes. */
+async function driveRun(app: CompiledGraph, store: JobStore, job: ScanJob): Promise<void> {
   const config = { configurable: { thread_id: job.id } };
-  const input = resume !== undefined ? new Command({ resume }) : { rawMessages: job.rawMessages };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await app.invoke(input as any, config);
-
-  const interrupts = await pendingInterrupts(app, job.id);
-  if (interrupts.length > 0) {
-    await store.markAwaitingUser(job.id, interrupts);
-    return;
-  }
+  await app.invoke({ rawMessages: job.rawMessages }, config);
   await store.finishJob(job.id, await collectResults(app, job.id));
 }
 
@@ -83,9 +45,9 @@ export type AutonomousStore = {
 };
 
 /**
- * The autonomous two-tier loop (AGENT_MODE=autonomous). No clarification interrupts — a proposal is
- * the question — so it just claims a scan, runs the funnel, and persists the proposals. `scanJob` is
- * injected so the loop is unit-testable without the model or Postgres.
+ * The autonomous two-tier loop (AGENT_MODE=autonomous). It claims a scan, runs the funnel, and
+ * persists the proposals a person then confirms. `scanJob` is injected so the loop is unit-testable
+ * without the model or Postgres.
  */
 export async function runAutonomousLoop(deps: {
   store: AutonomousStore;
@@ -122,20 +84,6 @@ export async function runLoop(deps: {
   const { store, buildForJob, pollIntervalMs, isRunning } = deps;
   while (isRunning()) {
     try {
-      // 1. Resume runs the user has answered since the last tick.
-      const answered: OpenClarification[] = await store.claimAnsweredClarifications();
-      for (const clar of answered) {
-        const job = await store.getJob(clar.jobId);
-        if (!job) continue;
-        try {
-          await driveRun(buildForJob(job), store, job, clar.answer);
-          await store.resolveClarification(clar);
-        } catch (error) {
-          await store.failJob(job.id, String(error));
-        }
-      }
-
-      // 2. Start the next pending scan.
       const job = await store.claimNextPendingJob();
       if (!job) {
         await sleep(pollIntervalMs);

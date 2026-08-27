@@ -1,4 +1,4 @@
-import { firstMissingField, routeAssessment } from "./discovery-routing.ts";
+import { routeAssessment } from "./discovery-routing.ts";
 import type { MerchantAssessment } from "./agentic-reasoner.ts";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -32,14 +32,13 @@ Deno.test("high existence + complete → present a candidate", () => {
   assert(outcome.kind === "present", "complete strong merchant is presented");
 });
 
-Deno.test("high existence + missing cycle → ask one clarification (the Anthropic fix)", () => {
+Deno.test("high existence + missing cycle → present (person completes it at confirmation)", () => {
   const outcome = routeAssessment(assessment({
     completeness: "incomplete",
     missing_fields: ["billing_cycle"],
     billing_cycle: null,
   }));
-  assert(outcome.kind === "clarify", "incomplete strong merchant asks a clarification");
-  assert(outcome.kind === "clarify" && outcome.field === "billing_cycle", "asks about the cycle");
+  assert(outcome.kind === "present", "incomplete strong merchant is still surfaced");
 });
 
 Deno.test("low existence → near-miss, no prompt", () => {
@@ -54,9 +53,4 @@ Deno.test("low existence → near-miss, no prompt", () => {
 Deno.test("high existence but below confidence floor → near-miss, never auto-present", () => {
   const outcome = routeAssessment(assessment({ confidence: 0.2 }));
   assert(outcome.kind === "near_miss", "low confidence does not surface");
-});
-
-Deno.test("firstMissingField prefers billing_cycle", () => {
-  const field = firstMissingField(assessment({ missing_fields: ["amount", "billing_cycle"] }));
-  assert(field === "billing_cycle", "cycle is preferred when missing");
 });

@@ -203,23 +203,6 @@ struct SupabaseClient {
         )
     }
 
-    func resolveInboxClarification(
-        id: UUID,
-        answer: String,
-        accessToken: String
-    ) async throws -> InboxClarificationResolution {
-        try await request(
-            path: "/functions/v1/email-scan",
-            method: "POST",
-            body: InboxClarificationResolutionRequest(
-                action: "resolve_clarification",
-                clarificationID: id,
-                answer: answer
-            ),
-            accessToken: accessToken
-        )
-    }
-
     func suppressEmailCandidate(
         id: UUID,
         accessToken: String
@@ -550,18 +533,6 @@ private struct EmailCandidateReviewRequest: Encodable {
         case decision
         case edits
         case correctionReason = "correction_reason"
-    }
-}
-
-private struct InboxClarificationResolutionRequest: Encodable {
-    let action: String
-    let clarificationID: UUID
-    let answer: String
-
-    enum CodingKeys: String, CodingKey {
-        case action
-        case clarificationID = "clarification_id"
-        case answer
     }
 }
 
