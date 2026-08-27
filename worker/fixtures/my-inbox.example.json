@@ -1,0 +1,23 @@
+[
+  {
+    "id": "example-anthropic-1",
+    "subject": "Your Anthropic receipt",
+    "sender": "billing@anthropic.com",
+    "snippet": "Payment of $20.00 received. Thank you for your purchase.",
+    "received_at": "2026-08-10T12:00:00Z"
+  },
+  {
+    "id": "example-uber-1",
+    "subject": "Your Tuesday trip with Uber",
+    "sender": "receipts@uber.com",
+    "snippet": "Total $12.40. Thanks for riding.",
+    "received_at": "2026-08-02T12:00:00Z"
+  },
+  {
+    "id": "example-uber-2",
+    "subject": "Your Friday trip with Uber",
+    "sender": "receipts@uber.com",
+    "snippet": "Total $28.10. Thanks for riding.",
+    "received_at": "2026-08-05T12:00:00Z"
+  }
+]

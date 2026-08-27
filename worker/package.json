@@ -1,0 +1,31 @@
+{
+  "name": "renewa-agent-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Persistent backend worker running the Renewa inbox agentic-discovery pipeline on LangGraph.",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "start": "node --env-file-if-exists=.env src/worker.ts",
+    "trace": "node --env-file-if-exists=.env scripts/trace-scan.ts",
+    "eval": "node --env-file-if-exists=.env scripts/eval.ts",
+    "gmail": "node --env-file-if-exists=.env scripts/gmail-scan.ts",
+    "gmail:trace": "node --env-file-if-exists=.env scripts/gmail-agent-trace.ts"
+  },
+  "dependencies": {
+    "@langchain/langgraph": "^1.4.12",
+    "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
+    "googleapis": "^176.0.0",
+    "langsmith": "^0.9.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.0"
+  }
+}

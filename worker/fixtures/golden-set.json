@@ -1,0 +1,153 @@
+[
+  {
+    "id": "netflix-monthly",
+    "description": "Monthly subscription with explicit membership/renewal language.",
+    "messages": [
+      { "id": "nf-1", "subject": "Your Netflix receipt", "sender": "billing@netflix.com", "snippet": "Your membership renews on Sep 1 — $15.99 monthly. Thanks for being a member.", "received_at": "2026-08-01T09:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Netflix", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "spotify-yearly",
+    "description": "Annual subscription; the cycle is stated as yearly.",
+    "messages": [
+      { "id": "sp-1", "subject": "Your Spotify Premium receipt", "sender": "no-reply@spotify.com", "snippet": "You were charged $119.88 for your yearly Premium plan. Renews Jul 2027.", "received_at": "2026-07-15T10:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Spotify", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "craftly-novel",
+    "description": "A merchant not on any hand-maintained brand list; still a clear monthly subscription.",
+    "messages": [
+      { "id": "cr-1", "subject": "Craftly subscription confirmed", "sender": "billing@craftly.io", "snippet": "Your Craftly Pro plan is active — $9.00 per month, auto-renewing.", "received_at": "2026-08-04T11:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Craftly", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "filmin-spanish",
+    "description": "Spanish-language subscription receipt (recall must not depend on English keywords).",
+    "messages": [
+      { "id": "fl-1", "subject": "Recibo de tu suscripción Filmin", "sender": "facturacion@filmin.es", "snippet": "Se ha renovado tu suscripción mensual. Importe: 9,99 EUR. Gracias.", "received_at": "2026-08-06T08:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Filmin", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "zattoo-german",
+    "description": "German-language subscription invoice.",
+    "messages": [
+      { "id": "za-1", "subject": "Ihre Zattoo Rechnung", "sender": "rechnung@zattoo.com", "snippet": "Ihr Abonnement wurde verlängert. Betrag: 4,99 EUR monatlich.", "received_at": "2026-08-07T08:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Zattoo", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "anthropic-multi",
+    "description": "Two messages together establish the subscription: a welcome email plus a receipt.",
+    "messages": [
+      { "id": "an-1", "subject": "Welcome to Claude Pro", "sender": "team@anthropic.com", "snippet": "Your Claude Pro plan is now active. Enjoy higher limits.", "received_at": "2026-07-20T12:00:00Z" },
+      { "id": "an-2", "subject": "Your Anthropic receipt", "sender": "billing@anthropic.com", "snippet": "Payment received: $20.00 for Claude Pro (monthly).", "received_at": "2026-07-20T12:05:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Anthropic", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "adobe-stable-repeat",
+    "description": "Two receipts, same amount in consecutive months → stable recurring charge.",
+    "messages": [
+      { "id": "ad-1", "subject": "Your Adobe receipt", "sender": "mail@adobe.com", "snippet": "Creative Cloud — $54.99 billed.", "received_at": "2026-07-08T00:00:00Z" },
+      { "id": "ad-2", "subject": "Your Adobe receipt", "sender": "mail@adobe.com", "snippet": "Creative Cloud — $54.99 billed.", "received_at": "2026-08-08T00:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Adobe", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "disney-price-change",
+    "description": "Price-change notice on an existing subscription.",
+    "messages": [
+      { "id": "ds-1", "subject": "An update to your Disney+ price", "sender": "disneyplus@mail.disneyplus.com", "snippet": "Your monthly price is changing from $7.99 to $10.99 starting next billing cycle.", "received_at": "2026-08-09T00:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Disney+", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "namecheap-yearly-domain",
+    "description": "Annual domain renewal — a real yearly subscription.",
+    "messages": [
+      { "id": "nc-1", "subject": "Your domain has renewed", "sender": "support@namecheap.com", "snippet": "example.com auto-renewed for 1 year — $13.98 charged.", "received_at": "2026-08-03T00:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Namecheap", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "fitpass-quarterly",
+    "description": "Quarterly membership (tests the non-monthly cycle).",
+    "messages": [
+      { "id": "fp-1", "subject": "Your FitPass membership renewed", "sender": "billing@fitpass.com", "snippet": "Your membership renews every 3 months — $60.00 charged for this quarter.", "received_at": "2026-08-02T00:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "FitPass", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "notion-trial-ending",
+    "description": "Trial about to convert to a paid plan with a card on file.",
+    "messages": [
+      { "id": "nt-1", "subject": "Your Notion trial ends soon", "sender": "team@makenotion.com", "snippet": "Your free trial ends in 3 days. Your card will then be charged $10/month unless you cancel.", "received_at": "2026-08-05T00:00:00Z" }
+    ],
+    "expect": { "surface": [{ "merchant": "Notion", "recurrence": "recurring" }], "abstain": [] }
+  },
+  {
+    "id": "uber-rides-oneoff",
+    "description": "Repeated Uber ride receipts: variable amounts, transactional wording, no membership.",
+    "messages": [
+      { "id": "ub-1", "subject": "Your Tuesday trip with Uber", "sender": "receipts@uber.com", "snippet": "Total $12.40. Thanks for riding.", "received_at": "2026-08-02T18:00:00Z" },
+      { "id": "ub-2", "subject": "Your Friday trip with Uber", "sender": "receipts@uber.com", "snippet": "Total $28.10. Thanks for riding.", "received_at": "2026-08-05T22:00:00Z" },
+      { "id": "ub-3", "subject": "Your trip with Uber", "sender": "receipts@uber.com", "snippet": "Total $7.65. Thanks for riding.", "received_at": "2026-08-09T08:00:00Z" }
+    ],
+    "expect": { "surface": [], "abstain": ["Uber"] }
+  },
+  {
+    "id": "doordash-orders-oneoff",
+    "description": "Repeated food-delivery orders: variable amounts, order language.",
+    "messages": [
+      { "id": "dd-1", "subject": "Your DoorDash order receipt", "sender": "no-reply@doordash.com", "snippet": "Order total $23.88. Your food was delivered.", "received_at": "2026-08-03T19:30:00Z" },
+      { "id": "dd-2", "subject": "Your DoorDash order receipt", "sender": "no-reply@doordash.com", "snippet": "Order total $41.02. Your food was delivered.", "received_at": "2026-08-07T20:15:00Z" }
+    ],
+    "expect": { "surface": [], "abstain": ["DoorDash"] }
+  },
+  {
+    "id": "amazon-orders-oneoff",
+    "description": "A pile of Amazon order receipts (variable amounts) — purchases, not a subscription.",
+    "messages": [
+      { "id": "az-1", "subject": "Your Amazon.com order has shipped", "sender": "ship-confirm@amazon.com", "snippet": "Order total: $34.19. Arriving Thursday.", "received_at": "2026-08-01T00:00:00Z" },
+      { "id": "az-2", "subject": "Your Amazon.com order has shipped", "sender": "ship-confirm@amazon.com", "snippet": "Order total: $8.99. Arriving Friday.", "received_at": "2026-08-06T00:00:00Z" },
+      { "id": "az-3", "subject": "Your Amazon.com order has shipped", "sender": "ship-confirm@amazon.com", "snippet": "Order total: $121.50. Arriving Monday.", "received_at": "2026-08-10T00:00:00Z" }
+    ],
+    "expect": { "surface": [], "abstain": ["Amazon"] }
+  },
+  {
+    "id": "marketing-only",
+    "description": "Pure marketing newsletter with no billing.",
+    "messages": [
+      { "id": "mk-1", "subject": "Save up to 50% this weekend only!", "sender": "deals@shopmail.com", "snippet": "Limited time offer. Unsubscribe anytime. Shop the sale now.", "received_at": "2026-08-08T07:00:00Z" }
+    ],
+    "expect": { "surface": [], "abstain": ["shopmail"] }
+  },
+  {
+    "id": "flight-oneoff",
+    "description": "A one-off flight booking receipt — not recurring.",
+    "messages": [
+      { "id": "ua-1", "subject": "Your United flight confirmation", "sender": "receipts@united.com", "snippet": "Thank you for your purchase. Total: $342.10. Confirmation ABCDEF.", "received_at": "2026-08-04T00:00:00Z" }
+    ],
+    "expect": { "surface": [], "abstain": ["United"] }
+  },
+  {
+    "id": "onetime-app-purchase",
+    "description": "A single one-time app purchase, no recurrence language.",
+    "messages": [
+      { "id": "pr-1", "subject": "Your receipt from the App Store", "sender": "no_reply@email.apple.com", "snippet": "Procreate — $12.99. Thank you for your purchase.", "received_at": "2026-08-06T00:00:00Z" }
+    ],
+    "expect": { "surface": [], "abstain": ["Procreate"] }
+  },
+  {
+    "id": "shipping-notice-nonbilling",
+    "description": "A delivery notification with no payment at all.",
+    "messages": [
+      { "id": "up-1", "subject": "Your package is out for delivery", "sender": "pkginfo@ups.com", "snippet": "Tracking 1Z999. Your package will arrive today by 8pm.", "received_at": "2026-08-09T06:00:00Z" }
+    ],
+    "expect": { "surface": [], "abstain": ["UPS"] }
+  }
+]

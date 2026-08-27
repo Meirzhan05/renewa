@@ -1,0 +1,159 @@
+{
+  "cases": [
+    {
+      "id": "netflix-monthly",
+      "truePositives": [],
+      "falseNegatives": [
+        "netflix"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "spotify-yearly",
+      "truePositives": [],
+      "falseNegatives": [
+        "spotify"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "craftly-novel",
+      "truePositives": [],
+      "falseNegatives": [
+        "craftly"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "filmin-spanish",
+      "truePositives": [],
+      "falseNegatives": [
+        "filmin"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "zattoo-german",
+      "truePositives": [],
+      "falseNegatives": [
+        "zattoo"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "anthropic-multi",
+      "truePositives": [],
+      "falseNegatives": [
+        "anthropic"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "adobe-stable-repeat",
+      "truePositives": [],
+      "falseNegatives": [
+        "adobe"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "disney-price-change",
+      "truePositives": [],
+      "falseNegatives": [
+        "disney"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "namecheap-yearly-domain",
+      "truePositives": [],
+      "falseNegatives": [
+        "namecheap"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "fitpass-quarterly",
+      "truePositives": [],
+      "falseNegatives": [
+        "fitpass"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "notion-trial-ending",
+      "truePositives": [],
+      "falseNegatives": [
+        "notion"
+      ],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "uber-rides-oneoff",
+      "truePositives": [],
+      "falseNegatives": [],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "doordash-orders-oneoff",
+      "truePositives": [],
+      "falseNegatives": [],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "amazon-orders-oneoff",
+      "truePositives": [],
+      "falseNegatives": [],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "marketing-only",
+      "truePositives": [],
+      "falseNegatives": [],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "flight-oneoff",
+      "truePositives": [],
+      "falseNegatives": [],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "onetime-app-purchase",
+      "truePositives": [],
+      "falseNegatives": [],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    },
+    {
+      "id": "shipping-notice-nonbilling",
+      "truePositives": [],
+      "falseNegatives": [],
+      "falsePositives": [],
+      "recurrenceErrors": []
+    }
+  ],
+  "expectedSurface": 11,
+  "truePositives": 0,
+  "falseNegatives": 11,
+  "falsePositives": 0,
+  "recurrenceErrors": 0,
+  "recall": 0,
+  "abstainClean": true
+}

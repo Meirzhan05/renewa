@@ -1,0 +1,9 @@
+node_modules/
+*.log
+.env
+.env.local
+dist/
+# Real inbox data for local tracing — never commit.
+fixtures/my-inbox.json
+# Gmail smoke-test outputs contain real email content — never commit.
+out/
