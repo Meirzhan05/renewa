@@ -9,7 +9,8 @@ import { PgJobStore, type JobStore, type ScanJob } from "./db.ts";
 import { createScanExecutor } from "./executor.ts";
 import { buildGraph, type RouteOutcome } from "./graph/graph.ts";
 import { isAutonomousModeEnabled, runTwoTierScan } from "./agent/pipeline.ts";
-import { inMemoryReconcileReaders } from "./agent/tools.ts";
+import { createPgReconcileReaders } from "./agent/reconcile-db.ts";
+import { bridgeProposalsToCandidates } from "./agent/candidate-bridge.ts";
 import type { ProposalCandidate } from "./agent/types.ts";
 import {
   makeChatFn,
@@ -128,16 +129,29 @@ async function main(): Promise<void> {
 
   if (isAutonomousModeEnabled()) {
     console.log("[worker] started; AGENT_MODE=autonomous — two-tier funnel");
-    // The app-side confirmation queue + learning tables are deferred, so reconcile is empty for now;
-    // proposals land in scan_outcomes (kind='present').
+    // Reconcile against the user's real tracked subscriptions, learned priors, suppressions, and
+    // aliases (per job, since it is per-user) so the agent never re-proposes a duplicate or a
+    // suppressed merchant. Proposals land in scan_outcomes (kind='present'); bridging them into the
+    // app's subscription_candidates review queue is the next integration step.
     const scanJob = async (job: ScanJob): Promise<ProposalCandidate[]> => {
       const { proposals } = await runTwoTierScan(job.rawMessages, {
         chat,
         triageChat: classifierChat,
-        reconcile: inMemoryReconcileReaders({}),
+        reconcile: createPgReconcileReaders(pool, job.userId),
         checkpointer,
         threadId: job.id,
       });
+      // Bridge proposals into the app's review queue and complete the app-side run, so the iOS app
+      // sees candidates through its existing endpoint. Standalone jobs (no app run) skip the bridge.
+      if (job.scanRunId) {
+        await bridgeProposalsToCandidates(pool, {
+          userId: job.userId,
+          scanRunId: job.scanRunId,
+          provider: job.provider,
+          messagesScanned: job.rawMessages.length,
+          proposals,
+        });
+      }
       return proposals;
     };
     await runAutonomousLoop({ store, scanJob, pollIntervalMs: config.pollIntervalMs, isRunning: () => running });

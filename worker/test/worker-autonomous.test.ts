@@ -5,7 +5,7 @@ import type { ScanJob } from "../src/db.ts";
 import type { ProposalCandidate } from "../src/agent/types.ts";
 
 function job(id: string): ScanJob {
-  return { id, userId: "u1", provider: "gmail", accessToken: null, rawMessages: [] };
+  return { id, userId: "u1", provider: "gmail", accessToken: null, rawMessages: [], scanRunId: null, batchId: null };
 }
 
 function proposal(key: string): ProposalCandidate {
