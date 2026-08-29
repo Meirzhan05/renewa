@@ -8,6 +8,7 @@ import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { senderDomain, type MailMetadata } from "../domain/email.ts";
 import type { ChatFn } from "../llm/client.ts";
 import { buildAgentGraph, type AgentReadExecutor, type AgentReadResult } from "./agent-graph.ts";
+import { createGmailBodyReadExecutor } from "./gmail-read-executor.ts";
 import { triageInbox } from "./triage.ts";
 import type { ReconcileReaders } from "./tools.ts";
 import type { AgentBudget, ProposalCandidate, ToolMatch } from "./types.ts";
@@ -78,6 +79,11 @@ export type TwoTierDeps = {
   since?: string;
   checkpointer?: BaseCheckpointSaver;
   threadId?: string;
+  // Mail provider + access token for on-demand full-body reads. When the provider is Google and a
+  // token is present, `fetch` pulls real message bodies from Gmail; otherwise it degrades to the
+  // snippet-only window executor. (Non-Google providers keep snippet-only for now.)
+  provider?: string;
+  accessToken?: string | null;
 };
 
 export type TwoTierResult = {
@@ -94,8 +100,14 @@ export async function runTwoTierScan(
   const triageChat = deps.triageChat ?? deps.chat;
   const { look, skip, degraded } = await triageInbox(scanned, triageChat);
 
+  // Gmail connections read full bodies on demand; everything else keeps the snippet-only window.
+  const readExecutor: AgentReadExecutor =
+    deps.provider === "google" && deps.accessToken
+      ? createGmailBodyReadExecutor(deps.accessToken, look)
+      : createScanReadExecutor(look);
+
   const app = buildAgentGraph(
-    { chat: deps.chat, readExecutor: createScanReadExecutor(look), reconcile: deps.reconcile, budget: deps.budget },
+    { chat: deps.chat, readExecutor, reconcile: deps.reconcile, budget: deps.budget },
     deps.checkpointer ?? new MemorySaver(),
   );
   const final = await app.invoke(
