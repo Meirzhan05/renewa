@@ -72,6 +72,25 @@ propose, reconciles against the user's real subscriptions/priors/suppressions
 `subscription_candidates` review queue and completes the run (`src/agent/candidate-bridge.ts`). The
 app reads candidates through its existing endpoint, unchanged.
 
+## Deploy (Fly.io)
+
+The worker needs a persistent host (it cannot run in Supabase Edge). `Dockerfile` + `fly.toml` in
+this directory deploy it as an always-on Fly background machine (no inbound HTTP). From `worker/`:
+
+```bash
+fly apps create renewa-worker        # or edit `app` in fly.toml to your name
+fly secrets set \
+  DATABASE_URL="postgres://...supabase..." \
+  DEEPSEEK_API_KEY="sk-..." \
+  --app renewa-worker
+fly deploy --app renewa-worker
+```
+
+`DATABASE_URL` must be the **same Postgres as the Supabase app** (so the worker reads the
+edge-enqueued `scan_jobs` and writes `subscription_candidates`). Apply
+`migrations/0001_worker_queue.sql` and `migrations/0002_scan_job_run_link.sql` there first.
+`AGENT_MODE=autonomous` is set by the image/`fly.toml`. Tail logs with `fly logs`.
+
 ## Develop
 
 ```bash
