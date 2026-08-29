@@ -634,6 +634,9 @@ async function processConnectionJob(
   const { error: enqueueError } = await admin.from("scan_jobs").insert({
     user_id: userID,
     provider,
+    // Persist the connection's access token so the worker can read full message bodies on demand
+    // (Gmail format=full) instead of judging a subscription from the snippet alone.
+    access_token: tokens.access_token,
     raw_messages: providerBatch.metadata,
     scan_run_id: runID,
     batch_id: await scanRunBatchID(admin, runID),
