@@ -104,78 +104,10 @@ export type MerchantAdjudication = {
   evidence_keys: string[];
 };
 
-const strongBillingSignals = [
-  "subscription",
-  "renewal",
-  "renews",
-  "recurring",
-  "membership",
-  "trial ending",
-  "price change",
-  "price increase",
-  "canceled",
-  "cancelled",
-  "abonnement",
-  "renouvellement",
-  "suscripción",
-  "renovación",
-  "подписк",
-  "продлен",
-  "жазылым",
-];
-
-const paymentSignals = [
-  "receipt",
-  "invoice",
-  "payment",
-  "charged",
-  "billing",
-  "order total",
-  "facture",
-  "reçu",
-  "factura",
-  "recibo",
-  "оплата",
-  "чек",
-  "төлем",
-];
-
-const marketingSignals = [
-  "sale",
-  "offer",
-  "newsletter",
-  "save up to",
-  "limited time",
-  "unsubscribe",
-  "promotion",
-];
-
-export function candidateSignalScore(message: MailMetadata): number {
-  const subject = message.subject.toLowerCase();
-  const sender = message.sender.toLowerCase();
-  const snippet = message.snippet.toLowerCase();
-  const combined = `${subject}\n${snippet}`;
-  let score = 0;
-
-  if (strongBillingSignals.some((signal) => combined.includes(signal))) {
-    score += 3;
-  }
-  if (paymentSignals.some((signal) => combined.includes(signal))) score += 2;
-  if (/\b(?:usd|eur|gbp|kzt|cad|aud|jpy)\b/i.test(combined)) score += 1;
-  if (
-    /[$€£₸¥]\s?\d|\d[.,]\d{2}\s?(?:usd|eur|gbp|kzt|cad|aud|jpy)/i.test(combined)
-  ) score += 1;
-  if (
-    /(billing|payments?|receipts?|invoices?|subscriptions?)[@.]/i.test(sender)
-  ) score += 1;
-  if (marketingSignals.some((signal) => subject.includes(signal))) score -= 2;
-
-  return score;
-}
-
-export function isLikelyBillingCandidate(message: MailMetadata): boolean {
-  return candidateSignalScore(message) >= 2;
-}
+// The hand-tuned keyword scorer (strong/payment/marketing signal lists → candidateSignalScore →
+// isLikelyBillingCandidate) was removed in the cutover to the autonomous agent. Deciding whether an
+// email is subscription evidence is now the LLM's job (Tier-1 triage in worker/), not a keyword
+// threshold — there is no manual prefilter anymore.
 
 export function sanitizeMailContent(
   value: string,

@@ -10,43 +10,17 @@ import {
   BillingCycle,
   BillingEvent,
   brandIDForMerchant,
-  buildExtractionMessages,
-  canCreateLifecycleCandidate,
   candidateConfirmationIssues,
   canonicalMerchantKey,
   classifyCandidateAction,
-  isLikelyBillingCandidate,
   MailMessage,
   MailMetadata,
   reconcileMerchantLifecycle,
   redactEmailAddress,
-  resolveMerchantIdentity,
   reviewTransitionResult,
-  sanitizeMailContent,
   SubscriptionCategory,
   tintForCategory,
-  validateExtractionEnvelope,
 } from "../_shared/email-discovery.ts";
-import {
-  admitCandidate,
-  classifyCandidates,
-  groupByMerchant,
-} from "../_shared/discovery-classifier.ts";
-import {
-  agenticDiscoveryEnabled,
-  makeChatFn,
-  resolveClassifierConfig,
-  resolveReasonerConfig,
-} from "../_shared/llm-client.ts";
-import {
-  type MerchantAssessment,
-  type MerchantScope,
-  runMerchantReasoner,
-  type ToolExecutor,
-  type ToolMatch,
-} from "../_shared/agentic-reasoner.ts";
-import { verifyAssessment } from "../_shared/discovery-verify.ts";
-import { routeAssessment } from "../_shared/discovery-routing.ts";
 import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
 import {
   cursorRecoveryLookbackDays,
@@ -641,292 +615,24 @@ async function processConnectionJob(
     );
 
   await updateRun(admin, runID, {
-    stage: "filtering",
-  });
-  const likely = providerBatch.metadata
-    .filter(isLikelyBillingCandidate);
-  const metadataByID = new Map(likely.map((item) => [item.id, item]));
-  await updateRun(admin, runID, {
-    stage: "extracting",
-  });
-
-  const { data: subscriptions, error: subscriptionsError } = await admin
-    .from("subscriptions")
-    .select("id,name,source_key,canonical_merchant_key,brand_id,status")
-    .eq("user_id", userID);
-  if (subscriptionsError) throw subscriptionsError;
-  const { data: reviewedAliases, error: aliasError } = await admin
-    .from("reviewed_merchant_aliases")
-    .select("alias_key,canonical_merchant_key")
-    .eq("user_id", userID);
-  if (aliasError) throw aliasError;
-  const { data: reviewPriors, error: priorsError } = await admin
-    .from("merchant_review_priors")
-    .select("canonical_merchant_key,field,value,evidence_strength")
-    .eq("user_id", userID);
-  if (priorsError) throw priorsError;
-  const priorsByMerchant = new Map<string, MerchantReviewPrior[]>();
-  for (const prior of (reviewPriors ?? []) as MerchantReviewPrior[]) {
-    const list = priorsByMerchant.get(prior.canonical_merchant_key) ?? [];
-    list.push(prior);
-    priorsByMerchant.set(prior.canonical_merchant_key, list);
-  }
-
-  let detected = 0;
-  let validationFailures = 0;
-  let candidateCount = likely.length;
-  // Agentic pipeline (flag-gated): classify → group → per-merchant reason → verify → route.
-  // The legacy per-message path below is the flag-off default and stays untouched.
-  if (agenticDiscoveryEnabled()) {
-    const agentResult = await runAgenticDiscovery({
-      admin,
-      userID,
-      runID,
-      provider,
-      accessToken: tokens.access_token,
-      providerBatch,
-      subscriptions: (subscriptions ?? []) as Array<Record<string, unknown>>,
-      reviewedAliases: (reviewedAliases ?? []) as Array<
-        { alias_key: string; canonical_merchant_key: string }
-      >,
-      priorsByMerchant,
-    });
-    detected = agentResult.presented;
-    candidateCount = agentResult.candidates;
-  } else {
-  const extractionResults = await mapWithConcurrency(
-    likely,
-    3,
-    async (metadata) => {
-      // Tolerate a single unreadable message (e.g. a provider 404 for a message
-      // deleted between listing and fetch). Skipping and counting it keeps one
-      // bad message from aborting the whole scan and degrading the inbox.
-      try {
-        const message = await providerBatch.fullMessage(metadata);
-        return await extractBillingEvent(message);
-      } catch {
-        return { event: null, abstainReason: null, issues: ["message_fetch_failed"] };
-      }
-    },
-  );
-  for (const extraction of extractionResults) {
-    if (extraction.issues.length > 0) {
-      validationFailures += 1;
-      continue;
-    }
-    if (!extraction.event) continue;
-
-    const event = extraction.event;
-    const sourceReceivedAt = metadataByID.get(event.message_id)?.received_at;
-    if (!sourceReceivedAt) {
-      validationFailures += 1;
-      continue;
-    }
-    const key = canonicalMerchantKey(event.merchant_name);
-    const identity = resolveMerchantIdentity({
-      merchant_name: event.merchant_name,
-      sender_domain: senderDomain(
-        metadataByID.get(event.message_id)?.sender ?? "",
-      ),
-      canonical_merchant_key: key,
-      aliases: (reviewedAliases ?? []) as Array<
-        { alias_key: string; canonical_merchant_key: string }
-      >,
-      known_keys: [
-        ...new Set([
-          key,
-          ...(subscriptions ?? []).map((item) =>
-            String(item.canonical_merchant_key ?? "")
-          ).filter(Boolean),
-        ]),
-      ],
-    });
-    if (identity.state !== "resolved") {
-      // Ambiguous or otherwise unresolved identity: withhold rather than guess. (Previously this
-      // surfaced an identity clarification; the app no longer asks, so the event is simply skipped.)
-      await updateRun(admin, runID, { withheld_ambiguities: 1 });
-      continue;
-    }
-    const matched = uniqueSubscriptionMatch(
-      subscriptions ?? [],
-      event.merchant_name,
-      identity.canonical_merchant_key,
-      provider,
-    );
-    const matchedID = typeof matched?.id === "string" ? matched.id : null;
-    const providerMessageFingerprint = await sha256(
-      `${provider}:${event.message_id}`,
-    );
-
-    const { data: savedEvent, error: eventError } = await admin
-      .from("detected_billing_events")
-      .upsert({
-        user_id: userID,
-        scan_run_id: runID,
-        provider,
-        provider_message_id: providerMessageFingerprint,
-        event_type: event.event_type,
-        merchant_name: event.merchant_name,
-        canonical_merchant_key: identity.canonical_merchant_key,
-        amount: event.amount,
-        currency: event.currency,
-        billing_cycle: event.billing_cycle,
-        event_date: event.event_date,
-        renewal_date: event.renewal_date,
-        category: event.category,
-        source_received_at: sourceReceivedAt,
-        confidence: event.confidence,
-        evidence: event.evidence.slice(0, 280),
-        validation_state: "valid",
-        validation_issues: [],
-        schema_version: extractionSchemaVersion,
-        model_identifier: modelIdentifier(),
-      }, {
-        onConflict: "user_id,provider,provider_message_id,event_type",
-        ignoreDuplicates: true,
-      })
-      .select("id")
-      .maybeSingle();
-    if (eventError) throw eventError;
-    if (!savedEvent) continue;
-
-    const lifecycle = await merchantLifecycle(
-      admin,
-      userID,
-      identity.canonical_merchant_key,
-    );
-    const bundleID = await upsertEvidenceBundle(
-      admin,
-      userID,
-      identity.canonical_merchant_key,
-      lifecycle,
-      savedEvent.id,
-      identity.reason,
-    );
-    // Overlay the person's learned priors as proposed defaults. This never
-    // rewrites the raw detected_billing_events row (already saved above), so
-    // reconcileMerchantLifecycle inputs stay untouched; priors only shape the
-    // candidate a person still confirms.
-    const presented = overlayPriorsOntoEvent(
-      event,
-      priorsByMerchant.get(identity.canonical_merchant_key) ?? [],
-      sourceReceivedAt,
-    );
-    const presentedEvent: BillingEvent = {
-      ...event,
-      billing_cycle: presented.billing_cycle,
-      category: presented.category,
-      renewal_date: presented.renewal_date,
-    };
-    let action: ReturnType<typeof classifyCandidateAction> | null = null;
-    if (lifecycle.state === "current") {
-      await resolveStaleCancellationCandidates(
-        admin,
-        userID,
-        identity.canonical_merchant_key,
-        "Later current renewal evidence was found.",
-      );
-      if (lifecycle.supportingEventID !== savedEvent.id) continue;
-      const suppressed = await merchantIsSuppressed(
-        admin,
-        userID,
-        identity.canonical_merchant_key,
-      );
-      if (!canCreateLifecycleCandidate(lifecycle, suppressed)) {
-        await resolvePendingDiscoveryCandidates(
-          admin,
-          userID,
-          identity.canonical_merchant_key,
-          "You chose not to receive discovery suggestions for this merchant.",
-        );
-        continue;
-      }
-      action = classifyCandidateAction(presentedEvent, matchedID);
-    } else {
-      await resolvePendingDiscoveryCandidates(
-        admin,
-        userID,
-        identity.canonical_merchant_key,
-        lifecycleResolutionReason(lifecycle.state),
-      );
-      const matchedStatus = typeof matched?.status === "string"
-        ? matched.status
-        : null;
-      if (
-        lifecycle.state !== "ended" ||
-        lifecycle.supportingEventID !== savedEvent.id ||
-        presentedEvent.event_type !== "canceled" || matchedStatus !== "active"
-      ) {
-        continue;
-      }
-      action = "cancel";
-    }
-    const validationIssues = semanticValidationIssues(
-      presentedEvent,
-      action,
-      matched?.status ?? null,
-    );
-    const { error: validationUpdateError } = await admin
-      .from("detected_billing_events")
-      .update({ validation_issues: validationIssues })
-      .eq("id", savedEvent.id)
-      .eq("user_id", userID);
-    if (validationUpdateError) throw validationUpdateError;
-
-    const { error: candidateError } = await admin.from(
-      "subscription_candidates",
-    ).insert({
-      user_id: userID,
-      scan_run_id: runID,
-      detected_event_id: savedEvent.id,
-      matched_subscription_id: matchedID,
-      suggested_action: action,
-      merchant_name: presentedEvent.merchant_name,
-      canonical_merchant_key: identity.canonical_merchant_key,
-      evidence_bundle_id: bundleID,
-      resolution_reason: identity.reason,
-      amount: presentedEvent.amount,
-      currency: presentedEvent.currency,
-      billing_cycle: presentedEvent.billing_cycle,
-      renewal_date: presentedEvent.renewal_date,
-      category: presentedEvent.category,
-      event_type: presentedEvent.event_type,
-      confidence: presentedEvent.confidence,
-      evidence: presentedEvent.evidence.slice(0, 280),
-      validation_issues: validationIssues,
-    });
-    if (candidateError) throw candidateError;
-    detected += 1;
-  }
-  }
-
-  const runMetrics = await addRunMetrics(admin, runID, {
+    stage: "reasoning",
     messages_scanned: providerBatch.metadata.length,
-    candidate_messages: candidateCount,
-    events_detected: detected,
-    validation_failures: validationFailures,
+    candidate_messages: providerBatch.metadata.length,
   });
 
-  if (providerBatch.continuation) {
-    const { error: nextJobError } = await admin.from("email_scan_jobs").upsert({
-      user_id: userID,
-      batch_id: (await scanRunBatchID(admin, runID)),
-      scan_run_id: runID,
-      connection_id: connectionID,
-      page_number: pageNumber + 1,
-      provider_continuation: providerBatch.continuation,
-      status: "queued",
-      error_message: null,
-    }, { onConflict: "scan_run_id,page_number", ignoreDuplicates: true });
-    if (nextJobError) throw nextJobError;
-    await updateRun(admin, runID, {
-      status: "running",
-      stage: "queued",
-      completed_at: null,
-      error_message: null,
-    });
-    return true;
-  }
+  // Discovery no longer runs in the edge function. Hand the fetched window to the persistent agent
+  // worker, which runs the autonomous funnel (Tier-1 triage -> Tier-2 agent -> propose), reconciles
+  // against the user's tracked subscriptions / priors / suppressions, and writes candidates back
+  // into this run's review queue before marking the run completed. The LLM alone decides what
+  // surfaces -- there is no keyword prefilter or routing ladder here anymore.
+  const { error: enqueueError } = await admin.from("scan_jobs").insert({
+    user_id: userID,
+    provider,
+    raw_messages: providerBatch.metadata,
+    scan_run_id: runID,
+    batch_id: await scanRunBatchID(admin, runID),
+  });
+  if (enqueueError) throw enqueueError;
 
   const now = new Date().toISOString();
   const { error: saveSyncError } = await admin.from("mail_sync_states").upsert({
@@ -943,375 +649,16 @@ async function processConnectionJob(
     last_scanned_at: now,
     last_error: null,
   }).eq("id", connection.id);
-  await updateRun(admin, runID, {
-    status: "completed",
-    stage: runMetrics.events_detected > 0 ? "review_ready" : "completed",
-    completed_at: now,
-    error_message: null,
-  });
+
+  // The run stays 'running' until the worker completes it via the candidate bridge. The edge's job
+  // is done once the window is enqueued and the sync cursor advanced.
   return false;
 }
 
-// --- Agentic discovery pipeline -------------------------------------------------------
-// Flag-gated alternative to the legacy per-message extraction: classify all fetched mail,
-// group by merchant, run a bounded agentic loop per merchant, verify grounding, and route
-// on the confidence ladder. Every surfaced path still ends at human confirmation.
-
-const MAX_MERCHANTS_PER_RUN = 12;
-const AGENT_GLOBAL_TOKEN_BUDGET = 120_000;
-const assessmentSchemaVersion = "merchant-assessment-v1";
-
-type AgenticRunResult = {
-  candidates: number;
-  presented: number;
-  nearMisses: number;
-  abstained: number;
-  toolCalls: number;
-  tokens: number;
-  merchants: number;
-};
-
-async function runAgenticDiscovery(input: {
-  admin: AdminClient;
-  userID: string;
-  runID: string;
-  provider: Provider;
-  accessToken: string;
-  providerBatch: ProviderBatch;
-  subscriptions: Array<Record<string, unknown>>;
-  reviewedAliases: Array<{ alias_key: string; canonical_merchant_key: string }>;
-  priorsByMerchant: Map<string, MerchantReviewPrior[]>;
-}): Promise<AgenticRunResult> {
-  const { admin, userID, runID, provider, accessToken, providerBatch } = input;
-  const metadata = providerBatch.metadata;
-  const metaByID = new Map(metadata.map((meta) => [meta.id, meta]));
-
-  // Tier-1 classification with graceful fallback: any message the classifier omits (or all
-  // of them, on outage) falls through to the deterministic keyword gate in admitCandidate.
-  const classifierConfig = resolveClassifierConfig();
-  const classifications = classifierConfig
-    ? await classifyCandidates(metadata, makeChatFn(classifierConfig))
-    : new Map();
-
-  const admitted: Array<{ meta: MailMetadata; merchant_guess: string }> = [];
-  for (const meta of metadata) {
-    const classification = classifications.get(meta.id);
-    if (admitCandidate(classification, meta)) {
-      admitted.push({ meta, merchant_guess: classification?.merchant_guess ?? "" });
-    }
-  }
-  const bundles = groupByMerchant(admitted);
-  const aliasMap = new Map(
-    input.reviewedAliases.map((alias) => [alias.alias_key, alias.canonical_merchant_key]),
-  );
-
-  const reasonerConfig = resolveReasonerConfig();
-  const chat = makeChatFn(reasonerConfig);
-  const allKnownIDs = new Set(metadata.map((meta) => meta.id));
-
-  const result: AgenticRunResult = {
-    candidates: admitted.length,
-    presented: 0,
-    nearMisses: 0,
-    abstained: 0,
-    toolCalls: 0,
-    tokens: 0,
-    merchants: 0,
-  };
-
-  for (const bundle of bundles.slice(0, MAX_MERCHANTS_PER_RUN)) {
-    if (result.tokens >= AGENT_GLOBAL_TOKEN_BUDGET) break; // per-run global budget
-    const canonical = aliasMap.get(bundle.canonical_merchant_key) ??
-      bundle.canonical_merchant_key;
-    const seedMetas = bundle.message_ids
-      .map((id) => metaByID.get(id))
-      .filter((meta): meta is MailMetadata => Boolean(meta));
-    if (seedMetas.length === 0) continue;
-    const seed: ToolMatch[] = seedMetas.map((meta) => ({
-      message_id: meta.id,
-      subject: meta.subject,
-      sender: meta.sender,
-      snippet: meta.snippet,
-      received_at: meta.received_at,
-    }));
-    const merchantDomains = [
-      ...new Set(seedMetas.map((meta) => senderDomain(meta.sender)).filter(Boolean)),
-    ] as string[];
-    const scope: MerchantScope = {
-      canonical_merchant_key: canonical,
-      merchant_domains: merchantDomains,
-      known_message_ids: new Set(allKnownIDs),
-    };
-    const execute = buildToolExecutor(provider, accessToken, metaByID, providerBatch.fullMessage);
-
-    const reasoned = await runMerchantReasoner({
-      canonical_merchant_key: canonical,
-      merchant_guess: bundle.merchant_guess,
-      seed,
-      scope,
-      chat,
-      execute,
-    });
-    result.toolCalls += reasoned.toolCalls;
-    result.tokens += reasoned.tokens;
-    result.merchants += 1;
-
-    const evidenceTexts = seedMetas.map((meta) => `${meta.subject}\n${meta.snippet}`);
-    const verified = await verifyAssessment(reasoned.assessment, evidenceTexts, chat);
-    if (verified.existence === "low") result.abstained += 1;
-
-    const outcome = routeAssessment(verified);
-    const sourceReceivedAt = latestReceivedAt(seedMetas);
-
-    if (outcome.kind === "near_miss") {
-      await insertNearMiss(admin, userID, runID, verified, outcome.reason);
-      result.nearMisses += 1;
-      continue;
-    }
-
-    // present: persist a detected event + evidence bundle, then surface a candidate.
-    const savedEventID = await saveAgenticEvent(
-      admin,
-      userID,
-      runID,
-      provider,
-      canonical,
-      verified,
-      sourceReceivedAt,
-      reasonerConfig.model,
-    );
-    if (!savedEventID) continue;
-    const lifecycle = {
-      state: "current" as const,
-      reason: "projected_current_renewal" as const,
-      supportingEventID: savedEventID,
-    };
-    const bundleID = await upsertEvidenceBundle(
-      admin,
-      userID,
-      canonical,
-      lifecycle,
-      savedEventID,
-      "agentic_assessment",
-    );
-
-    // The human-confirmation gate is the subscription_candidates review below.
-    if (await merchantIsSuppressed(admin, userID, canonical)) continue;
-    const matched = uniqueSubscriptionMatch(
-      input.subscriptions,
-      verified.merchant_name,
-      canonical,
-      provider,
-    );
-    const matchedID = typeof matched?.id === "string" ? matched.id : null;
-    const presentedEvent = assessmentToBillingEvent(verified);
-    const action = classifyCandidateAction(presentedEvent, matchedID);
-    const validationIssues = semanticValidationIssues(
-      presentedEvent,
-      action,
-      matched?.status ?? null,
-    );
-    const { error: candidateError } = await admin.from("subscription_candidates").insert({
-      user_id: userID,
-      scan_run_id: runID,
-      detected_event_id: savedEventID,
-      matched_subscription_id: matchedID,
-      suggested_action: action,
-      merchant_name: verified.merchant_name,
-      canonical_merchant_key: canonical,
-      evidence_bundle_id: bundleID,
-      resolution_reason: "agentic_assessment",
-      amount: verified.amount,
-      currency: verified.currency,
-      billing_cycle: verified.billing_cycle,
-      renewal_date: verified.renewal_date,
-      category: verified.category ?? "other",
-      event_type: verified.event_type ?? "created",
-      confidence: verified.confidence,
-      evidence: presentedEvent.evidence.slice(0, 280),
-      validation_issues: validationIssues,
-    });
-    if (candidateError) throw candidateError;
-    result.presented += 1;
-  }
-
-  await updateRun(admin, runID, {
-    agent_merchants: result.merchants,
-    agent_tool_calls: result.toolCalls,
-    agent_tokens: result.tokens,
-    agent_presented: result.presented,
-    agent_near_misses: result.nearMisses,
-    agent_abstained: result.abstained,
-  });
-  return result;
-}
-
-/** Read-only, provider-scoped tool executor. Gmail supports live search; Microsoft degrades
- * to seed-only (search/get_more return empty) — fetch works on both via providerBatch. */
-function buildToolExecutor(
-  provider: Provider,
-  accessToken: string,
-  metaByID: Map<string, MailMetadata>,
-  fullMessage: (metadata: MailMetadata) => Promise<MailMessage>,
-): ToolExecutor {
-  const discovered = new Map<string, MailMetadata>();
-  return async (request) => {
-    if (request.tool === "fetch") {
-      const meta = metaByID.get(request.message_id) ?? discovered.get(request.message_id);
-      if (!meta) return { tool: "fetch", message: null };
-      try {
-        const full = await fullMessage(meta);
-        return {
-          tool: "fetch",
-          message: {
-            message_id: meta.id,
-            subject: meta.subject,
-            sender: meta.sender,
-            received_at: meta.received_at,
-            content: sanitizeMailContent(full.content),
-          },
-        };
-      } catch {
-        return { tool: "fetch", message: null };
-      }
-    }
-    const query = request.tool === "search_inbox"
-      ? request.query
-      : `from:${request.sender}`;
-    const matches = provider === "google"
-      ? await gmailSearch(accessToken, query, 8)
-      : [];
-    for (const meta of matches) discovered.set(meta.id, meta);
-    return {
-      tool: request.tool,
-      matches: matches.map((meta) => ({
-        message_id: meta.id,
-        subject: meta.subject,
-        sender: meta.sender,
-        snippet: meta.snippet,
-        received_at: meta.received_at,
-      })),
-    };
-  };
-}
-
-async function gmailSearch(
-  accessToken: string,
-  query: string,
-  cap: number,
-): Promise<MailMetadata[]> {
-  const params = new URLSearchParams({ q: query, maxResults: String(cap) });
-  const response = await providerFetch(
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
-    accessToken,
-    "A Gmail search could not be completed.",
-  );
-  const payload = await response.json();
-  const ids: string[] = (payload.messages ?? [])
-    .map((message: { id?: string }) => message.id)
-    .filter((id: unknown): id is string => typeof id === "string")
-    .slice(0, cap);
-  const metas = await mapWithConcurrency(ids, 4, async (id) => {
-    try {
-      return await fetchGmailMetadata(accessToken, id);
-    } catch {
-      return null;
-    }
-  });
-  return metas.filter((meta): meta is MailMetadata => meta !== null);
-}
-
-function latestReceivedAt(metas: MailMetadata[]): string {
-  let latest = metas[0]?.received_at ?? new Date().toISOString();
-  for (const meta of metas) {
-    if (Date.parse(meta.received_at) > Date.parse(latest)) latest = meta.received_at;
-  }
-  return latest;
-}
-
-function assessmentToBillingEvent(a: MerchantAssessment): BillingEvent {
-  return {
-    message_id: a.evidence_refs[0] ?? a.canonical_merchant_key,
-    event_type: a.event_type ?? "created",
-    merchant_name: a.merchant_name,
-    amount: a.amount,
-    currency: a.currency,
-    billing_cycle: a.billing_cycle,
-    event_date: a.event_date,
-    renewal_date: a.renewal_date,
-    category: a.category ?? "other",
-    confidence: a.confidence,
-    evidence: a.evidence_refs.length > 0
-      ? `Agentic assessment from ${a.evidence_refs.length} message(s).`
-      : "Agentic assessment.",
-  };
-}
-
-async function saveAgenticEvent(
-  admin: AdminClient,
-  userID: string,
-  runID: string,
-  provider: Provider,
-  canonical: string,
-  a: MerchantAssessment,
-  sourceReceivedAt: string,
-  model: string,
-): Promise<string | null> {
-  const fingerprint = await sha256(
-    `${provider}:agent:${canonical}:${a.evidence_refs[0] ?? runID}`,
-  );
-  const { data: savedEvent, error } = await admin
-    .from("detected_billing_events")
-    .upsert({
-      user_id: userID,
-      scan_run_id: runID,
-      provider,
-      provider_message_id: fingerprint,
-      event_type: a.event_type ?? "created",
-      merchant_name: a.merchant_name,
-      canonical_merchant_key: canonical,
-      amount: a.amount,
-      currency: a.currency,
-      billing_cycle: a.billing_cycle,
-      event_date: a.event_date,
-      renewal_date: a.renewal_date,
-      category: a.category ?? "other",
-      source_received_at: sourceReceivedAt,
-      confidence: a.confidence,
-      evidence: `Agentic assessment (${a.existence}/${a.completeness}).`.slice(0, 280),
-      validation_state: "valid",
-      validation_issues: [],
-      schema_version: assessmentSchemaVersion,
-      model_identifier: model,
-    }, {
-      onConflict: "user_id,provider,provider_message_id,event_type",
-      ignoreDuplicates: false,
-    })
-    .select("id")
-    .maybeSingle();
-  if (error) throw error;
-  return savedEvent ? String(savedEvent.id) : null;
-}
-
-async function insertNearMiss(
-  admin: AdminClient,
-  userID: string,
-  runID: string,
-  a: MerchantAssessment,
-  reason: string,
-): Promise<void> {
-  const { error } = await admin.from("discovery_near_misses").insert({
-    user_id: userID,
-    run_id: runID,
-    canonical_merchant_key: a.canonical_merchant_key,
-    merchant_name: a.merchant_name.slice(0, 120),
-    existence: a.existence,
-    completeness: a.completeness,
-    missing_fields: a.missing_fields,
-    reason: reason.slice(0, 200),
-  });
-  if (error && error.code !== "23505") throw error;
-}
+// --- Merchant lifecycle + candidate resolution -----------------------------------------------
+// Discovery itself now runs in the persistent agent worker (worker/): the edge function enqueues a
+// scan job and the worker's autonomous funnel decides what to surface. The helpers below are the
+// shared lifecycle/suppression/resolution plumbing still used by scan status, review, and monitoring.
 
 async function merchantLifecycle(
   admin: AdminClient,
@@ -2641,42 +1988,6 @@ async function fetchMicrosoftFullMessage(
   };
 }
 
-async function extractBillingEvent(
-  message: MailMessage,
-): Promise<ReturnType<typeof validateExtractionEnvelope>> {
-  const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${mustEnv("DEEPSEEK_API_KEY")}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: modelIdentifier(),
-      max_tokens: 1_200,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: buildExtractionMessages(message),
-    }),
-  });
-  const payload = await response.json();
-  if (!response.ok) {
-    throw new Error(payload.error?.message ?? "AI extraction failed");
-  }
-  const text = payload.choices?.[0]?.message?.content;
-  if (typeof text !== "string" || !text) {
-    return {
-      event: null,
-      abstainReason: null,
-      issues: ["ai_empty_response"],
-    };
-  }
-  try {
-    return validateExtractionEnvelope(JSON.parse(text), message.id);
-  } catch {
-    return { event: null, abstainReason: null, issues: ["response_not_json"] };
-  }
-}
-
 function uniqueSubscriptionMatch(
   subscriptions: Array<Record<string, unknown>>,
   merchantName: string,
@@ -2896,7 +2207,7 @@ function aggregateStage(
       ? "review_ready"
       : "completed";
   }
-  const order = ["queued", "fetching", "filtering", "extracting"];
+  const order = ["queued", "fetching", "filtering", "extracting", "reasoning"];
   for (const stage of order.toReversed()) {
     if (runs.some((run) => run.stage === stage)) return stage;
   }
@@ -2915,10 +2226,6 @@ function uniqueStrings(values: unknown[]): string[] {
       ),
     ),
   ];
-}
-
-function modelIdentifier(): string {
-  return Deno.env.get("DEEPSEEK_MODEL") ?? "deepseek-chat";
 }
 
 function requiredString(value: unknown, name: string): string {

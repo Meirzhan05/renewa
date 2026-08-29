@@ -2,7 +2,6 @@ import {
   buildExtractionMessages,
   canCreateLifecycleCandidate,
   candidateConfirmationIssues,
-  candidateSignalScore,
   canonicalMerchantKey,
   classifyCandidateAction,
   reconcileMerchantLifecycle,
@@ -17,26 +16,6 @@ import {
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
-
-Deno.test("candidate filter favors concrete billing signals over marketing", () => {
-  const billing = candidateSignalScore({
-    id: "billing",
-    subject: "Your subscription renewal receipt",
-    sender: "billing@example.com",
-    received_at: "2026-07-29T00:00:00Z",
-    snippet: "You were charged $12.99 USD.",
-  });
-  const marketing = candidateSignalScore({
-    id: "marketing",
-    subject: "Limited time sale",
-    sender: "newsletter@example.com",
-    received_at: "2026-07-29T00:00:00Z",
-    snippet: "Unsubscribe from this newsletter.",
-  });
-
-  assert(billing >= 2, "billing message should qualify");
-  assert(marketing < 2, "marketing message should not qualify");
-});
 
 Deno.test("sanitizer removes executable markup and links", () => {
   const content = sanitizeMailContent(

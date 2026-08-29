@@ -14,6 +14,11 @@ export type ScanJob = {
   provider: string;
   accessToken: string | null;
   rawMessages: MailMetadata[];
+  // The app-side run this job belongs to. The worker writes its proposals into the app's
+  // detected_billing_events → subscription_candidates review queue against this run, then marks the
+  // run completed. Null only for legacy/standalone jobs enqueued without an app run.
+  scanRunId: string | null;
+  batchId: string | null;
 };
 
 export interface JobStore {
@@ -52,7 +57,7 @@ export class PgJobStore implements JobStore {
           for update skip locked
           limit 1
        )
-       returning id, user_id, provider, access_token, raw_messages`,
+       returning id, user_id, provider, access_token, raw_messages, scan_run_id, batch_id`,
     );
     const row = rows[0];
     if (!row) return null;
@@ -66,6 +71,8 @@ export class PgJobStore implements JobStore {
       provider: String(row.provider),
       accessToken: row.access_token ? String(row.access_token) : null,
       rawMessages: Array.isArray(row.raw_messages) ? (row.raw_messages as MailMetadata[]) : [],
+      scanRunId: row.scan_run_id ? String(row.scan_run_id) : null,
+      batchId: row.batch_id ? String(row.batch_id) : null,
     };
   }
 

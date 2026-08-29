@@ -49,12 +49,28 @@ confirmation gate is preserved: present and clarify both still require the user 
 npm install
 cp .env.example .env      # fill in DATABASE_URL + DEEPSEEK_API_KEY
 psql "$DATABASE_URL" -f migrations/0001_worker_queue.sql
-npm start                 # begins polling scan_jobs
+psql "$DATABASE_URL" -f migrations/0002_scan_job_run_link.sql
+AGENT_MODE=autonomous npm start   # live path: begins polling scan_jobs
 ```
 
-Enqueue a scan by inserting a `scan_jobs` row (the app or an edge function does this). Answer a
-clarification by setting `scan_clarifications.answer` and `status = 'answered'`; the worker resumes
-the run on its next tick and writes results into `scan_outcomes`.
+Enqueue a scan by inserting a `scan_jobs` row — the `email-scan` edge function now does this: on a
+scan it fetches the mailbox window and enqueues a `scan_jobs` row (`raw_messages` + `scan_run_id` +
+`batch_id`) instead of running discovery itself.
+
+## Live path (post-cutover)
+
+As of the `cutover-inbox-scan-to-agent` change, **the worker's autonomous two-tier funnel
+(`AGENT_MODE=autonomous`, `src/agent/*`) is the live discovery path.** The deterministic pipeline
+that used to run inside the edge function — the keyword prefilter (`candidateSignalScore` /
+`isLikelyBillingCandidate`), the per-merchant agentic path (`runAgenticDiscovery`), the routing
+ladder (`routeAssessment`), and the legacy per-message extractor — has been removed. The include /
+withhold decision is now entirely the LLM's; a human still confirms every candidate.
+
+Flow: app `start` → edge fetches the window + enqueues `scan_jobs` → worker runs triage → agent →
+propose, reconciles against the user's real subscriptions/priors/suppressions
+(`src/agent/reconcile-db.ts`), and bridges each proposal into the app's `detected_billing_events` →
+`subscription_candidates` review queue and completes the run (`src/agent/candidate-bridge.ts`). The
+app reads candidates through its existing endpoint, unchanged.
 
 ## Develop
 
