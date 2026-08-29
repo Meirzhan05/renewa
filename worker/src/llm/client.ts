@@ -129,7 +129,7 @@ export function parseChatPayload(payload: unknown): ChatResult {
   const rawToolCalls = Array.isArray(message?.tool_calls)
     ? (message!.tool_calls as RawToolCall[])
     : [];
-  const toolCalls: ToolCall[] = rawToolCalls
+  let toolCalls: ToolCall[] = rawToolCalls
     .filter((call) => call?.function?.name)
     .map((call) => ({
       id: String(call.id ?? call.function.name),
@@ -139,7 +139,55 @@ export function parseChatPayload(payload: unknown): ChatResult {
           ? call.function.arguments
           : JSON.stringify(call.function.arguments ?? {}),
     }));
+  // Fallback: DeepSeek intermittently leaks its tool calls as raw markup inside `content` instead of
+  // the standard `tool_calls` field (the `<｜｜DSML｜｜invoke …>` form). Left unparsed, the agent sees
+  // zero tool calls and terminates before it can `propose`, silently dropping every candidate.
+  // Recover them from content when the structured field is empty.
+  if (toolCalls.length === 0 && typeof content === "string" && content.includes("invoke name=")) {
+    toolCalls = parseInlineToolCalls(content);
+  }
   const usage = record.usage as { total_tokens?: unknown } | undefined;
   const tokens = typeof usage?.total_tokens === "number" ? usage.total_tokens : 0;
   return { content, toolCalls, tokens };
+}
+
+/**
+ * Recover tool calls that a model emitted as inline markup in its text content rather than as
+ * structured `tool_calls` (observed with DeepSeek's `<｜｜DSML｜｜invoke name="…">…</…invoke>` form,
+ * which wraps the Anthropic-style `<invoke>/<parameter>` structure). Tolerant of the special-token
+ * prefixes/suffixes around each tag. Returns [] when nothing parses.
+ */
+export function parseInlineToolCalls(content: string): ToolCall[] {
+  const calls: ToolCall[] = [];
+  const invokeRe = /invoke\s+name="([^"]+)"\s*>([\s\S]*?)<\/[^>]*?invoke\s*>/g;
+  const paramRe = /parameter\s+name="([^"]+)"[^>]*?>([\s\S]*?)<\/[^>]*?parameter\s*>/g;
+  let invoke: RegExpExecArray | null;
+  let index = 0;
+  while ((invoke = invokeRe.exec(content)) !== null) {
+    const name = invoke[1];
+    if (!name) continue;
+    const body = invoke[2] ?? "";
+    const args: Record<string, unknown> = {};
+    let param: RegExpExecArray | null;
+    while ((param = paramRe.exec(body)) !== null) {
+      const key = param[1];
+      if (!key) continue;
+      args[key] = coerceInlineValue((param[2] ?? "").trim());
+    }
+    calls.push({ id: `inline-${name}-${index++}`, name, arguments: JSON.stringify(args) });
+  }
+  return calls;
+}
+
+/** Best-effort typing of an inline parameter value: JSON when it parses, otherwise the raw string. */
+function coerceInlineValue(raw: string): unknown {
+  if (raw === "") return "";
+  try {
+    const parsed = JSON.parse(raw);
+    // A bare word like `Anthropic` throws; a quoted/number/array/bool/object parses. Keep parsed
+    // non-strings (arrays, numbers, …); for a JSON string literal keep the string.
+    return parsed;
+  } catch {
+    return raw;
+  }
 }
