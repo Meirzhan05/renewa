@@ -23,6 +23,12 @@ import {
 } from "../_shared/email-discovery.ts";
 import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
 import {
+  aggregateRunStatus,
+  classifyScanRun,
+  type RunClassification,
+  scanCompletionTimeoutMs,
+} from "../_shared/scan-status.ts";
+import {
   cursorRecoveryLookbackDays,
   gmailHistoricalQuery,
   initialMailboxLookbackDays,
@@ -820,7 +826,7 @@ async function scanStatus(
   const { data: runs, error: runsError } = await admin
     .from("email_scan_runs")
     .select(
-      "id,provider,status,stage,messages_scanned,candidate_messages,events_detected,validation_failures,error_message",
+      "id,provider,status,stage,started_at,messages_scanned,candidate_messages,events_detected,validation_failures,error_message",
     )
     .eq("user_id", userID)
     .eq("batch_id", batchID);
@@ -834,6 +840,16 @@ async function scanStatus(
     .eq("batch_id", batchID);
   if (jobsError) throw jobsError;
 
+  // Worker queue (drained by the persistent agent worker), NOT the edge's `email_scan_jobs`. This
+  // is the liveness signal for the aggregate status: a claimed ('running') job means a worker is
+  // alive; a 'pending'/absent job past the timeout means nothing is draining the queue.
+  const { data: workerJobs, error: workerJobsError } = await admin
+    .from("scan_jobs")
+    .select("scan_run_id,status,created_at,error")
+    .eq("user_id", userID)
+    .eq("batch_id", batchID);
+  if (workerJobsError) throw workerJobsError;
+
   const { data: candidates, error: candidatesError } = await admin
     .from("subscription_candidates")
     .select(
@@ -844,17 +860,74 @@ async function scanStatus(
     .order("created_at", { ascending: false });
   if (candidatesError) throw candidatesError;
 
-  const statuses = (jobs ?? []).map((job) => job.status);
-  const completed = statuses.filter((status) => status === "completed").length;
-  const failed = statuses.filter((status) => status === "failed").length;
-  const aggregateStatus = failed === statuses.length
-    ? "failed"
-    : completed + failed === statuses.length
-    ? failed > 0 ? "partial" : "completed"
-    : "running";
+  // Derive the app-visible status from the WORKER's real progress on each run (the run lifecycle it
+  // finalizes + the worker queue's liveness), not the edge's `email_scan_jobs` queue -- which is
+  // marked completed the moment the mailbox window is handed off, before the worker reasons at all.
+  const workerTimeoutMessage = "Scan worker did not complete the job in time.";
+  const workerFailedMessage = "Scan worker failed to complete the job.";
+  const timeoutMs = scanCompletionTimeoutMs(
+    Deno.env.get("SCAN_COMPLETION_TIMEOUT_MS"),
+  );
+  // The 5-minute-scale timeout compares enqueue time (a DB timestamp) against the edge clock;
+  // NTP-synced sub-second skew is immaterial at this granularity, so no extra round trip for now().
+  const nowMs = Date.now();
+  const workerJobByRun = new Map(
+    (workerJobs ?? []).map((job) => [job.scan_run_id, job]),
+  );
+  const classificationByRun = new Map<string, RunClassification>();
+  // Runs the DB still reports as active but which are actually terminal-failed -- either the worker
+  // is down (job never claimed, aged out) or the worker failed the job (it marks scan_jobs failed
+  // but leaves email_scan_runs 'running'). Carry the right message per run so a real worker error is
+  // not mislabeled as a timeout, and vice versa.
+  const failureMessageByRun = new Map<string, string>();
+  for (const run of runs) {
+    const workerJob = workerJobByRun.get(run.id);
+    const classification = classifyScanRun(
+      { status: run.status, started_at: run.started_at },
+      workerJob
+        ? { status: workerJob.status, created_at: workerJob.created_at }
+        : undefined,
+      nowMs,
+      timeoutMs,
+    );
+    classificationByRun.set(run.id, classification);
+    if (
+      classification === "failed" &&
+      run.status !== "failed" &&
+      run.status !== "completed"
+    ) {
+      failureMessageByRun.set(
+        run.id,
+        workerJob?.status === "failed" ? workerFailedMessage : workerTimeoutMessage,
+      );
+    }
+  }
+  const aggregateStatus = aggregateRunStatus([...classificationByRun.values()]);
   const pendingCandidates = (candidates ?? []).filter((candidate) =>
     candidate.review_status === "pending"
   );
+
+  // Best-effort write-through (design D4): persist the failure so the run stops reporting 'running'
+  // forever and history/notifications stay consistent. The response returns the failed status
+  // regardless of whether these writes succeed. Runs are per-connection (usually one), so a small
+  // per-run loop is fine and lets each keep its own message.
+  for (const [runID, message] of failureMessageByRun) {
+    const { error: failWriteError } = await admin
+      .from("email_scan_runs")
+      .update({
+        status: "failed",
+        stage: "failed",
+        error_message: message,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", runID);
+    if (failWriteError) {
+      console.error(
+        "Could not persist scan run failure",
+        safeErrorMessage(failWriteError),
+      );
+    }
+  }
 
   return {
     scan_id: batchID,
@@ -869,14 +942,18 @@ async function scanStatus(
     pending_count: pendingCandidates.length,
     runs: runs.map((run) => {
       const job = (jobs ?? []).find((item) => item.scan_run_id === run.id);
+      const classification = classificationByRun.get(run.id) ?? "active";
+      const failureMessage = failureMessageByRun.get(run.id);
       return {
         provider: run.provider,
-        status: job?.status ?? run.status,
-        stage: run.stage,
+        // Match the aggregate: active -> 'running', otherwise the terminal classification. The
+        // edge's `email_scan_jobs` status is no longer used here (it completes at hand-off).
+        status: classification === "active" ? "running" : classification,
+        stage: failureMessage ? "failed" : run.stage,
         scanned: run.messages_scanned,
         candidate_messages: run.candidate_messages,
         detected: run.events_detected,
-        error: job?.error_message ?? run.error_message ?? null,
+        error: failureMessage ?? run.error_message ?? job?.error_message ?? null,
       };
     }),
     candidates: (candidates ?? []).map((candidate) => ({
@@ -895,6 +972,7 @@ async function scanStatus(
     errors: uniqueStrings([
       ...runs.map((run) => run.error_message),
       ...(jobs ?? []).map((job) => job.error_message),
+      ...failureMessageByRun.values(),
     ]),
   };
 }
