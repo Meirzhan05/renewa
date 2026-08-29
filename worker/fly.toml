@@ -1,0 +1,32 @@
+# Fly.io config for the persistent Renewa inbox agent worker.
+#
+# This is a BACKGROUND worker: no inbound HTTP, one always-on machine polling scan_jobs. Because
+# there is no [http_service], Fly never auto-stops the machine -- it runs the poll loop continuously.
+#
+# First-time setup (from the worker/ directory):
+#   fly apps create renewa-worker           # pick your own unique app name and update `app` below
+#   fly secrets set \
+#     DATABASE_URL="postgres://...supabase..." \
+#     DEEPSEEK_API_KEY="sk-..." \
+#     --app renewa-worker
+#   fly deploy --app renewa-worker
+#
+# IMPORTANT: DATABASE_URL must point at the SAME Postgres as the Supabase app, so the worker reads
+# subscriptions/priors/suppressions and the edge-enqueued scan_jobs, and writes subscription_candidates.
+# Apply migrations 0001_worker_queue.sql and 0002_scan_job_run_link.sql to that database first.
+
+app = "renewa-worker"          # <- change to your Fly app name
+primary_region = "iad"         # <- change to the region nearest your database
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  AGENT_MODE = "autonomous"
+  WORKER_POLL_INTERVAL_MS = "3000"
+
+# One shared-cpu machine is plenty for a poll loop. Scale with `fly scale count 1`.
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
