@@ -2,6 +2,7 @@
 // Run state is durable in the PostgresSaver checkpointer, so a long scan survives restarts and
 // resumes exactly where it paused — the capability the ephemeral edge function could not provide.
 
+import { pathToFileURL } from "node:url";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { Pool } from "pg";
 import { loadConfig } from "./config.ts";
@@ -166,8 +167,10 @@ async function main(): Promise<void> {
   console.log("[worker] stopped");
 }
 
-// Only run the service when executed directly (not when imported by tests).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Only run the service when executed directly (not when imported by tests). `pathToFileURL`
+// percent-encodes the path (e.g. spaces → %20) to match `import.meta.url`; a raw `file://${argv}`
+// template silently fails to match whenever the path contains a space, so the service never starts.
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   main().catch((error) => {
     console.error("[worker] fatal", error);
     process.exit(1);
