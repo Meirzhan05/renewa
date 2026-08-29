@@ -94,6 +94,10 @@ type CandidateEdits = {
 
 const maximumMessagesPerHistoricalPage = 100;
 const maximumIncrementalMessages = 500;
+// Cap the historical backfill so a large mailbox pages back far enough to reach older monthly
+// billing receipts, without walking unboundedly. 30 pages x 100 = up to 3000 messages per initial
+// scan (subsequent scans are incremental).
+const maximumHistoricalPages = 30;
 const extractionSchemaVersion = "billing-event-v1";
 
 Deno.serve(async (request) => {
@@ -659,8 +663,25 @@ async function processConnectionJob(
     last_error: null,
   }).eq("id", connection.id);
 
-  // The run stays 'running' until the worker completes it via the candidate bridge. The edge's job
-  // is done once the window is enqueued and the sync cursor advanced.
+  // The run stays 'running' until the worker completes it via the candidate bridge. Page forward
+  // while the provider reports more pages, so the backfill walks past recent mail to older billing
+  // receipts (each page becomes its own worker scan job). The last page (no continuation) ends the
+  // walk; the page cap bounds a very large mailbox. Returning true re-arms the drain via
+  // queueWorkerContinuation.
+  if (providerBatch.continuation !== null && pageNumber < maximumHistoricalPages) {
+    const { error: nextPageError } = await admin.from("email_scan_jobs").insert({
+      user_id: userID,
+      batch_id: await scanRunBatchID(admin, runID),
+      scan_run_id: runID,
+      connection_id: connection.id,
+      page_number: pageNumber + 1,
+      provider_continuation: providerBatch.continuation,
+      status: "queued",
+      error_message: null,
+    });
+    if (nextPageError) throw nextPageError;
+    return true;
+  }
   return false;
 }
 
