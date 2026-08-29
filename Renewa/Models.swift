@@ -196,6 +196,7 @@ enum EmailScanStage: String, Codable {
     case fetching
     case filtering
     case extracting
+    case reasoning
     case reviewReady = "review_ready"
     case completed
     case failed
