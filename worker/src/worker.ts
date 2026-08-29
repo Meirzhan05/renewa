@@ -135,7 +135,10 @@ async function main(): Promise<void> {
     // suppressed merchant. Proposals land in scan_outcomes (kind='present'); bridging them into the
     // app's subscription_candidates review queue is the next integration step.
     const scanJob = async (job: ScanJob): Promise<ProposalCandidate[]> => {
-      const { proposals } = await runTwoTierScan(job.rawMessages, {
+      console.log(
+        `[worker] claim ${job.id} · ${job.provider} · ${job.rawMessages.length} msgs · run=${job.scanRunId ?? "none"}`,
+      );
+      const { proposals, triage } = await runTwoTierScan(job.rawMessages, {
         chat,
         triageChat: classifierChat,
         reconcile: createPgReconcileReaders(pool, job.userId),
@@ -145,16 +148,24 @@ async function main(): Promise<void> {
         provider: job.provider,
         accessToken: job.accessToken,
       });
+      // Per-job visibility: triage narrowing, whether the model degraded, and what got proposed.
+      console.log(
+        `[worker] ${job.id}: triage ${triage.lookCount} look / ${triage.skipCount} skip` +
+          `${triage.degraded ? " (DEGRADED — triage model calls failed)" : ""} -> ` +
+          `${proposals.length} proposal(s)` +
+          `${proposals.length ? ": " + proposals.map((p) => p.merchant_name).join(", ") : ""}`,
+      );
       // Bridge proposals into the app's review queue and complete the app-side run, so the iOS app
       // sees candidates through its existing endpoint. Standalone jobs (no app run) skip the bridge.
       if (job.scanRunId) {
-        await bridgeProposalsToCandidates(pool, {
+        const written = await bridgeProposalsToCandidates(pool, {
           userId: job.userId,
           scanRunId: job.scanRunId,
           provider: job.provider,
           messagesScanned: job.rawMessages.length,
           proposals,
         });
+        console.log(`[worker] ${job.id}: bridged ${written} candidate(s) into the review queue`);
       }
       return proposals;
     };
