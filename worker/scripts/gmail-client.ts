@@ -10,6 +10,12 @@ import { fileURLToPath } from "node:url";
 import { google } from "googleapis";
 import type { Credentials, OAuth2Client } from "google-auth-library";
 import { senderDomain, type MailMetadata } from "../src/domain/email.ts";
+import {
+  decodeEntities,
+  extractGmailBody,
+  sanitizeBody,
+  type MessagePart,
+} from "../src/domain/gmail-body.ts";
 import type { AgentReadExecutor, AgentReadResult } from "../src/agent/agent-graph.ts";
 import type { ToolMatch } from "../src/agent/types.ts";
 
@@ -133,16 +139,6 @@ export async function authorize(env: GmailEnv): Promise<OAuth2Client> {
   return oauth2;
 }
 
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ");
-}
-
 async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let next = 0;
@@ -207,47 +203,6 @@ const MATCH_CAP = 12;
 
 function toMatch(m: MailMetadata): ToolMatch {
   return { message_id: m.id, subject: m.subject, sender: m.sender, snippet: m.snippet, received_at: m.received_at };
-}
-
-type MessagePart = { mimeType?: string | null; body?: { data?: string | null } | null; parts?: MessagePart[] | null };
-
-function decodeB64Url(data: string): string {
-  return Buffer.from(data, "base64url").toString("utf8");
-}
-function stripHtml(html: string): string {
-  return decodeEntities(html.replace(/<(style|script)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " "));
-}
-/** Walk the MIME tree for the first part of `mime` that carries data. */
-function partData(payload: MessagePart | undefined, mime: string): string | null {
-  const stack: MessagePart[] = payload ? [payload] : [];
-  while (stack.length) {
-    const p = stack.pop()!;
-    if (p.mimeType === mime && p.body?.data) return p.body.data;
-    if (p.parts) stack.push(...p.parts);
-  }
-  return null;
-}
-/** Prefer text/plain; fall back to stripped text/html; else a single-part text body. */
-function extractGmailBody(payload: MessagePart | undefined): string {
-  const plain = partData(payload, "text/plain");
-  if (plain) return decodeB64Url(plain);
-  const html = partData(payload, "text/html");
-  if (html) return stripHtml(decodeB64Url(html));
-  if (payload?.body?.data && payload.mimeType?.startsWith("text/")) {
-    const text = decodeB64Url(payload.body.data);
-    return payload.mimeType === "text/html" ? stripHtml(text) : text;
-  }
-  return "";
-}
-/** Sanitize + bound the body: untrusted content, so collapse whitespace, drop giant tokens, truncate. */
-function sanitizeBody(text: string): string {
-  return text
-    .replace(/\r/g, "")
-    .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/\S{200,}/g, "[…]") // strip base64/tracking blobs
-    .trim()
-    .slice(0, 6000);
 }
 
 /**

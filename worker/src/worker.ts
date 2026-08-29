@@ -140,6 +140,9 @@ async function main(): Promise<void> {
         reconcile: createPgReconcileReaders(pool, job.userId),
         checkpointer,
         threadId: job.id,
+        // Let the agent read full message bodies on demand (Gmail) with the connection's token.
+        provider: job.provider,
+        accessToken: job.accessToken,
       });
       // Bridge proposals into the app's review queue and complete the app-side run, so the iOS app
       // sees candidates through its existing endpoint. Standalone jobs (no app run) skip the bridge.
