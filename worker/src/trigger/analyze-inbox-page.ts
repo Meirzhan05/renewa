@@ -13,6 +13,9 @@ export const analyzeInboxPageTask = task({
   // With a per-run concurrency key (see scan-inbox-run), this limit applies per run, so it is the
   // per-user analysis budget; global load stays bounded by the environment/provider ceilings.
   queue: { name: "inbox-agent-pages", concurrencyLimit: perUserAnalysisConcurrency() },
+  // A page is ~100 messages; 10 min is a generous ceiling. Combined with the per-model-call timeout,
+  // a hung page is killed and retried within minutes instead of stalling for the default hour.
+  maxDuration: 600,
   run: async (payload: AnalyzeInboxPagePayload, { ctx }) => {
     if (!isAnalyzeInboxPagePayload(payload)) throw new Error("Invalid managed Inbox page payload");
     const context = await claimManagedPageContext(payload, ctx.run.id);

@@ -81,9 +81,17 @@ export function resolveClassifierConfig(env: EnvLookup = nodeEnv): LlmConfig | n
   }
 }
 
+/** Per-request LLM timeout so a hung model call fails fast (and is retried) instead of stalling a
+ * page task until its maxDuration. Configurable; defaults to 90s. */
+export function llmRequestTimeoutMs(env: EnvLookup = nodeEnv): number {
+  const raw = Number(env("LLM_REQUEST_TIMEOUT_MS"));
+  return Number.isFinite(raw) && raw > 0 ? raw : 90_000;
+}
+
 /** Build a real network-backed ChatFn for a resolved config. */
 export function makeChatFn(config: LlmConfig): ChatFn {
   const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const timeoutMs = llmRequestTimeoutMs();
   return async (messages, options = {}) => {
     const body: Record<string, unknown> = {
       model: config.model,
@@ -99,15 +107,29 @@ export function makeChatFn(config: LlmConfig): ChatFn {
       }));
       body.tool_choice = options.toolChoice ?? "auto";
     }
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: options.signal,
-    });
+    // Bound the call with a timeout, combined with any caller-provided abort signal.
+    const timeoutSignal = AbortSignal.timeout(timeoutMs);
+    const signal = options.signal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : timeoutSignal;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (error) {
+      // A timeout aborts with a TimeoutError; surface it clearly (a caller abort keeps its own error).
+      if (error instanceof Error && error.name === "TimeoutError") {
+        throw new Error(`LLM request timed out after ${timeoutMs}ms`);
+      }
+      throw error;
+    }
     const payload = await response.json();
     if (!response.ok) {
       const message = (payload as { error?: { message?: string } })?.error?.message;
