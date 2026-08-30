@@ -1,9 +1,9 @@
 import { defineConfig } from "@trigger.dev/sdk";
 
-const project = process.env.TRIGGER_PROJECT_REF;
-if (!project) {
-  throw new Error("TRIGGER_PROJECT_REF is required to run or deploy managed Inbox tasks.");
-}
+// The project ref is not a secret (it appears in the dashboard URL). `deploy` re-evaluates this config
+// inside a build container where shell/.env vars are NOT present, so an env-only value fails at the
+// indexing step. Default to the literal and let an env var override it for other environments.
+const project = process.env.TRIGGER_PROJECT_REF ?? "proj_thnhxhlhichpevzngyyf";
 
 export default defineConfig({
   project,
