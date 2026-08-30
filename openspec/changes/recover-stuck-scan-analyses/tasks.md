@@ -21,13 +21,13 @@
 - [x] 3.2a Migration schedules `recover_expired_inbox_agent_executions()` every minute via pg_cron
       (idempotent: unschedule-then-schedule by job name).
 - [x] 3.2b (n/a — pg_cron available, so no edge `reap` action.)
-- [ ] 3.3 After applying to the live DB, confirm the `reap-inbox-agent-executions` cron job is present
-      and firing.
+- [x] 3.3 Applied to the live DB: the `reap-inbox-agent-executions` cron job is present and active
+      (`* * * * *`).
 
 ## 4. Verification and release
 
 - [x] 4.1 Worker typecheck + tests green (101); migration compiles against the live schema.
 - [ ] 4.2 End-to-end: simulate a stuck page (kill / force a lease expiry) and confirm the run reaches a
       terminal state within a couple of minutes with the other pages' candidates intact.
-- [ ] 4.3 Deploy: apply the migration to the live DB + redeploy the trigger.dev worker (timeout +
-      maxDuration).
+- [x] 4.3 Deployed: migration applied to the live DB (reaper + cron) and trigger.dev worker redeployed
+      (v20260830.4) with the timeout + maxDuration.
