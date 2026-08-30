@@ -145,6 +145,12 @@ Deno.test("aggregate: all failed is failed, not partial", () => {
   assertEquals(aggregateRunStatus(["failed", "failed"]), "failed");
 });
 
+Deno.test("cancelled run is terminal and stops client polling", () => {
+  const c = classifyScanRun({ status: "cancelled", started_at: isoAgo(1_000) }, undefined, NOW, TIMEOUT);
+  assertEquals(c, "cancelled");
+  assertEquals(aggregateRunStatus([c]), "cancelled");
+});
+
 Deno.test("aggregate: empty set is completed (nothing to wait on)", () => {
   assertEquals(aggregateRunStatus([]), "completed");
 });

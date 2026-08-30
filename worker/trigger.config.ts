@@ -8,6 +8,7 @@ if (!project) {
 export default defineConfig({
   project,
   dirs: ["./src/trigger"],
+  maxDuration: 3_600,
   retries: {
     enabledInDev: false,
     default: {

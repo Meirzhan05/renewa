@@ -182,6 +182,15 @@ struct SupabaseClient {
         )
     }
 
+    func cancelEmailScan(scanID: UUID, accessToken: String) async throws -> EmailScanStatus {
+        try await request(
+            path: "/functions/v1/email-scan",
+            method: "POST",
+            body: EmailScanRequest(action: "cancel", days: nil, scanID: scanID),
+            accessToken: accessToken
+        )
+    }
+
     func reviewEmailCandidate(
         id: UUID,
         decision: EmailCandidateDecision,

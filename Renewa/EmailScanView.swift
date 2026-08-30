@@ -349,6 +349,13 @@ struct EmailScanView: View {
                     .tracking(0.4)
                     .foregroundStyle(RenewaTheme.sage)
                     .contentTransition(.numericText())
+                Button("Stop") {
+                    Task { _ = await store.cancelEmailScan() }
+                }
+                .font(.renewa(9.5, weight: .bold))
+                .foregroundStyle(RenewaTheme.muted)
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop inbox scan")
             }
             .padding(.horizontal, 13)
         }

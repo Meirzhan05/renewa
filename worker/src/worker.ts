@@ -9,9 +9,8 @@ import { loadConfig } from "./config.ts";
 import { PgJobStore, type JobStore, type ScanJob } from "./db.ts";
 import { createScanExecutor } from "./executor.ts";
 import { buildGraph, type RouteOutcome } from "./graph/graph.ts";
-import { isAutonomousModeEnabled, runTwoTierScan } from "./agent/pipeline.ts";
-import { createPgReconcileReaders } from "./agent/reconcile-db.ts";
-import { bridgeProposalsToCandidates } from "./agent/candidate-bridge.ts";
+import { isAutonomousModeEnabled } from "./agent/pipeline.ts";
+import { analyzeInboxPage, bridgeInboxProposals } from "./managed/page-analysis.ts";
 import type { ProposalCandidate } from "./agent/types.ts";
 import {
   makeChatFn,
@@ -138,35 +137,14 @@ async function main(): Promise<void> {
       console.log(
         `[worker] claim ${job.id} · ${job.provider} · ${job.rawMessages.length} msgs · run=${job.scanRunId ?? "none"}`,
       );
-      const { proposals, triage } = await runTwoTierScan(job.rawMessages, {
-        chat,
-        triageChat: classifierChat,
-        reconcile: createPgReconcileReaders(pool, job.userId),
-        checkpointer,
-        threadId: job.id,
-        // Let the agent read full message bodies on demand (Gmail) with the connection's token.
-        provider: job.provider,
-        accessToken: job.accessToken,
-      });
-      // Per-job visibility: triage narrowing, whether the model degraded, and what got proposed.
+      const proposals = await analyzeInboxPage(pool, checkpointer, job);
+      await bridgeInboxProposals(pool, job, proposals);
+      // Per-job visibility without including message content or credentials in logs.
       console.log(
-        `[worker] ${job.id}: triage ${triage.lookCount} look / ${triage.skipCount} skip` +
-          `${triage.degraded ? " (DEGRADED — triage model calls failed)" : ""} -> ` +
-          `${proposals.length} proposal(s)` +
+        `[worker] ${job.id}: ${proposals.length} proposal(s)` +
           `${proposals.length ? ": " + proposals.map((p) => p.merchant_name).join(", ") : ""}`,
       );
-      // Bridge proposals into the app's review queue and complete the app-side run, so the iOS app
-      // sees candidates through its existing endpoint. Standalone jobs (no app run) skip the bridge.
-      if (job.scanRunId) {
-        const written = await bridgeProposalsToCandidates(pool, {
-          userId: job.userId,
-          scanRunId: job.scanRunId,
-          provider: job.provider,
-          messagesScanned: job.rawMessages.length,
-          proposals,
-        });
-        console.log(`[worker] ${job.id}: bridged ${written} candidate(s) into the review queue`);
-      }
+      console.log(`[worker] ${job.id}: analysis complete`);
       return proposals;
     };
     await runAutonomousLoop({ store, scanJob, pollIntervalMs: config.pollIntervalMs, isRunning: () => running });

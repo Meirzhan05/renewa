@@ -7,6 +7,15 @@ import {
 import { decryptJSON, encryptJSON, sha256 } from "../_shared/crypto.ts";
 import { Provider, refreshTokens, StoredTokens } from "../_shared/oauth.ts";
 import {
+  managedInboxEnabled,
+  managedPageIdempotencyKey,
+  managedPagePayload,
+  managedPageQueue,
+  managedRunIdempotencyKey,
+  managedRunPayload,
+  triggerManagedInboxTask,
+} from "../_shared/managed-inbox-runtime.ts";
+import {
   BillingCycle,
   BillingEvent,
   brandIDForMerchant,
@@ -115,6 +124,16 @@ Deno.serve(async (request) => {
     >;
     const action = typeof body.action === "string" ? body.action : "start";
 
+    if (["managed_page_context", "managed_process_connection"].includes(action)) {
+      if (request.headers.get("x-renewa-managed-agent-secret") !== mustEnv("MANAGED_AGENT_SHARED_SECRET")) {
+        return json({ message: "Invalid managed agent secret" }, 401);
+      }
+      if (action === "managed_page_context") {
+        return json(await managedPageContext(admin, body));
+      }
+      return json(await processManagedConnection(admin, body));
+    }
+
     if (
       ["automatic", "continue", "reconcile", "renew_monitoring"].includes(
         action,
@@ -154,6 +173,8 @@ Deno.serve(async (request) => {
         scheduleUserJobs(admin, user.id, scanID);
         return json(await scanStatus(admin, user.id, scanID));
       }
+      case "cancel":
+        return json(await cancelScan(admin, user.id, requiredString(body.scan_id, "scan_id")));
       case "review":
         return json(await reviewCandidate(admin, user.id, body));
       case "suppress":
@@ -308,6 +329,26 @@ async function startScan(
   };
 }
 
+async function cancelScan(
+  admin: AdminClient,
+  userID: string,
+  batchID: string,
+): Promise<Record<string, unknown>> {
+  const { data: runs, error } = await admin.from("email_scan_runs")
+    .select("id").eq("user_id", userID).eq("batch_id", batchID);
+  if (error) throw error;
+  if (!runs?.length) throw new Error("Invalid scan_id");
+  for (const run of runs) {
+    const { error: cancelError } = await admin.rpc("cancel_email_scan_run", {
+      p_user_id: userID,
+      p_run_id: run.id,
+    });
+    if (cancelError) throw cancelError;
+    await finalizeScanRunIfDrained(admin, run.id);
+  }
+  return scanStatus(admin, userID, batchID);
+}
+
 async function runAutomaticScans(
   admin: AdminClient,
   renewMonitoring = false,
@@ -436,7 +477,9 @@ function scheduleUserJobs(
   userID: string,
   batchID: string | null,
 ): void {
-  const work = processUserJobs(admin, userID, batchID).catch((error) => {
+  const work = (managedInboxEnabled()
+    ? processManagedUserJobs(admin, userID, batchID)
+    : processUserJobs(admin, userID, batchID)).catch((error) => {
     console.error("email discovery worker failed", safeErrorMessage(error));
   });
   const runtime = (globalThis as unknown as {
@@ -446,6 +489,118 @@ function scheduleUserJobs(
     runtime.waitUntil(work);
   } else {
     void work;
+  }
+}
+
+async function processManagedUserJobs(
+  admin: AdminClient,
+  userID: string,
+  batchID: string | null,
+): Promise<void> {
+  let query = admin.from("email_scan_jobs")
+    .select("scan_run_id,connection_id")
+    .eq("user_id", userID)
+    .eq("status", "queued")
+    .order("created_at", { ascending: true })
+    .limit(10);
+  if (batchID) query = query.eq("batch_id", batchID);
+  const { data: jobs, error } = await query;
+  if (error) throw error;
+  for (const job of jobs ?? []) {
+    await triggerManagedInboxTask(
+      "scan-inbox-run",
+      managedRunPayload(String(job.scan_run_id), String(job.connection_id)),
+      {
+        idempotencyKey: managedRunIdempotencyKey(String(job.scan_run_id), String(job.connection_id)),
+        concurrencyKey: `inbox-run:${job.connection_id}`,
+        queueName: "inbox-agent-runs",
+        queueConcurrency: 20,
+      },
+    );
+  }
+}
+
+async function managedPageContext(
+  admin: AdminClient,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const runID = requiredString(body.scan_run_id, "scan_run_id");
+  const jobID = requiredString(body.scan_job_id, "scan_job_id");
+  const runtimeTaskID = requiredString(body.runtime_task_id, "runtime_task_id");
+  const { data: job, error: jobError } = await admin.from("scan_jobs")
+    .select("id,user_id,provider,scan_run_id,connection_id")
+    .eq("id", jobID).eq("scan_run_id", runID).maybeSingle();
+  if (jobError) throw jobError;
+  if (!job) throw new Error("Managed scan page not found");
+  const { data: execution, error: executionError } = await admin.from("inbox_agent_executions")
+    .select("id")
+    .eq("scan_job_id", jobID).eq("scan_run_id", runID).maybeSingle();
+  if (executionError) throw executionError;
+  if (!execution) throw new Error("Managed scan execution not found");
+  const { data: claimed, error: claimError } = await admin.rpc("claim_inbox_agent_execution", {
+    p_execution_id: execution.id,
+    p_runtime_task_id: runtimeTaskID,
+  });
+  if (claimError) throw claimError;
+  if (claimed !== true) return { cancelled: true };
+
+  const { data: connection, error: connectionError } = await admin.from("email_connections")
+    .select("id,provider,encrypted_tokens")
+    .eq("id", job.connection_id).eq("user_id", job.user_id).maybeSingle();
+  if (connectionError) throw connectionError;
+  if (!connection) throw new Error("Connection was removed.");
+  let tokens = await decryptJSON<StoredTokens>(connection.encrypted_tokens);
+  const refreshed = await refreshTokens(connection.provider as Provider, tokens);
+  if (refreshed.access_token !== tokens.access_token) {
+    tokens = refreshed;
+    const { error } = await admin.from("email_connections").update({
+      encrypted_tokens: await encryptJSON(tokens),
+      token_expires_at: new Date(tokens.expires_at * 1_000).toISOString(),
+    }).eq("id", connection.id);
+    if (error) throw error;
+  }
+  return { execution_id: execution.id, access_token: tokens.access_token };
+}
+
+async function processManagedConnection(
+  admin: AdminClient,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const runID = requiredString(body.scan_run_id, "scan_run_id");
+  const connectionID = requiredString(body.connection_id, "connection_id");
+  const { data: run, error: runError } = await admin.from("email_scan_runs")
+    .select("id,user_id,cancel_requested_at")
+    .eq("id", runID).maybeSingle();
+  if (runError) throw runError;
+  if (!run) throw new Error("Managed scan run not found");
+  if (run.cancel_requested_at) return { cancelled: true, has_next_page: false };
+  const { data: job, error: jobError } = await admin.from("email_scan_jobs")
+    .select("id,attempts,page_number,provider_continuation,batch_id")
+    .eq("scan_run_id", runID).eq("connection_id", connectionID).eq("status", "queued")
+    .order("created_at", { ascending: true }).limit(1).maybeSingle();
+  if (jobError) throw jobError;
+  if (!job) return { has_next_page: false };
+  const { data: claimed, error: claimError } = await admin.from("email_scan_jobs")
+    .update({ status: "running", attempts: job.attempts + 1, started_at: new Date().toISOString(), error_message: null })
+    .eq("id", job.id).eq("status", "queued").select("id").maybeSingle();
+  if (claimError) throw claimError;
+  if (!claimed) return { has_next_page: true };
+  try {
+    const hasNextPage = await processConnectionJob(
+      admin, run.user_id, runID, connectionID, job.page_number, job.provider_continuation,
+    );
+    await admin.from("email_scan_jobs").update({ status: "completed", completed_at: new Date().toISOString() })
+      .eq("id", job.id);
+    await finalizeScanRunIfDrained(admin, runID);
+    await publishBatchNotificationState(admin, run.user_id, job.batch_id);
+    return { has_next_page: hasNextPage };
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    await admin.from("email_scan_jobs").update({
+      status: "failed", error_message: message, completed_at: new Date().toISOString(),
+    }).eq("id", job.id);
+    await finalizeScanRunIfDrained(admin, runID);
+    throw error;
   }
 }
 
@@ -647,17 +802,29 @@ async function processConnectionJob(
   // against the user's tracked subscriptions / priors / suppressions, and writes candidates back
   // into this run's review queue before marking the run completed. The LLM alone decides what
   // surfaces -- there is no keyword prefilter or routing ladder here anymore.
-  const { error: enqueueError } = await admin.from("scan_jobs").insert({
+  const { data: queuedScanJob, error: enqueueError } = await admin.from("scan_jobs").insert({
     user_id: userID,
     provider,
-    // Persist the connection's access token so the worker can read full message bodies on demand
-    // (Gmail format=full) instead of judging a subscription from the snippet alone.
-    access_token: tokens.access_token,
+    // The managed path obtains this token JIT in its task. The legacy local worker keeps the
+    // existing behavior behind the feature gate until it is retired after rollout.
+    access_token: managedInboxEnabled() ? null : tokens.access_token,
     raw_messages: providerBatch.metadata,
     scan_run_id: runID,
     batch_id: await scanRunBatchID(admin, runID),
-  });
+    connection_id: connection.id,
+  }).select("id").single();
   if (enqueueError) throw enqueueError;
+  if (!queuedScanJob) throw new Error("Could not queue managed scan page");
+  if (managedInboxEnabled()) {
+    await enqueueManagedPageAnalysis(
+      admin,
+      userID,
+      runID,
+      String(queuedScanJob.id),
+      connection.id,
+      provider,
+    );
+  }
 
   const now = new Date().toISOString();
   const { error: saveSyncError } = await admin.from("mail_sync_states").upsert({
@@ -695,6 +862,50 @@ async function processConnectionJob(
     return true;
   }
   return false;
+}
+
+async function enqueueManagedPageAnalysis(
+  admin: AdminClient,
+  userID: string,
+  runID: string,
+  pageID: string,
+  connectionID: string,
+  provider: Provider,
+): Promise<void> {
+  const idempotencyKey = managedPageIdempotencyKey(runID, pageID);
+  // Persist the admission record before triggering so an immediately-started task has a durable
+  // claim target. A second call with the same key updates the runtime idempotently.
+  const { error: admissionError } = await admin.rpc("admit_inbox_agent_execution", {
+    p_user_id: userID,
+    p_scan_run_id: runID,
+    p_scan_job_id: pageID,
+    p_connection_id: connectionID,
+    p_task_kind: "page_analysis",
+    p_idempotency_key: idempotencyKey,
+    p_runtime_task_id: null,
+  });
+  if (admissionError) throw admissionError;
+  const queue = managedPageQueue(provider);
+  const runtimeID = await triggerManagedInboxTask(
+    "analyze-inbox-page",
+    managedPagePayload(runID, pageID),
+    {
+      idempotencyKey,
+      concurrencyKey: `inbox-page:${provider}:${userID}`,
+      queueName: queue.name,
+      queueConcurrency: queue.concurrency,
+    },
+  );
+  const { error: updateError } = await admin.rpc("admit_inbox_agent_execution", {
+    p_user_id: userID,
+    p_scan_run_id: runID,
+    p_scan_job_id: pageID,
+    p_connection_id: connectionID,
+    p_task_kind: "page_analysis",
+    p_idempotency_key: idempotencyKey,
+    p_runtime_task_id: runtimeID,
+  });
+  if (updateError) throw updateError;
 }
 
 // --- Merchant lifecycle + candidate resolution -----------------------------------------------

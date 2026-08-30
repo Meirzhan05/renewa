@@ -460,6 +460,27 @@ final class AppStore {
         }
     }
 
+    func cancelEmailScan() async -> Bool {
+        guard let scanID = emailScanStatus?.scanID, session != nil else { return false }
+        do {
+            let status = try await performAuthenticated { accessToken in
+                try await self.client.cancelEmailScan(scanID: scanID, accessToken: accessToken)
+            }
+            withAnimation(RenewaMotion.quick) {
+                emailScanStatus = status
+            }
+            if status.isActive {
+                beginEmailScanPolling(id: scanID)
+            } else {
+                await finishInboxScanLiveActivity(with: status)
+            }
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
     func reviewEmailCandidate(
         _ candidate: EmailSubscriptionCandidate,
         decision: EmailCandidateDecision,

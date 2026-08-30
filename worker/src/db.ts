@@ -24,12 +24,15 @@ export type ScanJob = {
 export interface JobStore {
   /** Claim the next pending scan (atomic: marks it 'running'), or null if the queue is empty. */
   claimNextPendingJob(): Promise<ScanJob | null>;
+  /** Claim one known page if it is still pending. Used by managed task executions. */
+  claimPendingJob(jobId: string, accessToken?: string): Promise<ScanJob | null>;
   /** Persist the outcomes of a finished run and mark it completed. */
   finishJob(jobId: string, results: RouteOutcome[]): Promise<void>;
   /** Persist an autonomous run's proposals (as scan_outcomes present rows) and mark it completed. */
   finishAutonomousJob(jobId: string, proposals: ProposalCandidate[]): Promise<void>;
   /** Record a run that failed so it is not retried forever. */
   failJob(jobId: string, error: string): Promise<void>;
+  isRunCancellationRequested(scanRunId: string | null): Promise<boolean>;
 }
 
 // --- Postgres implementation ---------------------------------------------------------------
@@ -62,6 +65,22 @@ export class PgJobStore implements JobStore {
     const row = rows[0];
     if (!row) return null;
     return this.toScanJob(row);
+  }
+
+  async claimPendingJob(jobId: string, accessToken?: string): Promise<ScanJob | null> {
+    const { rows } = await this.pool.query(
+      `update scan_jobs
+         set status = 'running', started_at = now()
+       where id = $1 and status = 'pending'
+       returning id, user_id, provider, access_token, raw_messages, scan_run_id, batch_id`,
+      [jobId],
+    );
+    const row = rows[0];
+    const job = row ? this.toScanJob(row) : null;
+    // A managed task receives this short-lived credential from the Edge Function at execution
+    // time. It is intentionally never written back to scan_jobs or the execution ledger.
+    if (job && accessToken) job.accessToken = accessToken;
+    return job;
   }
 
   private toScanJob(row: Record<string, unknown>): ScanJob {
@@ -159,6 +178,15 @@ export class PgJobStore implements JobStore {
     } finally {
       client.release();
     }
+  }
+
+  async isRunCancellationRequested(scanRunId: string | null): Promise<boolean> {
+    if (!scanRunId) return false;
+    const { rows } = await this.pool.query(
+      "select cancel_requested_at is not null as cancelled from email_scan_runs where id = $1",
+      [scanRunId],
+    );
+    return rows[0]?.cancelled === true;
   }
 
   private async finalizeLinkedRun(client: PoolClient, scanRunID: unknown): Promise<void> {

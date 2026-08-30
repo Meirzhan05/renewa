@@ -138,6 +138,7 @@ struct EmailDiscoveryPresentationState: Equatable {
     }
 
     var headline: String {
+        if status == .cancelled { return "Inbox scan stopped" }
         switch dashboardState {
         case .noInbox: "Connect an inbox"
         case .scanning: stageTitle
@@ -155,6 +156,11 @@ struct EmailDiscoveryPresentationState: Equatable {
     }
 
     var progressText: String {
+        if status == .cancelled {
+            return pendingCount > 0
+                ? "Anything already found is still ready for your review."
+                : "You can start another scan whenever you’re ready."
+        }
         switch dashboardState {
         case .noInbox:
             return "Read-only access. Disconnect it whenever you want."

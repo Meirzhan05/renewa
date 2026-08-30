@@ -9,7 +9,7 @@
 // job means a worker is alive; a `pending` (unclaimed) or missing job past a timeout means no
 // worker is draining the queue, so the scan must fail rather than look emptily "completed".
 
-export type RunClassification = "active" | "completed" | "failed";
+export type RunClassification = "active" | "completed" | "failed" | "cancelled";
 
 export type ScanRunState = {
   /** `email_scan_runs.status` (worker-finalized: `completed`; edge on fetch error: `failed`). */
@@ -58,6 +58,7 @@ export function classifyScanRun(
   const runStatus = run.status ?? "";
   if (runStatus === "completed") return "completed";
   if (runStatus === "failed") return "failed";
+  if (runStatus === "cancelled") return "cancelled";
 
   const jobStatus = workerJob?.status ?? null;
   if (jobStatus === "completed") return "completed";
@@ -86,6 +87,7 @@ export function classifyPaginatedScanRun(
   if (edgeJobs.some((job) => job.status === "queued" || job.status === "running")) {
     return "active";
   }
+  if (run.status === "cancelled") return "cancelled";
 
   const workerClassifications = workerJobs.map((job) =>
     classifyScanRun({ status: "running", started_at: run.started_at }, job, nowMs, timeoutMs)
@@ -118,7 +120,9 @@ export function aggregateRunStatus(classifications: RunClassification[]): string
   if (classifications.length === 0) return "completed";
   const failed = classifications.filter((c) => c === "failed").length;
   const active = classifications.filter((c) => c === "active").length;
+  const cancelled = classifications.filter((c) => c === "cancelled").length;
   if (failed === classifications.length) return "failed";
+  if (cancelled === classifications.length) return "cancelled";
   if (active === 0) return failed > 0 ? "partial" : "completed";
   return "running";
 }

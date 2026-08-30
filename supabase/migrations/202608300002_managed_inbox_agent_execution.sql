@@ -55,6 +55,21 @@ create index if not exists inbox_agent_executions_user_idx
 create index if not exists inbox_agent_executions_run_idx
   on public.inbox_agent_executions (scan_run_id, state, created_at);
 
+-- Operator-only aggregate signals. This intentionally omits runtime task IDs, user identifiers,
+-- payloads, and raw queue depth from the client-facing API.
+create or replace view public.inbox_agent_capacity_metrics
+with (security_invoker = true)
+as select
+  task_kind,
+  state,
+  count(*)::integer as execution_count,
+  coalesce(round(avg(extract(epoch from coalesce(leased_at, now()) - created_at))::numeric, 1), 0) as average_queue_seconds
+from public.inbox_agent_executions
+where created_at >= now() - interval '24 hours'
+group by task_kind, state;
+revoke all on public.inbox_agent_capacity_metrics from public, anon, authenticated;
+grant select on public.inbox_agent_capacity_metrics to service_role;
+
 drop trigger if exists inbox_agent_executions_set_updated_at on public.inbox_agent_executions;
 create trigger inbox_agent_executions_set_updated_at before update on public.inbox_agent_executions
 for each row execute function public.set_updated_at();
@@ -208,6 +223,14 @@ begin
   update public.inbox_agent_executions
   set state = 'cancelled', completed_at = now(), lease_expires_at = null
   where scan_run_id = p_run_id and state in ('queued', 'leased', 'retryable');
+  -- Do not leave an unclaimed legacy page queued after cancellation. A currently running page is
+  -- allowed to finish its atomic write; the finalizer gives cancellation precedence afterward.
+  update public.email_scan_jobs
+  set status = 'failed', error_message = 'Scan cancelled by user.', completed_at = now()
+  where scan_run_id = p_run_id and status = 'queued';
+  update public.scan_jobs
+  set status = 'failed', error = 'Scan cancelled by user.', finished_at = now()
+  where scan_run_id = p_run_id and status = 'pending';
   return true;
 end;
 $$;

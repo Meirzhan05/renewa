@@ -1,0 +1,70 @@
+import { isAnalyzeInboxPagePayload, type AnalyzeInboxPagePayload } from "./contracts.ts";
+import { isScanInboxRunPayload, type ScanInboxRunPayload } from "./contracts.ts";
+
+type ManagedPageContext = {
+  cancelled?: unknown;
+  execution_id?: unknown;
+  access_token?: unknown;
+};
+
+export type ClaimedManagedPage =
+  | { cancelled: true }
+  | { cancelled: false; executionId: string; accessToken: string };
+
+/** Fetches the short-lived mail credential only while the task is executing. */
+export async function claimManagedPageContext(
+  payload: AnalyzeInboxPagePayload,
+  runtimeTaskID: string,
+  fetcher: typeof fetch = fetch,
+): Promise<ClaimedManagedPage> {
+  if (!isAnalyzeInboxPagePayload(payload)) throw new Error("Invalid managed Inbox page payload");
+  const baseURL = requiredEnv("SUPABASE_URL").replace(/\/$/, "");
+  const response = await fetcher(`${baseURL}/functions/v1/email-scan`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-renewa-managed-agent-secret": requiredEnv("MANAGED_AGENT_SHARED_SECRET"),
+    },
+    body: JSON.stringify({
+      action: "managed_page_context",
+      scan_run_id: payload.scanRunId,
+      scan_job_id: payload.pageId,
+      runtime_task_id: runtimeTaskID,
+    }),
+  });
+  const body = await response.json().catch(() => ({})) as ManagedPageContext;
+  if (!response.ok) throw new Error("Managed page context could not be loaded");
+  if (body.cancelled === true) return { cancelled: true };
+  if (typeof body.execution_id !== "string" || typeof body.access_token !== "string") {
+    throw new Error("Managed page context was incomplete");
+  }
+  return { cancelled: false, executionId: body.execution_id, accessToken: body.access_token };
+}
+
+export async function processManagedConnection(
+  payload: ScanInboxRunPayload,
+  fetcher: typeof fetch = fetch,
+): Promise<{ cancelled: boolean; hasNextPage: boolean }> {
+  if (!isScanInboxRunPayload(payload)) throw new Error("Invalid managed Inbox run payload");
+  const response = await fetcher(`${requiredEnv("SUPABASE_URL").replace(/\/$/, "")}/functions/v1/email-scan`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-renewa-managed-agent-secret": requiredEnv("MANAGED_AGENT_SHARED_SECRET"),
+    },
+    body: JSON.stringify({
+      action: "managed_process_connection",
+      scan_run_id: payload.scanRunId,
+      connection_id: payload.connectionId,
+    }),
+  });
+  const body = await response.json().catch(() => ({})) as { cancelled?: unknown; has_next_page?: unknown };
+  if (!response.ok) throw new Error("Managed connection page could not be processed");
+  return { cancelled: body.cancelled === true, hasNextPage: body.has_next_page === true };
+}
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required for managed Inbox tasks`);
+  return value;
+}

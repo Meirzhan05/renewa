@@ -188,6 +188,7 @@ enum EmailScanAggregateStatus: String, Codable {
     case completed
     case partial
     case failed
+    case cancelled
 }
 
 enum EmailScanStage: String, Codable {
@@ -200,6 +201,7 @@ enum EmailScanStage: String, Codable {
     case reviewReady = "review_ready"
     case completed
     case failed
+    case cancelled
 }
 
 enum EmailCandidateAction: String, Codable {
@@ -515,6 +517,7 @@ struct EmailScanRunProgress: Codable, Hashable, Identifiable {
         case "review_ready": "Ready for review"
         case "completed": "Finished"
         case "failed": "Couldn’t finish"
+        case "cancelled": "Stopped"
         default: status == "queued" ? "Waiting to start" : "Preparing scan"
         }
     }
