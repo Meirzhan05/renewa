@@ -224,3 +224,63 @@ grant execute on function public.heartbeat_inbox_agent_execution(uuid, integer) 
 grant execute on function public.complete_inbox_agent_execution(uuid, public.inbox_agent_execution_state, text) to service_role;
 grant execute on function public.recover_expired_inbox_agent_executions() to service_role;
 grant execute on function public.cancel_email_scan_run(uuid, uuid) to service_role;
+
+-- Preserve the paginated completion invariant while making a persisted cancellation authoritative
+-- once no in-flight page can write another result.
+create or replace function public.finalize_email_scan_run_if_drained(p_run_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_run public.email_scan_runs%rowtype;
+  v_active boolean;
+  v_failed boolean;
+  v_has_candidates boolean;
+begin
+  select * into v_run from public.email_scan_runs where id = p_run_id for update;
+  if not found then return false; end if;
+
+  select exists (
+    select 1 from public.email_scan_jobs
+    where scan_run_id = p_run_id and status in ('queued', 'running')
+  ) or exists (
+    select 1 from public.scan_jobs
+    where scan_run_id = p_run_id and status in ('pending', 'running')
+  ) into v_active;
+  if v_active then return false; end if;
+
+  if v_run.cancel_requested_at is not null then
+    update public.email_scan_runs
+    set status = 'cancelled', stage = 'cancelled', cancelled_at = coalesce(cancelled_at, now()),
+        completed_at = coalesce(completed_at, now()), error_message = null
+    where id = p_run_id;
+    return true;
+  end if;
+
+  select exists (
+    select 1 from public.email_scan_jobs where scan_run_id = p_run_id and status = 'failed'
+  ) or exists (
+    select 1 from public.scan_jobs where scan_run_id = p_run_id and status = 'failed'
+  ) into v_failed;
+  if v_failed then
+    update public.email_scan_runs
+    set status = 'failed', stage = 'failed',
+        error_message = coalesce(error_message, 'One or more scan pages could not finish.'),
+        completed_at = coalesce(completed_at, now())
+    where id = p_run_id;
+    return true;
+  end if;
+
+  select exists (
+    select 1 from public.subscription_candidates
+    where scan_run_id = p_run_id and review_status = 'pending'
+  ) into v_has_candidates;
+  update public.email_scan_runs
+  set status = 'completed', stage = case when v_has_candidates then 'review_ready' else 'completed' end,
+      completed_at = coalesce(completed_at, now())
+  where id = p_run_id;
+  return true;
+end;
+$$;

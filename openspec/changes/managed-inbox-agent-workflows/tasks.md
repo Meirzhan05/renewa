@@ -12,7 +12,7 @@
 - [x] 2.1 Add an additive Supabase migration for managed agent-execution records or equivalent
       queue metadata: runtime task ID, idempotency key, attempt, state, lease, heartbeat,
       retry-at, terminal error, and correlation fields.
-- [ ] 2.2 Add owner-scoped scan cancellation state and a safe cancelled terminal outcome while
+- [x] 2.2 Add owner-scoped scan cancellation state and a safe cancelled terminal outcome while
       preserving existing completed, failed, and partial semantics.
 - [ ] 2.3 Implement atomic database routines for task admission/claim, heartbeat renewal, terminal
       acknowledgement, expired-lease recovery, and idempotent completion coordination.
