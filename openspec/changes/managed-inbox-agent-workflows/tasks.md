@@ -35,7 +35,7 @@
 
 ## 4. Fair capacity control
 
-- [ ] 4.1 Add deployment-configured global, Gmail, Microsoft, and per-user execution limits with
+- [x] 4.1 Add deployment-configured global, Gmail, Microsoft, and per-user execution limits with
       startup validation and safe defaults.
 - [ ] 4.2 Implement fair admission across eligible users, enforcing one active scan and one active
       page analysis per user by default while respecting provider and global capacity.
