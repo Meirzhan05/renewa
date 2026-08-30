@@ -139,7 +139,7 @@ struct EmailDiscoveryPresentationState: Equatable {
 
     var headline: String {
         if status == .cancelled { return "Inbox scan stopped" }
-        switch dashboardState {
+        return switch dashboardState {
         case .noInbox: "Connect an inbox"
         case .scanning: stageTitle
         case .reviewReady: "Changes are ready for review"
