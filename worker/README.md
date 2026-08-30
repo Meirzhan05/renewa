@@ -43,39 +43,43 @@ surfaced this scan; `get_more` only for the merchant's own domains). A per-merch
 (iterations / tool calls / fetches / tokens / wall-clock) guarantees termination. The human
 confirmation gate is preserved: present and clarify both still require the user to confirm.
 
-## Run it
+## Development commands
 
 ```bash
 npm install
-cp .env.example .env      # fill in DATABASE_URL + DEEPSEEK_API_KEY
-psql "$DATABASE_URL" -f migrations/0001_worker_queue.sql
-psql "$DATABASE_URL" -f migrations/0002_scan_job_run_link.sql
-AGENT_MODE=autonomous npm start   # live path: begins polling scan_jobs
+npm start                # intentionally prints guidance; it never starts agents
+npm run worker:local     # legacy local worker, only when deliberately testing it
+npm run trigger:dev      # managed development runner, only when deliberately testing it
 ```
 
-Enqueue a scan by inserting a `scan_jobs` row — the `email-scan` edge function now does this: on a
-scan it fetches the mailbox window and enqueues a `scan_jobs` row (`raw_messages` + `scan_run_id` +
-`batch_id`) instead of running discovery itself.
+The managed runner needs development-only `TRIGGER_PROJECT_REF`, `TRIGGER_SECRET_KEY`,
+`MANAGED_AGENT_SHARED_SECRET`, `DATABASE_URL`, and the model configuration. Keep them in an ignored
+environment file, never in the app or task payload. `MANAGED_INBOX_AGENT_ENABLED` stays unset/false
+until the staged backend rollout is ready.
 
-## Live path (post-cutover)
+## Managed workflow path
 
-As of the `cutover-inbox-scan-to-agent` change, **the worker's autonomous two-tier funnel
-(`AGENT_MODE=autonomous`, `src/agent/*`) is the live discovery path.** The deterministic pipeline
-that used to run inside the edge function — the keyword prefilter (`candidateSignalScore` /
-`isLikelyBillingCandidate`), the per-merchant agentic path (`runAgenticDiscovery`), the routing
-ladder (`routeAssessment`), and the legacy per-message extractor — has been removed. The include /
-withhold decision is now entirely the LLM's; a human still confirms every candidate.
+When `MANAGED_INBOX_AGENT_ENABLED=true`, the `email-scan` Edge Function starts one managed
+`scan-inbox-run` task per connected inbox. It advances provider pages without an iOS follow-up
+request and admits one `analyze-inbox-page` task for each page. The managed runtime enforces
+bounded global/provider queues and per-user concurrency keys; PostgreSQL retains the owner-scoped
+execution ledger, cancellation state, heartbeats, retries, and final scan status.
 
-Flow: app `start` → edge fetches the window + enqueues `scan_jobs` → worker runs triage → agent →
-propose, reconciles against the user's real subscriptions/priors/suppressions
-(`src/agent/reconcile-db.ts`), and bridges each proposal into the app's `detected_billing_events` →
-`subscription_candidates` review queue and completes the run (`src/agent/candidate-bridge.ts`). The
-app reads candidates through its existing endpoint, unchanged.
+Managed task payloads contain only versioned run/page identifiers. A task calls the protected Edge
+Function just in time to claim work and receive a refreshed provider credential in memory; it never
+persists that credential to Trigger.dev, `scan_jobs`, or the managed execution ledger. The pipeline
+then reconciles proposals and writes review-first candidates through the existing bridge.
 
-## Deploy (Fly.io)
+Rollback: set `MANAGED_INBOX_AGENT_ENABLED=false` before disabling the Trigger runner. Existing
+managed work finishes or is cancelled through the app; new scans then use the explicit legacy path
+while the ledger remains available for audit. Do not turn the flag on until the corresponding
+Supabase migration/function secrets and the Trigger development runner have been verified.
 
-The worker needs a persistent host (it cannot run in Supabase Edge). `Dockerfile` + `fly.toml` in
-this directory deploy it as an always-on Fly background machine (no inbound HTTP). From `worker/`:
+## Legacy worker deployment
+
+The worker below is legacy migration support only; managed Trigger tasks remove the production
+dependency on an always-on `npm start` process. Do not deploy or restart this worker as part of the
+managed rollout unless intentionally rolling back.
 
 ```bash
 fly apps create renewa-worker        # or edit `app` in fly.toml to your name
