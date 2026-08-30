@@ -90,6 +90,39 @@ else
   fi
 fi
 
+# Preflight: surface a dead/absent inbox grant as a clear message here, instead of letting it fail
+# mid-scan as a cryptic "Bad Request" (an expired Google refresh token). Bypass with SKIP_PREFLIGHT=1.
+if [ "${SKIP_PREFLIGHT:-}" != "1" ]; then
+  PREFLIGHT="$(edge connections 2>/dev/null | python3 -c '
+import sys, json
+try:
+    conns = (json.load(sys.stdin) or {}).get("connections") or []
+except Exception:
+    print("SKIP"); sys.exit(0)
+if not conns:
+    print("NONE"); sys.exit(0)
+bad = []
+for c in conns:
+    if c.get("health") == "attention" or c.get("monitoring_health") == "reconnect_required":
+        who = c.get("redacted_email") or c.get("provider") or "inbox"
+        why = c.get("monitoring_error") or "authorization needs attention"
+        bad.append("%s (%s)" % (who, why))
+if bad:
+    print("BAD:" + " | ".join(bad))
+else:
+    print("OK:" + ", ".join((c.get("redacted_email") or c.get("provider") or "inbox") for c in conns))
+' || echo SKIP)"
+  case "$PREFLIGHT" in
+    NONE) echo "⚠  No inbox connected — connect one in the app, then re-run." >&2; exit 1 ;;
+    BAD:*)
+      echo "⚠  Inbox needs reconnection: ${PREFLIGHT#BAD:}" >&2
+      echo "   Re-authorize it in the app (Inbox → Reconnect), then re-run.  (SKIP_PREFLIGHT=1 to bypass.)" >&2
+      exit 1 ;;
+    OK:*) echo "→ Inbox: ${PREFLIGHT#OK:}" ;;
+    *)    echo "→ (preflight skipped — could not read connection health)" ;;
+  esac
+fi
+
 echo "→ Starting scan …"
 START="$(edge start || true)"
 SCAN_ID="$(printf '%s' "$START" | field scan_id)"
