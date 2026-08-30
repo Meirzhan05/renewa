@@ -1,8 +1,8 @@
 // Bridges the autonomous agent's proposals into the app's review queue. A proposal is the agent's
 // only output; to reach the iOS review UI unchanged it must land as a `detected_billing_events` row
 // (the evidence record) and a `subscription_candidates` row (the review card) against the app's scan
-// run, after which the run is marked completed. This is the app-DB write the worker owns under
-// decision 2a — the edge function no longer runs discovery.
+// run. A historical scan has many worker pages for one run, so a durable coordinator — not this
+// page bridge — owns terminal run completion.
 //
 // Safety: only the proposal's typed, validated fields are written. There is no free-text passthrough
 // from email content (the `evidence` string is synthesized from typed fields only), so the anti-exfil
@@ -42,7 +42,7 @@ function eventType(p: ProposalCandidate): string {
 }
 
 /**
- * Write each proposal as a detected event + a review-queue candidate, then complete the run.
+ * Write each proposal as a detected event + a review-queue candidate.
  * Idempotent: detected events upsert on their natural key and candidates skip on a duplicate
  * detected event, so a re-claimed job does not double-surface. Returns the number of candidates
  * written (== events surfaced this run).
@@ -138,18 +138,6 @@ export async function bridgeProposalsToCandidates(
     );
     if (candidate.rows.length > 0) written += 1;
   }
-
-  // Complete the app-side run so the app's status poll flips to review-ready.
-  await runner.query(
-    `update email_scan_runs
-        set status = 'completed',
-            stage = $2,
-            completed_at = now(),
-            events_detected = $3,
-            messages_scanned = $4
-      where id = $1`,
-    [input.scanRunId, written > 0 ? "review_ready" : "completed", written, input.messagesScanned],
-  );
 
   return written;
 }

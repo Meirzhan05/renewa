@@ -34,7 +34,7 @@ export interface JobStore {
 
 // --- Postgres implementation ---------------------------------------------------------------
 
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 
 export class PgJobStore implements JobStore {
   private readonly pool: Pool;
@@ -93,10 +93,14 @@ export class PgJobStore implements JobStore {
           ],
         );
       }
-      await client.query(
-        `update scan_jobs set status = 'completed', finished_at = now() where id = $1`,
+      const completion = await client.query(
+        `update scan_jobs
+            set status = 'completed', finished_at = now()
+          where id = $1
+          returning scan_run_id`,
         [jobId],
       );
+      await this.finalizeLinkedRun(client, completion.rows[0]?.scan_run_id);
       await client.query("commit");
     } catch (error) {
       await client.query("rollback");
@@ -119,10 +123,14 @@ export class PgJobStore implements JobStore {
           [jobId, proposal.merchant_key, proposal.merchant_name, proposal],
         );
       }
-      await client.query(
-        `update scan_jobs set status = 'completed', finished_at = now() where id = $1`,
+      const completion = await client.query(
+        `update scan_jobs
+            set status = 'completed', finished_at = now()
+          where id = $1
+          returning scan_run_id`,
         [jobId],
       );
+      await this.finalizeLinkedRun(client, completion.rows[0]?.scan_run_id);
       await client.query("commit");
     } catch (error) {
       await client.query("rollback");
@@ -133,9 +141,28 @@ export class PgJobStore implements JobStore {
   }
 
   async failJob(jobId: string, error: string): Promise<void> {
-    await this.pool.query(
-      `update scan_jobs set status = 'failed', error = $2, finished_at = now() where id = $1`,
-      [jobId, error.slice(0, 500)],
-    );
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      const completion = await client.query(
+        `update scan_jobs
+            set status = 'failed', error = $2, finished_at = now()
+          where id = $1
+          returning scan_run_id`,
+        [jobId, error.slice(0, 500)],
+      );
+      await this.finalizeLinkedRun(client, completion.rows[0]?.scan_run_id);
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async finalizeLinkedRun(client: PoolClient, scanRunID: unknown): Promise<void> {
+    if (typeof scanRunID !== "string" || scanRunID.length === 0) return;
+    await client.query("select public.finalize_email_scan_run_if_drained($1)", [scanRunID]);
   }
 }

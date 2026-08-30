@@ -24,7 +24,7 @@ import {
 import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
 import {
   aggregateRunStatus,
-  classifyScanRun,
+  classifyPaginatedScanRun,
   type RunClassification,
   scanCompletionTimeoutMs,
 } from "../_shared/scan-status.ts";
@@ -513,6 +513,7 @@ async function processUserJobs(
         status: "completed",
         completed_at: new Date().toISOString(),
       }).eq("id", job.id);
+      await finalizeScanRunIfDrained(admin, job.scan_run_id);
       await admin.from("inbox_monitoring_watches").update({
         health: "active",
         last_error: null,
@@ -541,15 +542,26 @@ async function processUserJobs(
         error_message: message,
       }).eq("id", job.id);
       await admin.from("email_scan_runs").update({
-        status: retryable ? "running" : "failed",
-        stage: retryable ? "queued" : "failed",
+        status: "running",
+        stage: retryable ? "queued" : "reasoning",
         error_message: message,
-        completed_at: retryable ? null : new Date().toISOString(),
+        completed_at: null,
       }).eq("id", job.scan_run_id);
+      await finalizeScanRunIfDrained(admin, job.scan_run_id);
       await publishBatchNotificationState(admin, userID, job.batch_id);
     }
   }
   if (needsFollowup && batchID) queueWorkerContinuation(userID, batchID);
+}
+
+async function finalizeScanRunIfDrained(
+  admin: AdminClient,
+  runID: string,
+): Promise<void> {
+  const { error } = await admin.rpc("finalize_email_scan_run_if_drained", {
+    p_run_id: runID,
+  });
+  if (error) throw error;
 }
 
 async function publishBatchNotificationState(
@@ -895,9 +907,16 @@ async function scanStatus(
   // The 5-minute-scale timeout compares enqueue time (a DB timestamp) against the edge clock;
   // NTP-synced sub-second skew is immaterial at this granularity, so no extra round trip for now().
   const nowMs = Date.now();
-  const workerJobByRun = new Map(
-    (workerJobs ?? []).map((job) => [job.scan_run_id, job]),
-  );
+  const workerJobsByRun = new Map<string, Array<Record<string, unknown>>>();
+  for (const job of workerJobs ?? []) {
+    const runID = String(job.scan_run_id);
+    workerJobsByRun.set(runID, [...(workerJobsByRun.get(runID) ?? []), job]);
+  }
+  const edgeJobsByRun = new Map<string, Array<Record<string, unknown>>>();
+  for (const job of jobs ?? []) {
+    const runID = String(job.scan_run_id);
+    edgeJobsByRun.set(runID, [...(edgeJobsByRun.get(runID) ?? []), job]);
+  }
   const classificationByRun = new Map<string, RunClassification>();
   // Runs the DB still reports as active but which are actually terminal-failed -- either the worker
   // is down (job never claimed, aged out) or the worker failed the job (it marks scan_jobs failed
@@ -905,12 +924,15 @@ async function scanStatus(
   // not mislabeled as a timeout, and vice versa.
   const failureMessageByRun = new Map<string, string>();
   for (const run of runs) {
-    const workerJob = workerJobByRun.get(run.id);
-    const classification = classifyScanRun(
+    const jobsForRun = workerJobsByRun.get(run.id) ?? [];
+    const edgeJobsForRun = edgeJobsByRun.get(run.id) ?? [];
+    const classification = classifyPaginatedScanRun(
       { status: run.status, started_at: run.started_at },
-      workerJob
-        ? { status: workerJob.status, created_at: workerJob.created_at }
-        : undefined,
+      edgeJobsForRun.map((job) => ({ status: String(job.status ?? "") })),
+      jobsForRun.map((job) => ({
+        status: String(job.status ?? ""),
+        created_at: typeof job.created_at === "string" ? job.created_at : null,
+      })),
       nowMs,
       timeoutMs,
     );
@@ -922,7 +944,11 @@ async function scanStatus(
     ) {
       failureMessageByRun.set(
         run.id,
-        workerJob?.status === "failed" ? workerFailedMessage : workerTimeoutMessage,
+        jobsForRun.some((job) => job.status === "failed")
+          ? workerFailedMessage
+          : edgeJobsForRun.some((job) => job.status === "failed")
+          ? "A mailbox page could not complete."
+          : workerTimeoutMessage,
       );
     }
   }
@@ -965,7 +991,9 @@ async function scanStatus(
     withheld_ambiguities: sum(runs, "withheld_ambiguities"),
     pending_count: pendingCandidates.length,
     runs: runs.map((run) => {
-      const job = (jobs ?? []).find((item) => item.scan_run_id === run.id);
+      const job = (edgeJobsByRun.get(run.id) ?? []).find((item) =>
+        typeof item.error_message === "string" && item.error_message.length > 0
+      );
       const classification = classificationByRun.get(run.id) ?? "active";
       const failureMessage = failureMessageByRun.get(run.id);
       return {

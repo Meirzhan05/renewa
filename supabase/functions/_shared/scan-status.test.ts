@@ -1,5 +1,6 @@
 import {
   aggregateRunStatus,
+  classifyPaginatedScanRun,
   classifyScanRun,
   DEFAULT_SCAN_COMPLETION_TIMEOUT_MS,
   scanCompletionTimeoutMs,
@@ -95,6 +96,45 @@ Deno.test("a worker job that itself failed classifies the run failed", () => {
 
 Deno.test("aggregate: any active run keeps the whole scan running", () => {
   assertEquals(aggregateRunStatus(["completed", "active"]), "running");
+});
+
+Deno.test("a completed first page cannot finish a run with later pending worker pages", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "completed", started_at: isoAgo(90_000) },
+    [{ status: "completed" }],
+    [
+      { status: "completed", created_at: isoAgo(60_000) },
+      { status: "pending", created_at: isoAgo(30_000) },
+    ],
+    NOW,
+    TIMEOUT,
+  );
+  assertEquals(c, "active");
+});
+
+Deno.test("active edge page keeps a run active while an earlier worker page is complete", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "completed", started_at: isoAgo(90_000) },
+    [{ status: "running" }],
+    [{ status: "completed", created_at: isoAgo(60_000) }],
+    NOW,
+    TIMEOUT,
+  );
+  assertEquals(c, "active");
+});
+
+Deno.test("every terminal page completes only after the worker set is drained", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "running", started_at: isoAgo(90_000) },
+    [{ status: "completed" }, { status: "completed" }],
+    [
+      { status: "completed", created_at: isoAgo(60_000) },
+      { status: "completed", created_at: isoAgo(20_000) },
+    ],
+    NOW,
+    TIMEOUT,
+  );
+  assertEquals(c, "completed");
 });
 
 Deno.test("aggregate: all terminal with a failure is partial", () => {

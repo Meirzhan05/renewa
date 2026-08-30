@@ -69,5 +69,6 @@
 - [x] Use the current Gmail and Microsoft Outlook marks throughout Inbox Intelligence’s connection UI, without white app-icon backgrounds.
 - [x] Replace Inbox Intelligence’s initial spinner with a compact, delayed skeleton that mirrors the loaded page and avoids a full-screen loading state.
 - [x] Add one privacy-minimized Inbox Intelligence Quick question for recent, material lifecycle, merchant-identity, or billing-cycle ambiguity. Answers are durable, idempotent, owner-scoped, and can only unblock the existing confirmation-first review flow.
+- [ ] Deploy and production-verify coordinated completion for paginated Inbox scans, so a completed early worker page cannot end the shared scan while later pages still run.
 - [ ] Configure hosted Microsoft OAuth credentials (`MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET`) and verify the callback redirect in a real Microsoft account. The deployed backend has the complete flow but cannot start Microsoft authorization without these external values.
 - [ ] Add verified Gmail Pub/Sub and Microsoft Graph event monitoring with debounced cursor scans, watch renewal, daily reconciliation, and truthful Inbox Intelligence monitoring health. Code and local verification are complete; hosted provider setup and staged rollout remain.

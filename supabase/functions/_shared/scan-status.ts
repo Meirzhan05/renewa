@@ -25,6 +25,11 @@ export type WorkerJobState = {
   created_at?: string | null;
 };
 
+export type EdgeJobState = {
+  /** `email_scan_jobs.status`: `queued` | `running` | `completed` | `failed`. */
+  status: string | null;
+};
+
 export const DEFAULT_SCAN_COMPLETION_TIMEOUT_MS = 5 * 60_000;
 
 /** Parse `SCAN_COMPLETION_TIMEOUT_MS` (env string) into a positive ms value, else the default. */
@@ -66,9 +71,48 @@ export function classifyScanRun(
 }
 
 /**
+ * Classify a paginated run. A run row is shared by every mailbox page, so it must never win over
+ * active page work: an earlier worker page can have written a stale `completed` value while later
+ * jobs remain pending. Worker jobs are classified independently so the timeout still applies to an
+ * unclaimed page without falsely timing out a page a worker has claimed.
+ */
+export function classifyPaginatedScanRun(
+  run: ScanRunState,
+  edgeJobs: EdgeJobState[],
+  workerJobs: WorkerJobState[],
+  nowMs: number,
+  timeoutMs: number,
+): RunClassification {
+  if (edgeJobs.some((job) => job.status === "queued" || job.status === "running")) {
+    return "active";
+  }
+
+  const workerClassifications = workerJobs.map((job) =>
+    classifyScanRun({ status: "running", started_at: run.started_at }, job, nowMs, timeoutMs)
+  );
+  if (workerClassifications.some((classification) => classification === "active")) {
+    return "active";
+  }
+  if (
+    run.status === "failed" ||
+    edgeJobs.some((job) => job.status === "failed") ||
+    workerClassifications.some((classification) => classification === "failed")
+  ) {
+    return "failed";
+  }
+
+  // With no worker row, retain the prior missing-worker timeout behavior rather than treating an
+  // enqueue-only run as successful. Otherwise every worker page has terminally completed.
+  if (workerJobs.length === 0) {
+    return classifyScanRun(run, undefined, nowMs, timeoutMs);
+  }
+  return "completed";
+}
+
+/**
  * Reduce per-run classifications into the app-visible aggregate status. Mirrors the prior
- * failed/partial/completed/running semantics, but keyed off worker progress instead of the edge
- * enqueue queue. Returns `completed` for an empty set (no runs to wait on).
+ * failed/partial/completed/running semantics, keyed off the full edge and worker page queues.
+ * Returns `completed` for an empty set (no runs to wait on).
  */
 export function aggregateRunStatus(classifications: RunClassification[]): string {
   if (classifications.length === 0) return "completed";
