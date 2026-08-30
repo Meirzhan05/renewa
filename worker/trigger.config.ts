@@ -10,7 +10,9 @@ export default defineConfig({
   dirs: ["./src/trigger"],
   maxDuration: 3_600,
   retries: {
-    enabledInDev: false,
+    // Development must exercise the same bounded transient-failure recovery as production.
+    // Disabling this leaves a page task queued forever after a one-off gateway outage.
+    enabledInDev: true,
     default: {
       maxAttempts: 3,
       minTimeoutInMs: 2_000,
