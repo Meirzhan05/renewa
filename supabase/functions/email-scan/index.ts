@@ -21,6 +21,7 @@ import {
   candidateConfirmationIssues,
   canonicalMerchantKey,
   classifyCandidateAction,
+  discoveryReconcileAction,
   MailMessage,
   MailMetadata,
   reconcileMerchantLifecycle,
@@ -1387,11 +1388,21 @@ async function reconcilePendingCandidates(
 ): Promise<void> {
   const { data: candidates, error } = await admin
     .from("subscription_candidates")
-    .select("id,canonical_merchant_key,event_type")
+    .select("id,canonical_merchant_key,event_type,scan_run_id")
     .eq("user_id", userID)
     .eq("review_status", "pending")
     .limit(200);
   if (error) throw error;
+
+  // Do not reconcile candidates from a still-running scan: the scan may not have written all of that
+  // merchant's evidence yet, so judging now can hide a discovery whose confirming event lands later.
+  const { data: activeRunRows, error: activeRunsError } = await admin
+    .from("email_scan_runs")
+    .select("id")
+    .eq("user_id", userID)
+    .in("status", ["queued", "running"]);
+  if (activeRunsError) throw activeRunsError;
+  const activeRuns = new Set((activeRunRows ?? []).map((run) => String(run.id)));
 
   const lifecycleByMerchant = new Map<
     string,
@@ -1399,39 +1410,36 @@ async function reconcilePendingCandidates(
   >();
   const suppressionByMerchant = new Map<string, boolean>();
   for (const candidate of candidates ?? []) {
+    if (candidate.scan_run_id != null && activeRuns.has(String(candidate.scan_run_id))) continue;
+
     const merchantKey = candidate.canonical_merchant_key;
     let lifecycle = lifecycleByMerchant.get(merchantKey);
     if (!lifecycle) {
       lifecycle = await merchantLifecycle(admin, userID, merchantKey);
       lifecycleByMerchant.set(merchantKey, lifecycle);
     }
-    if (candidate.event_type === "canceled") {
-      if (lifecycle.state === "current") {
-        await resolveCandidateForLifecycle(
-          admin,
-          userID,
-          candidate,
-          "Later current renewal evidence was found.",
-        );
-      }
-      continue;
-    }
-    let suppressed = suppressionByMerchant.get(merchantKey);
-    if (suppressed === undefined) {
-      suppressed = await merchantIsSuppressed(admin, userID, merchantKey);
+
+    // Suppression only matters for a discovery; skip the lookup for cancellations.
+    let suppressed = false;
+    if (candidate.event_type !== "canceled") {
+      const cached = suppressionByMerchant.get(merchantKey);
+      suppressed = cached ?? await merchantIsSuppressed(admin, userID, merchantKey);
       suppressionByMerchant.set(merchantKey, suppressed);
     }
-    if (suppressed || lifecycle.state !== "current") {
-      await resolveCandidateForLifecycle(
-        admin,
-        userID,
-        candidate,
-        suppressed
-          ? "You chose not to receive discovery suggestions for this merchant."
-          : lifecycleResolutionReason(
-            lifecycle.state === "ended" ? "ended" : "uncertain",
-          ),
-      );
+
+    const action = discoveryReconcileAction({
+      eventType: candidate.event_type,
+      lifecycleState: lifecycle.state,
+      suppressed,
+      runActive: false, // in-progress runs already skipped above
+    });
+    if (action.kind === "resolve") {
+      const reason = action.reason === "suppressed"
+        ? "You chose not to receive discovery suggestions for this merchant."
+        : action.reason === "ended"
+        ? lifecycleResolutionReason("ended")
+        : "Later current renewal evidence was found.";
+      await resolveCandidateForLifecycle(admin, userID, candidate, reason);
     }
   }
 }

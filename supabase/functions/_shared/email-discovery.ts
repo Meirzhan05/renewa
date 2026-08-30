@@ -587,6 +587,38 @@ function isValidISODate(value: string): boolean {
   return isISODate(value);
 }
 
+// --- Discovery reconciliation policy ---------------------------------------------------------------
+// Decides whether a pending candidate should be auto-resolved (hidden) or kept for human review. Kept
+// pure so the edge's reconcile loop and its tests share one source of truth.
+//
+// Policy: a discovery ("add") is auto-hidden ONLY when the merchant is suppressed or has explicitly
+// ended. An `uncertain` merchant (incomplete evidence, or an old receipt whose renewal already passed)
+// is SURFACED for review rather than silently ignored. A cancellation candidate is resolved when a
+// later current renewal supersedes it. Candidates from a still-running scan are left untouched so
+// reconciliation never races the scan writing that candidate's own evidence.
+export type DiscoveryReconcileInput = {
+  eventType: string;
+  lifecycleState: "current" | "ended" | "uncertain";
+  suppressed: boolean;
+  runActive: boolean;
+};
+
+export type DiscoveryReconcileAction =
+  | { kind: "keep" }
+  | { kind: "resolve"; reason: "suppressed" | "ended" | "superseded_by_current" };
+
+export function discoveryReconcileAction(input: DiscoveryReconcileInput): DiscoveryReconcileAction {
+  if (input.runActive) return { kind: "keep" };
+  if (input.eventType === "canceled") {
+    return input.lifecycleState === "current"
+      ? { kind: "resolve", reason: "superseded_by_current" }
+      : { kind: "keep" };
+  }
+  if (input.suppressed) return { kind: "resolve", reason: "suppressed" };
+  if (input.lifecycleState === "ended") return { kind: "resolve", reason: "ended" };
+  return { kind: "keep" };
+}
+
 function isPaidRecurringEvent(event: MerchantLifecycleEvent): boolean {
   return (event.event_type === "created" || event.event_type === "renewed" ||
     event.event_type === "price_changed") &&

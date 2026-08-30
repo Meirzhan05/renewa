@@ -4,6 +4,7 @@ import {
   candidateConfirmationIssues,
   canonicalMerchantKey,
   classifyCandidateAction,
+  discoveryReconcileAction,
   reconcileMerchantLifecycle,
   resolveMerchantIdentity,
   redactEmailAddress,
@@ -364,5 +365,98 @@ Deno.test("conflicting event and renewal dates remain uncertain", () => {
   assert(
     lifecycle.state === "uncertain" && lifecycle.reason === "conflicting_dates",
     "Expected contradictory dates to stay non-actionable.",
+  );
+});
+
+Deno.test("discovery reconcile: an uncertain discovery is surfaced for review, not hidden", () => {
+  const action = discoveryReconcileAction({
+    eventType: "created",
+    lifecycleState: "uncertain",
+    suppressed: false,
+    runActive: false,
+  });
+  assert(action.kind === "keep", "Uncertain discoveries must stay pending for review.");
+});
+
+Deno.test("discovery reconcile: an explicitly ended merchant is hidden", () => {
+  const action = discoveryReconcileAction({
+    eventType: "created",
+    lifecycleState: "ended",
+    suppressed: false,
+    runActive: false,
+  });
+  assert(
+    action.kind === "resolve" && action.reason === "ended",
+    "An ended merchant's discovery should be auto-resolved.",
+  );
+});
+
+Deno.test("discovery reconcile: a suppressed merchant is hidden regardless of lifecycle", () => {
+  const action = discoveryReconcileAction({
+    eventType: "created",
+    lifecycleState: "current",
+    suppressed: true,
+    runActive: false,
+  });
+  assert(
+    action.kind === "resolve" && action.reason === "suppressed",
+    "A suppressed merchant's discovery should be auto-resolved.",
+  );
+});
+
+Deno.test("discovery reconcile: a current, unsuppressed discovery stays pending", () => {
+  const action = discoveryReconcileAction({
+    eventType: "created",
+    lifecycleState: "current",
+    suppressed: false,
+    runActive: false,
+  });
+  assert(action.kind === "keep", "A confirmed-current discovery should remain for review.");
+});
+
+Deno.test("discovery reconcile: a candidate from a still-running scan is never touched", () => {
+  for (const state of ["current", "ended", "uncertain"] as const) {
+    const action = discoveryReconcileAction({
+      eventType: "created",
+      lifecycleState: state,
+      suppressed: true, // even suppressed: an in-progress run is left alone
+      runActive: true,
+    });
+    assert(action.kind === "keep", `Active-run candidate (${state}) must not be reconciled.`);
+  }
+});
+
+Deno.test("discovery reconcile: a cancellation is resolved only when a later current renewal supersedes it", () => {
+  const superseded = discoveryReconcileAction({
+    eventType: "canceled",
+    lifecycleState: "current",
+    suppressed: false,
+    runActive: false,
+  });
+  assert(
+    superseded.kind === "resolve" && superseded.reason === "superseded_by_current",
+    "A cancellation with later current evidence should resolve.",
+  );
+  const kept = discoveryReconcileAction({
+    eventType: "canceled",
+    lifecycleState: "ended",
+    suppressed: false,
+    runActive: false,
+  });
+  assert(kept.kind === "keep", "A cancellation without later current evidence stays pending.");
+});
+
+Deno.test("discovery reconcile: the decision is idempotent (stable across repeated polls)", () => {
+  const input = {
+    eventType: "created",
+    lifecycleState: "uncertain" as const,
+    suppressed: false,
+    runActive: false,
+  };
+  const first = discoveryReconcileAction(input);
+  const second = discoveryReconcileAction(input);
+  assert(
+    first.kind === "keep" && second.kind === "keep",
+    "Repeated reconciliation of the same state must not flip a candidate.",
   );
 });
