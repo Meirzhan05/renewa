@@ -1,5 +1,6 @@
 import {
   aggregateRunStatus,
+  classifyPaginatedScanRun,
   classifyScanRun,
   DEFAULT_SCAN_COMPLETION_TIMEOUT_MS,
   scanCompletionTimeoutMs,
@@ -97,12 +98,69 @@ Deno.test("aggregate: any active run keeps the whole scan running", () => {
   assertEquals(aggregateRunStatus(["completed", "active"]), "running");
 });
 
+Deno.test("a completed first page cannot finish a run with later pending worker pages", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "completed", started_at: isoAgo(90_000) },
+    [{ status: "completed" }],
+    [
+      { status: "completed", created_at: isoAgo(60_000) },
+      { status: "pending", created_at: isoAgo(30_000) },
+    ],
+    NOW,
+    TIMEOUT,
+  );
+  assertEquals(c, "active");
+});
+
+Deno.test("active edge page keeps a run active while an earlier worker page is complete", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "completed", started_at: isoAgo(90_000) },
+    [{ status: "running" }],
+    [{ status: "completed", created_at: isoAgo(60_000) }],
+    NOW,
+    TIMEOUT,
+  );
+  assertEquals(c, "active");
+});
+
+Deno.test("a managed task waiting for capacity stays active beyond the legacy worker timeout", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "running", started_at: isoAgo(20 * 60_000) },
+    [{ status: "completed" }],
+    [{ status: "pending", created_at: isoAgo(20 * 60_000) }],
+    NOW,
+    TIMEOUT,
+    [{ state: "queued" }],
+  );
+  assertEquals(c, "active");
+});
+
+Deno.test("every terminal page completes only after the worker set is drained", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "running", started_at: isoAgo(90_000) },
+    [{ status: "completed" }, { status: "completed" }],
+    [
+      { status: "completed", created_at: isoAgo(60_000) },
+      { status: "completed", created_at: isoAgo(20_000) },
+    ],
+    NOW,
+    TIMEOUT,
+  );
+  assertEquals(c, "completed");
+});
+
 Deno.test("aggregate: all terminal with a failure is partial", () => {
   assertEquals(aggregateRunStatus(["completed", "failed"]), "partial");
 });
 
 Deno.test("aggregate: all failed is failed, not partial", () => {
   assertEquals(aggregateRunStatus(["failed", "failed"]), "failed");
+});
+
+Deno.test("cancelled run is terminal and stops client polling", () => {
+  const c = classifyScanRun({ status: "cancelled", started_at: isoAgo(1_000) }, undefined, NOW, TIMEOUT);
+  assertEquals(c, "cancelled");
+  assertEquals(aggregateRunStatus([c]), "cancelled");
 });
 
 Deno.test("aggregate: empty set is completed (nothing to wait on)", () => {

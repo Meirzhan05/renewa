@@ -7,6 +7,14 @@ import {
 import { decryptJSON, encryptJSON, sha256 } from "../_shared/crypto.ts";
 import { Provider, refreshTokens, StoredTokens } from "../_shared/oauth.ts";
 import {
+  managedInboxEnabled,
+  managedPageIdempotencyKey,
+  managedRunConcurrencyKey,
+  managedRunIdempotencyKey,
+  managedRunPayload,
+  triggerManagedInboxTask,
+} from "../_shared/managed-inbox-runtime.ts";
+import {
   BillingCycle,
   BillingEvent,
   brandIDForMerchant,
@@ -24,7 +32,7 @@ import {
 import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
 import {
   aggregateRunStatus,
-  classifyScanRun,
+  classifyPaginatedScanRun,
   type RunClassification,
   scanCompletionTimeoutMs,
 } from "../_shared/scan-status.ts";
@@ -73,6 +81,11 @@ type ProviderBatch = {
   fullMessage: (metadata: MailMetadata) => Promise<MailMessage>;
 };
 
+type ProcessedConnectionPage = {
+  hasNextPage: boolean;
+  managedPageID: string | null;
+};
+
 type ScanJob = {
   id: string;
   batch_id: string;
@@ -115,6 +128,16 @@ Deno.serve(async (request) => {
     >;
     const action = typeof body.action === "string" ? body.action : "start";
 
+    if (["managed_page_context", "managed_process_connection"].includes(action)) {
+      if (request.headers.get("x-renewa-managed-agent-secret") !== mustEnv("MANAGED_AGENT_SHARED_SECRET")) {
+        return json({ message: "Invalid managed agent secret" }, 401);
+      }
+      if (action === "managed_page_context") {
+        return json(await managedPageContext(admin, body));
+      }
+      return json(await processManagedConnection(admin, body));
+    }
+
     if (
       ["automatic", "continue", "reconcile", "renew_monitoring"].includes(
         action,
@@ -151,9 +174,13 @@ Deno.serve(async (request) => {
       }
       case "status": {
         const scanID = optionalString(body.scan_id);
-        scheduleUserJobs(admin, user.id, scanID);
+        // Trigger.dev owns managed orchestration. Polling is read-only there; repeatedly
+        // scheduling from each status refresh can create redundant retries when a task fails.
+        if (!managedInboxEnabled()) scheduleUserJobs(admin, user.id, scanID);
         return json(await scanStatus(admin, user.id, scanID));
       }
+      case "cancel":
+        return json(await cancelScan(admin, user.id, requiredString(body.scan_id, "scan_id")));
       case "review":
         return json(await reviewCandidate(admin, user.id, body));
       case "suppress":
@@ -308,6 +335,26 @@ async function startScan(
   };
 }
 
+async function cancelScan(
+  admin: AdminClient,
+  userID: string,
+  batchID: string,
+): Promise<Record<string, unknown>> {
+  const { data: runs, error } = await admin.from("email_scan_runs")
+    .select("id").eq("user_id", userID).eq("batch_id", batchID);
+  if (error) throw error;
+  if (!runs?.length) throw new Error("Invalid scan_id");
+  for (const run of runs) {
+    const { error: cancelError } = await admin.rpc("cancel_email_scan_run", {
+      p_user_id: userID,
+      p_run_id: run.id,
+    });
+    if (cancelError) throw cancelError;
+    await finalizeScanRunIfDrained(admin, run.id);
+  }
+  return scanStatus(admin, userID, batchID);
+}
+
 async function runAutomaticScans(
   admin: AdminClient,
   renewMonitoring = false,
@@ -436,7 +483,9 @@ function scheduleUserJobs(
   userID: string,
   batchID: string | null,
 ): void {
-  const work = processUserJobs(admin, userID, batchID).catch((error) => {
+  const work = (managedInboxEnabled()
+    ? processManagedUserJobs(admin, userID, batchID)
+    : processUserJobs(admin, userID, batchID)).catch((error) => {
     console.error("email discovery worker failed", safeErrorMessage(error));
   });
   const runtime = (globalThis as unknown as {
@@ -446,6 +495,124 @@ function scheduleUserJobs(
     runtime.waitUntil(work);
   } else {
     void work;
+  }
+}
+
+async function processManagedUserJobs(
+  admin: AdminClient,
+  userID: string,
+  batchID: string | null,
+): Promise<void> {
+  let query = admin.from("email_scan_jobs")
+    .select("scan_run_id,connection_id")
+    .eq("user_id", userID)
+    .eq("status", "queued")
+    .order("created_at", { ascending: true })
+    .limit(10);
+  if (batchID) query = query.eq("batch_id", batchID);
+  const { data: jobs, error } = await query;
+  if (error) throw error;
+  for (const job of jobs ?? []) {
+    await triggerManagedInboxTask(
+      "scan-inbox-run",
+      managedRunPayload(String(job.scan_run_id), String(job.connection_id)),
+      {
+        idempotencyKey: managedRunIdempotencyKey(String(job.scan_run_id), String(job.connection_id)),
+        // A user may have several connections, but only one scan orchestrator may advance their
+        // mailbox at a time. Waiting parent tasks checkpoint while their child analysis runs, so
+        // this is fair across users without consuming an execution slot.
+        concurrencyKey: managedRunConcurrencyKey(userID),
+        queueName: "inbox-agent-runs",
+        queueConcurrency: 20,
+      },
+    );
+  }
+}
+
+async function managedPageContext(
+  admin: AdminClient,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const runID = requiredString(body.scan_run_id, "scan_run_id");
+  const jobID = requiredString(body.scan_job_id, "scan_job_id");
+  const runtimeTaskID = requiredString(body.runtime_task_id, "runtime_task_id");
+  const { data: job, error: jobError } = await admin.from("scan_jobs")
+    .select("id,user_id,provider,scan_run_id,connection_id")
+    .eq("id", jobID).eq("scan_run_id", runID).maybeSingle();
+  if (jobError) throw jobError;
+  if (!job) throw new Error("Managed scan page not found");
+  const { data: execution, error: executionError } = await admin.from("inbox_agent_executions")
+    .select("id")
+    .eq("scan_job_id", jobID).eq("scan_run_id", runID).maybeSingle();
+  if (executionError) throw executionError;
+  if (!execution) throw new Error("Managed scan execution not found");
+  const { data: claimed, error: claimError } = await admin.rpc("claim_inbox_agent_execution", {
+    p_execution_id: execution.id,
+    p_runtime_task_id: runtimeTaskID,
+  });
+  if (claimError) throw claimError;
+  if (claimed !== true) return { cancelled: true };
+
+  const { data: connection, error: connectionError } = await admin.from("email_connections")
+    .select("id,provider,encrypted_tokens")
+    .eq("id", job.connection_id).eq("user_id", job.user_id).maybeSingle();
+  if (connectionError) throw connectionError;
+  if (!connection) throw new Error("Connection was removed.");
+  let tokens = await decryptJSON<StoredTokens>(connection.encrypted_tokens);
+  const refreshed = await refreshTokens(connection.provider as Provider, tokens);
+  if (refreshed.access_token !== tokens.access_token) {
+    tokens = refreshed;
+    const { error } = await admin.from("email_connections").update({
+      encrypted_tokens: await encryptJSON(tokens),
+      token_expires_at: new Date(tokens.expires_at * 1_000).toISOString(),
+    }).eq("id", connection.id);
+    if (error) throw error;
+  }
+  return { execution_id: execution.id, access_token: tokens.access_token };
+}
+
+async function processManagedConnection(
+  admin: AdminClient,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const runID = requiredString(body.scan_run_id, "scan_run_id");
+  const connectionID = requiredString(body.connection_id, "connection_id");
+  const { data: run, error: runError } = await admin.from("email_scan_runs")
+    .select("id,user_id,cancel_requested_at")
+    .eq("id", runID).maybeSingle();
+  if (runError) throw runError;
+  if (!run) throw new Error("Managed scan run not found");
+  if (run.cancel_requested_at) return { cancelled: true, has_next_page: false };
+  const { data: job, error: jobError } = await admin.from("email_scan_jobs")
+    .select("id,attempts,page_number,provider_continuation,batch_id")
+    .eq("scan_run_id", runID).eq("connection_id", connectionID).eq("status", "queued")
+    .order("created_at", { ascending: true }).limit(1).maybeSingle();
+  if (jobError) throw jobError;
+  if (!job) return { has_next_page: false };
+  const { data: claimed, error: claimError } = await admin.from("email_scan_jobs")
+    .update({ status: "running", attempts: job.attempts + 1, started_at: new Date().toISOString(), error_message: null })
+    .eq("id", job.id).eq("status", "queued").select("id").maybeSingle();
+  if (claimError) throw claimError;
+  if (!claimed) return { has_next_page: true };
+  try {
+    const processed = await processConnectionJob(
+      admin, run.user_id, runID, connectionID, job.page_number, job.provider_continuation, true,
+    );
+    await admin.from("email_scan_jobs").update({ status: "completed", completed_at: new Date().toISOString() })
+      .eq("id", job.id);
+    await finalizeScanRunIfDrained(admin, runID);
+    await publishBatchNotificationState(admin, run.user_id, job.batch_id);
+    return {
+      has_next_page: processed.hasNextPage,
+      page_id: processed.managedPageID,
+    };
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    await admin.from("email_scan_jobs").update({
+      status: "failed", error_message: message, completed_at: new Date().toISOString(),
+    }).eq("id", job.id);
+    await finalizeScanRunIfDrained(admin, runID);
+    throw error;
   }
 }
 
@@ -500,7 +667,7 @@ async function processUserJobs(
     if (!claimed) continue;
 
     try {
-      const queuedNextPage = await processConnectionJob(
+      const processed = await processConnectionJob(
         admin,
         userID,
         job.scan_run_id,
@@ -508,11 +675,12 @@ async function processUserJobs(
         job.page_number,
         job.provider_continuation,
       );
-      needsFollowup = needsFollowup || queuedNextPage;
+      needsFollowup = needsFollowup || processed.hasNextPage;
       await admin.from("email_scan_jobs").update({
         status: "completed",
         completed_at: new Date().toISOString(),
       }).eq("id", job.id);
+      await finalizeScanRunIfDrained(admin, job.scan_run_id);
       await admin.from("inbox_monitoring_watches").update({
         health: "active",
         last_error: null,
@@ -541,15 +709,26 @@ async function processUserJobs(
         error_message: message,
       }).eq("id", job.id);
       await admin.from("email_scan_runs").update({
-        status: retryable ? "running" : "failed",
-        stage: retryable ? "queued" : "failed",
+        status: "running",
+        stage: retryable ? "queued" : "reasoning",
         error_message: message,
-        completed_at: retryable ? null : new Date().toISOString(),
+        completed_at: null,
       }).eq("id", job.scan_run_id);
+      await finalizeScanRunIfDrained(admin, job.scan_run_id);
       await publishBatchNotificationState(admin, userID, job.batch_id);
     }
   }
   if (needsFollowup && batchID) queueWorkerContinuation(userID, batchID);
+}
+
+async function finalizeScanRunIfDrained(
+  admin: AdminClient,
+  runID: string,
+): Promise<void> {
+  const { error } = await admin.rpc("finalize_email_scan_run_if_drained", {
+    p_run_id: runID,
+  });
+  if (error) throw error;
 }
 
 async function publishBatchNotificationState(
@@ -578,7 +757,8 @@ async function processConnectionJob(
   connectionID: string,
   pageNumber: number,
   providerContinuation: string | null,
-): Promise<boolean> {
+  managedPage = false,
+): Promise<ProcessedConnectionPage> {
   const { data: connection, error: connectionError } = await admin
     .from("email_connections")
     .select(
@@ -635,17 +815,28 @@ async function processConnectionJob(
   // against the user's tracked subscriptions / priors / suppressions, and writes candidates back
   // into this run's review queue before marking the run completed. The LLM alone decides what
   // surfaces -- there is no keyword prefilter or routing ladder here anymore.
-  const { error: enqueueError } = await admin.from("scan_jobs").insert({
+  const { data: queuedScanJob, error: enqueueError } = await admin.from("scan_jobs").insert({
     user_id: userID,
     provider,
-    // Persist the connection's access token so the worker can read full message bodies on demand
-    // (Gmail format=full) instead of judging a subscription from the snippet alone.
-    access_token: tokens.access_token,
+    // The managed path obtains this token JIT in its task. The legacy local worker keeps the
+    // existing behavior behind the feature gate until it is retired after rollout.
+    access_token: managedPage ? null : tokens.access_token,
     raw_messages: providerBatch.metadata,
     scan_run_id: runID,
     batch_id: await scanRunBatchID(admin, runID),
-  });
+    connection_id: connection.id,
+  }).select("id").single();
   if (enqueueError) throw enqueueError;
+  if (!queuedScanJob) throw new Error("Could not queue managed scan page");
+  if (managedPage) {
+    await admitManagedPageAnalysis(
+      admin,
+      userID,
+      runID,
+      String(queuedScanJob.id),
+      connection.id,
+    );
+  }
 
   const now = new Date().toISOString();
   const { error: saveSyncError } = await admin.from("mail_sync_states").upsert({
@@ -680,9 +871,37 @@ async function processConnectionJob(
       error_message: null,
     });
     if (nextPageError) throw nextPageError;
-    return true;
+    return {
+      hasNextPage: true,
+      managedPageID: managedPage ? String(queuedScanJob.id) : null,
+    };
   }
-  return false;
+  return {
+    hasNextPage: false,
+    managedPageID: managedPage ? String(queuedScanJob.id) : null,
+  };
+}
+
+async function admitManagedPageAnalysis(
+  admin: AdminClient,
+  userID: string,
+  runID: string,
+  pageID: string,
+  connectionID: string,
+): Promise<void> {
+  const idempotencyKey = managedPageIdempotencyKey(runID, pageID);
+  // Persist the admission record before triggering so an immediately-started task has a durable
+  // claim target. A second call with the same key updates the runtime idempotently.
+  const { error: admissionError } = await admin.rpc("admit_inbox_agent_execution", {
+    p_user_id: userID,
+    p_scan_run_id: runID,
+    p_scan_job_id: pageID,
+    p_connection_id: connectionID,
+    p_task_kind: "page_analysis",
+    p_idempotency_key: idempotencyKey,
+    p_runtime_task_id: null,
+  });
+  if (admissionError) throw admissionError;
 }
 
 // --- Merchant lifecycle + candidate resolution -----------------------------------------------
@@ -874,6 +1093,13 @@ async function scanStatus(
     .eq("batch_id", batchID);
   if (workerJobsError) throw workerJobsError;
 
+  const { data: managedExecutions, error: managedExecutionsError } = await admin
+    .from("inbox_agent_executions")
+    .select("scan_run_id,state")
+    .eq("user_id", userID)
+    .in("scan_run_id", runs.map((run) => run.id));
+  if (managedExecutionsError) throw managedExecutionsError;
+
   const { data: candidates, error: candidatesError } = await admin
     .from("subscription_candidates")
     .select(
@@ -895,9 +1121,24 @@ async function scanStatus(
   // The 5-minute-scale timeout compares enqueue time (a DB timestamp) against the edge clock;
   // NTP-synced sub-second skew is immaterial at this granularity, so no extra round trip for now().
   const nowMs = Date.now();
-  const workerJobByRun = new Map(
-    (workerJobs ?? []).map((job) => [job.scan_run_id, job]),
-  );
+  const workerJobsByRun = new Map<string, Array<Record<string, unknown>>>();
+  for (const job of workerJobs ?? []) {
+    const runID = String(job.scan_run_id);
+    workerJobsByRun.set(runID, [...(workerJobsByRun.get(runID) ?? []), job]);
+  }
+  const edgeJobsByRun = new Map<string, Array<Record<string, unknown>>>();
+  for (const job of jobs ?? []) {
+    const runID = String(job.scan_run_id);
+    edgeJobsByRun.set(runID, [...(edgeJobsByRun.get(runID) ?? []), job]);
+  }
+  const managedExecutionsByRun = new Map<string, Array<Record<string, unknown>>>();
+  for (const execution of managedExecutions ?? []) {
+    const runID = String(execution.scan_run_id);
+    managedExecutionsByRun.set(
+      runID,
+      [...(managedExecutionsByRun.get(runID) ?? []), execution],
+    );
+  }
   const classificationByRun = new Map<string, RunClassification>();
   // Runs the DB still reports as active but which are actually terminal-failed -- either the worker
   // is down (job never claimed, aged out) or the worker failed the job (it marks scan_jobs failed
@@ -905,14 +1146,19 @@ async function scanStatus(
   // not mislabeled as a timeout, and vice versa.
   const failureMessageByRun = new Map<string, string>();
   for (const run of runs) {
-    const workerJob = workerJobByRun.get(run.id);
-    const classification = classifyScanRun(
+    const jobsForRun = workerJobsByRun.get(run.id) ?? [];
+    const edgeJobsForRun = edgeJobsByRun.get(run.id) ?? [];
+    const executionsForRun = managedExecutionsByRun.get(run.id) ?? [];
+    const classification = classifyPaginatedScanRun(
       { status: run.status, started_at: run.started_at },
-      workerJob
-        ? { status: workerJob.status, created_at: workerJob.created_at }
-        : undefined,
+      edgeJobsForRun.map((job) => ({ status: String(job.status ?? "") })),
+      jobsForRun.map((job) => ({
+        status: String(job.status ?? ""),
+        created_at: typeof job.created_at === "string" ? job.created_at : null,
+      })),
       nowMs,
       timeoutMs,
+      executionsForRun.map((execution) => ({ state: String(execution.state ?? "") })),
     );
     classificationByRun.set(run.id, classification);
     if (
@@ -922,7 +1168,13 @@ async function scanStatus(
     ) {
       failureMessageByRun.set(
         run.id,
-        workerJob?.status === "failed" ? workerFailedMessage : workerTimeoutMessage,
+        jobsForRun.some((job) => job.status === "failed")
+          ? workerFailedMessage
+          : executionsForRun.some((execution) => execution.state === "failed")
+          ? "A managed page analysis could not complete."
+          : edgeJobsForRun.some((job) => job.status === "failed")
+          ? "A mailbox page could not complete."
+          : workerTimeoutMessage,
       );
     }
   }
@@ -965,7 +1217,9 @@ async function scanStatus(
     withheld_ambiguities: sum(runs, "withheld_ambiguities"),
     pending_count: pendingCandidates.length,
     runs: runs.map((run) => {
-      const job = (jobs ?? []).find((item) => item.scan_run_id === run.id);
+      const job = (edgeJobsByRun.get(run.id) ?? []).find((item) =>
+        typeof item.error_message === "string" && item.error_message.length > 0
+      );
       const classification = classificationByRun.get(run.id) ?? "active";
       const failureMessage = failureMessageByRun.get(run.id);
       return {

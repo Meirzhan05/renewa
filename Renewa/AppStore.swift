@@ -298,6 +298,7 @@ final class AppStore {
         guard session != nil, state != .signedOut else { return }
         _ = try? await validAccessToken()
         await synchronizeInboxNotificationAuthorization()
+        await loadEmailDiscovery()
     }
 
     func refreshData() async throws {
@@ -459,6 +460,27 @@ final class AppStore {
         }
     }
 
+    func cancelEmailScan() async -> Bool {
+        guard let scanID = emailScanStatus?.scanID, session != nil else { return false }
+        do {
+            let status = try await performAuthenticated { accessToken in
+                try await self.client.cancelEmailScan(scanID: scanID, accessToken: accessToken)
+            }
+            withAnimation(RenewaMotion.quick) {
+                emailScanStatus = status
+            }
+            if status.isActive {
+                beginEmailScanPolling(id: scanID)
+            } else {
+                await finishInboxScanLiveActivity(with: status)
+            }
+            return true
+        } catch {
+            reportAuthenticatedOperationError(error)
+            return false
+        }
+    }
+
     func reviewEmailCandidate(
         _ candidate: EmailSubscriptionCandidate,
         decision: EmailCandidateDecision,
@@ -578,10 +600,12 @@ final class AppStore {
 
     private func pollEmailScan(id: UUID?) async {
         guard let id else { return }
-        for _ in 0..<120 {
+        var pollCount = 0
+        var consecutiveFailures = 0
+        while true {
             guard !Task.isCancelled else { return }
             do {
-                try await Task.sleep(for: .seconds(1))
+                try await Task.sleep(for: InboxScanPollingPolicy.delayAfterSuccessfulPoll(pollCount))
                 let status = try await performAuthenticated { accessToken in
                     try await self.client.emailScanStatus(scanID: id, accessToken: accessToken)
                 }
@@ -592,12 +616,19 @@ final class AppStore {
                     await finishInboxScanLiveActivity(with: status)
                     return
                 }
-                try await Task.sleep(for: .seconds(1))
+                pollCount += 1
+                consecutiveFailures = 0
             } catch is CancellationError {
                 return
             } catch {
-                reportAuthenticatedOperationError(error)
-                return
+                consecutiveFailures += 1
+                do {
+                    try await Task.sleep(for: InboxScanPollingPolicy.retryDelay(for: consecutiveFailures))
+                } catch is CancellationError {
+                    return
+                } catch {
+                    return
+                }
             }
         }
     }

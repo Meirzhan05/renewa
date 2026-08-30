@@ -56,7 +56,7 @@ function proposal(partial: Partial<ProposalCandidate> & { merchant_key: string; 
   };
 }
 
-test("writes a candidate per proposal and completes the run review-ready", async () => {
+test("writes a candidate per proposal without completing its shared scan run", async () => {
   const { runner, calls } = fakeRunner({});
   const written = await bridgeProposalsToCandidates(runner, {
     userId: "u1",
@@ -68,8 +68,7 @@ test("writes a candidate per proposal and completes the run review-ready", async
 
   assert.equal(written, 1);
   const runUpdate = calls.find((c) => /update email_scan_runs/.test(c.text));
-  assert.ok(runUpdate, "run is completed");
-  assert.deepEqual(runUpdate?.params, ["run-1", "review_ready", 1, 40]);
+  assert.equal(runUpdate, undefined, "page bridge does not complete the shared run");
 });
 
 test("skips a suppressed merchant and never writes its candidate", async () => {
@@ -84,9 +83,9 @@ test("skips a suppressed merchant and never writes its candidate", async () => {
 
   assert.equal(written, 0);
   assert.equal(calls.some((c) => /insert into subscription_candidates/.test(c.text)), false);
-  // Run still completes, but as plain 'completed' since nothing surfaced.
+  // Completion belongs to the coordinator after every page is terminal.
   const runUpdate = calls.find((c) => /update email_scan_runs/.test(c.text));
-  assert.deepEqual(runUpdate?.params, ["run-1", "completed", 0, 10]);
+  assert.equal(runUpdate, undefined);
 });
 
 test("a matched existing subscription becomes a 'review' card, unmatched becomes 'add'", async () => {

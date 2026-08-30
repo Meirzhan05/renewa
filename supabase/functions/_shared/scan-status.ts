@@ -9,7 +9,7 @@
 // job means a worker is alive; a `pending` (unclaimed) or missing job past a timeout means no
 // worker is draining the queue, so the scan must fail rather than look emptily "completed".
 
-export type RunClassification = "active" | "completed" | "failed";
+export type RunClassification = "active" | "completed" | "failed" | "cancelled";
 
 export type ScanRunState = {
   /** `email_scan_runs.status` (worker-finalized: `completed`; edge on fetch error: `failed`). */
@@ -23,6 +23,16 @@ export type WorkerJobState = {
   status: string | null;
   /** Enqueue time -- the primary anchor for the worker-down timeout. */
   created_at?: string | null;
+};
+
+export type EdgeJobState = {
+  /** `email_scan_jobs.status`: `queued` | `running` | `completed` | `failed`. */
+  status: string | null;
+};
+
+/** Durable managed-runtime state mirrored in Supabase; it is safe for status derivation only. */
+export type ManagedExecutionState = {
+  state: string | null;
 };
 
 export const DEFAULT_SCAN_COMPLETION_TIMEOUT_MS = 5 * 60_000;
@@ -53,6 +63,7 @@ export function classifyScanRun(
   const runStatus = run.status ?? "";
   if (runStatus === "completed") return "completed";
   if (runStatus === "failed") return "failed";
+  if (runStatus === "cancelled") return "cancelled";
 
   const jobStatus = workerJob?.status ?? null;
   if (jobStatus === "completed") return "completed";
@@ -66,15 +77,67 @@ export function classifyScanRun(
 }
 
 /**
+ * Classify a paginated run. A run row is shared by every mailbox page, so it must never win over
+ * active page work: an earlier worker page can have written a stale `completed` value while later
+ * jobs remain pending. Worker jobs are classified independently so the timeout still applies to an
+ * unclaimed page without falsely timing out a page a worker has claimed.
+ */
+export function classifyPaginatedScanRun(
+  run: ScanRunState,
+  edgeJobs: EdgeJobState[],
+  workerJobs: WorkerJobState[],
+  nowMs: number,
+  timeoutMs: number,
+  managedExecutions: ManagedExecutionState[] = [],
+): RunClassification {
+  if (run.status === "cancelled") return "cancelled";
+  if (edgeJobs.some((job) => job.status === "queued" || job.status === "running")) {
+    return "active";
+  }
+  // A managed task waiting for Trigger capacity is healthy work. Unlike a legacy pending
+  // scan_jobs row, it has a durable execution record and must not be failed by a wall-clock UI
+  // timeout while the runtime owns its retry and queue lifecycle.
+  if (managedExecutions.some((execution) =>
+    ["queued", "leased", "running", "retryable"].includes(execution.state ?? "")
+  )) {
+    return "active";
+  }
+
+  const workerClassifications = workerJobs.map((job) =>
+    classifyScanRun({ status: "running", started_at: run.started_at }, job, nowMs, timeoutMs)
+  );
+  if (workerClassifications.some((classification) => classification === "active")) {
+    return "active";
+  }
+  if (
+    run.status === "failed" ||
+    edgeJobs.some((job) => job.status === "failed") ||
+    workerClassifications.some((classification) => classification === "failed") ||
+    managedExecutions.some((execution) => execution.state === "failed")
+  ) {
+    return "failed";
+  }
+
+  // With no worker row, retain the prior missing-worker timeout behavior rather than treating an
+  // enqueue-only run as successful. Otherwise every worker page has terminally completed.
+  if (workerJobs.length === 0) {
+    return classifyScanRun(run, undefined, nowMs, timeoutMs);
+  }
+  return "completed";
+}
+
+/**
  * Reduce per-run classifications into the app-visible aggregate status. Mirrors the prior
- * failed/partial/completed/running semantics, but keyed off worker progress instead of the edge
- * enqueue queue. Returns `completed` for an empty set (no runs to wait on).
+ * failed/partial/completed/running semantics, keyed off the full edge and worker page queues.
+ * Returns `completed` for an empty set (no runs to wait on).
  */
 export function aggregateRunStatus(classifications: RunClassification[]): string {
   if (classifications.length === 0) return "completed";
   const failed = classifications.filter((c) => c === "failed").length;
   const active = classifications.filter((c) => c === "active").length;
+  const cancelled = classifications.filter((c) => c === "cancelled").length;
   if (failed === classifications.length) return "failed";
+  if (cancelled === classifications.length) return "cancelled";
   if (active === 0) return failed > 0 ? "partial" : "completed";
   return "running";
 }

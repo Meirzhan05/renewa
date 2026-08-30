@@ -279,6 +279,18 @@ struct EmailScanView: View {
                     .font(.renewa(13, weight: .semibold))
                     .foregroundStyle(RenewaTheme.ink)
                     .contentTransition(.opacity)
+
+                Spacer(minLength: 8)
+
+                if presentation.isScanning {
+                    Button("Stop") {
+                        Task { _ = await store.cancelEmailScan() }
+                    }
+                    .font(.renewa(11, weight: .bold))
+                    .foregroundStyle(RenewaTheme.coral)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Stop inbox scan")
+                }
             }
 
             Text(inboxActivityLine)

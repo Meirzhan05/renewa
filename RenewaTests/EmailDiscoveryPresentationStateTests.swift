@@ -164,6 +164,17 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
+    func test_cancelledScan_stopsPollingPresentation_without_losingCandidates() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(status: .cancelled, pendingCount: 2)
+        )
+
+        XCTAssertFalse(state.isScanning)
+        XCTAssertEqual(state.headline, "Inbox scan stopped")
+        XCTAssertEqual(state.progressText, "Anything already found is still ready for your review.")
+    }
+
+    @MainActor
     func test_activeProviderMonitoring_isPresentedAsAutomaticInboxMonitoring() {
         let state = EmailDiscoveryPresentationState(
             status: makeStatus(status: .completed, monitoringHealth: "active")
