@@ -135,6 +135,18 @@ Deno.test("a managed task waiting for capacity stays active beyond the legacy wo
   assertEquals(c, "active");
 });
 
+Deno.test("a terminal failed run is not revived by residual managed execution records", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "failed", started_at: isoAgo(20 * 60_000) },
+    [{ status: "completed" }],
+    [{ status: "pending", created_at: isoAgo(20 * 60_000) }],
+    NOW,
+    TIMEOUT,
+    [{ state: "queued" }],
+  );
+  assertEquals(c, "failed");
+});
+
 Deno.test("every terminal page completes only after the worker set is drained", () => {
   const c = classifyPaginatedScanRun(
     { status: "running", started_at: isoAgo(90_000) },

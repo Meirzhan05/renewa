@@ -91,6 +91,9 @@ export function classifyPaginatedScanRun(
   managedExecutions: ManagedExecutionState[] = [],
 ): RunClassification {
   if (run.status === "cancelled") return "cancelled";
+  // A persisted failure is terminal. It may have residual queued execution records from an older
+  // delivery, but those records must not revive a run the coordinator has already failed.
+  if (run.status === "failed") return "failed";
   if (edgeJobs.some((job) => job.status === "queued" || job.status === "running")) {
     return "active";
   }
