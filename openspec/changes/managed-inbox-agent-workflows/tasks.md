@@ -14,7 +14,7 @@
       retry-at, terminal error, and correlation fields.
 - [x] 2.2 Add owner-scoped scan cancellation state and a safe cancelled terminal outcome while
       preserving existing completed, failed, and partial semantics.
-- [ ] 2.3 Implement atomic database routines for task admission/claim, heartbeat renewal, terminal
+- [x] 2.3 Implement atomic database routines for task admission/claim, heartbeat renewal, terminal
       acknowledgement, expired-lease recovery, and idempotent completion coordination.
 - [ ] 2.4 Add RLS/grants and migration tests proving users cannot read or mutate other users'
       execution state and task metadata cannot bypass the review gate.
