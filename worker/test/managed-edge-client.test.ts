@@ -85,3 +85,32 @@ test("managed tasks normalize a legacy Supabase REST URL before calling Edge Fun
     else process.env.SUPABASE_PUBLISHABLE_KEY = previousPublicKey;
   }
 });
+
+test("managed page context retries a short Edge service outage before claiming work", async () => {
+  const previousURL = process.env.SUPABASE_URL;
+  const previousSecret = process.env.MANAGED_AGENT_SHARED_SECRET;
+  const previousPublicKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+  process.env.SUPABASE_URL = "https://dev.example.test";
+  process.env.MANAGED_AGENT_SHARED_SECRET = "shared-development-secret";
+  process.env.SUPABASE_PUBLISHABLE_KEY = "public-development-key";
+  let calls = 0;
+  try {
+    const result = await claimManagedPageContext(
+      { version: 1, scanRunId: "run-1", pageId: "page-1" },
+      "trigger-run-1",
+      async () => {
+        calls += 1;
+        if (calls === 1) return Response.json({ message: "Service is temporarily unavailable" }, { status: 503 });
+        return Response.json({ execution_id: "execution-1", access_token: "short-lived" });
+      },
+    );
+    assert.equal(calls, 2);
+    assert.deepEqual(result, { cancelled: false, executionId: "execution-1", accessToken: "short-lived" });
+  } finally {
+    if (previousURL === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousURL;
+    if (previousSecret === undefined) delete process.env.MANAGED_AGENT_SHARED_SECRET;
+    else process.env.MANAGED_AGENT_SHARED_SECRET = previousSecret;
+    if (previousPublicKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    else process.env.SUPABASE_PUBLISHABLE_KEY = previousPublicKey;
+  }
+});

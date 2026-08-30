@@ -20,7 +20,7 @@ export async function claimManagedPageContext(
 ): Promise<ClaimedManagedPage> {
   if (!isAnalyzeInboxPagePayload(payload)) throw new Error("Invalid managed Inbox page payload");
   const baseURL = supabaseFunctionsBaseURL();
-  const response = await fetcher(`${baseURL}/functions/v1/email-scan`, {
+  const response = await fetchWithTransientRetries(fetcher, `${baseURL}/functions/v1/email-scan`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -48,7 +48,7 @@ export async function processManagedConnection(
   fetcher: typeof fetch = fetch,
 ): Promise<{ cancelled: boolean; hasNextPage: boolean; pageId: string | null }> {
   if (!isScanInboxRunPayload(payload)) throw new Error("Invalid managed Inbox run payload");
-  const response = await fetcher(`${supabaseFunctionsBaseURL()}/functions/v1/email-scan`, {
+  const response = await fetchWithTransientRetries(fetcher, `${supabaseFunctionsBaseURL()}/functions/v1/email-scan`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -95,4 +95,28 @@ function supabaseFunctionsBaseURL(): string {
 function edgeErrorMessage(body: { message?: unknown }, fallback: string): string {
   if (typeof body.message !== "string" || body.message.length === 0) return fallback;
   return body.message.slice(0, 300);
+}
+
+/**
+ * The task runtime owns durable retries. This small retry only smooths short Edge gateway outages
+ * before an execution record can be claimed, so a healthy page does not spend a full task attempt
+ * on an intermittent 502/503/504 response.
+ */
+async function fetchWithTransientRetries(
+  fetcher: typeof fetch,
+  input: string | URL,
+  init: RequestInit,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetcher(input, init);
+      if (![502, 503, 504].includes(response.status) || attempt === 2) return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 2) throw error;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+  }
+  throw lastError instanceof Error ? lastError : new Error("Managed Edge request failed");
 }
