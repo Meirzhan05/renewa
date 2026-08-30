@@ -46,7 +46,7 @@ export async function claimManagedPageContext(
 export async function processManagedConnection(
   payload: ScanInboxRunPayload,
   fetcher: typeof fetch = fetch,
-): Promise<{ cancelled: boolean; hasNextPage: boolean }> {
+): Promise<{ cancelled: boolean; hasNextPage: boolean; pageId: string | null }> {
   if (!isScanInboxRunPayload(payload)) throw new Error("Invalid managed Inbox run payload");
   const response = await fetcher(`${supabaseFunctionsBaseURL()}/functions/v1/email-scan`, {
     method: "POST",
@@ -64,10 +64,15 @@ export async function processManagedConnection(
   const body = await response.json().catch(() => ({})) as {
     cancelled?: unknown;
     has_next_page?: unknown;
+    page_id?: unknown;
     message?: unknown;
   };
   if (!response.ok) throw new Error(edgeErrorMessage(body, "Managed connection page could not be processed"));
-  return { cancelled: body.cancelled === true, hasNextPage: body.has_next_page === true };
+  return {
+    cancelled: body.cancelled === true,
+    hasNextPage: body.has_next_page === true,
+    pageId: typeof body.page_id === "string" ? body.page_id : null,
+  };
 }
 
 function requiredEnv(name: string): string {

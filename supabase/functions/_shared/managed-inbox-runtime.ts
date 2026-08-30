@@ -58,3 +58,8 @@ export function managedPageIdempotencyKey(scanRunId: string, pageId: string): st
 export function managedRunIdempotencyKey(scanRunId: string, connectionId: string): string {
   return `inbox-scan-run:v${taskVersion}:${scanRunId}:${connectionId}`;
 }
+
+/** All connections belonging to a person share one durable scan queue. */
+export function managedRunConcurrencyKey(userID: string): string {
+  return `inbox-run:${userID}`;
+}

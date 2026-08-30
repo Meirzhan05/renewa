@@ -37,7 +37,7 @@
 
 - [x] 4.1 Add deployment-configured global, Gmail, Microsoft, and per-user execution limits with
       startup validation and safe defaults.
-- [ ] 4.2 Implement fair admission across eligible users, enforcing one active scan and one active
+- [x] 4.2 Implement fair admission across eligible users, enforcing one active scan and one active
       page analysis per user by default while respecting provider and global capacity.
 - [x] 4.3 Add operator-visible capacity and queue-latency metrics without exposing task IDs or
       internal queue depth in the client API.

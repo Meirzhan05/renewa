@@ -30,6 +30,11 @@ export type EdgeJobState = {
   status: string | null;
 };
 
+/** Durable managed-runtime state mirrored in Supabase; it is safe for status derivation only. */
+export type ManagedExecutionState = {
+  state: string | null;
+};
+
 export const DEFAULT_SCAN_COMPLETION_TIMEOUT_MS = 5 * 60_000;
 
 /** Parse `SCAN_COMPLETION_TIMEOUT_MS` (env string) into a positive ms value, else the default. */
@@ -83,11 +88,20 @@ export function classifyPaginatedScanRun(
   workerJobs: WorkerJobState[],
   nowMs: number,
   timeoutMs: number,
+  managedExecutions: ManagedExecutionState[] = [],
 ): RunClassification {
+  if (run.status === "cancelled") return "cancelled";
   if (edgeJobs.some((job) => job.status === "queued" || job.status === "running")) {
     return "active";
   }
-  if (run.status === "cancelled") return "cancelled";
+  // A managed task waiting for Trigger capacity is healthy work. Unlike a legacy pending
+  // scan_jobs row, it has a durable execution record and must not be failed by a wall-clock UI
+  // timeout while the runtime owns its retry and queue lifecycle.
+  if (managedExecutions.some((execution) =>
+    ["queued", "leased", "running", "retryable"].includes(execution.state ?? "")
+  )) {
+    return "active";
+  }
 
   const workerClassifications = workerJobs.map((job) =>
     classifyScanRun({ status: "running", started_at: run.started_at }, job, nowMs, timeoutMs)
@@ -98,7 +112,8 @@ export function classifyPaginatedScanRun(
   if (
     run.status === "failed" ||
     edgeJobs.some((job) => job.status === "failed") ||
-    workerClassifications.some((classification) => classification === "failed")
+    workerClassifications.some((classification) => classification === "failed") ||
+    managedExecutions.some((execution) => execution.state === "failed")
   ) {
     return "failed";
   }

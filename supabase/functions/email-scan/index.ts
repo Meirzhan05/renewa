@@ -9,8 +9,7 @@ import { Provider, refreshTokens, StoredTokens } from "../_shared/oauth.ts";
 import {
   managedInboxEnabled,
   managedPageIdempotencyKey,
-  managedPagePayload,
-  managedPageQueue,
+  managedRunConcurrencyKey,
   managedRunIdempotencyKey,
   managedRunPayload,
   triggerManagedInboxTask,
@@ -80,6 +79,11 @@ type ProviderBatch = {
   cursorValue: string;
   continuation: string | null;
   fullMessage: (metadata: MailMetadata) => Promise<MailMessage>;
+};
+
+type ProcessedConnectionPage = {
+  hasNextPage: boolean;
+  managedPageID: string | null;
 };
 
 type ScanJob = {
@@ -514,7 +518,10 @@ async function processManagedUserJobs(
       managedRunPayload(String(job.scan_run_id), String(job.connection_id)),
       {
         idempotencyKey: managedRunIdempotencyKey(String(job.scan_run_id), String(job.connection_id)),
-        concurrencyKey: `inbox-run:${job.connection_id}`,
+        // A user may have several connections, but only one scan orchestrator may advance their
+        // mailbox at a time. Waiting parent tasks checkpoint while their child analysis runs, so
+        // this is fair across users without consuming an execution slot.
+        concurrencyKey: managedRunConcurrencyKey(userID),
         queueName: "inbox-agent-runs",
         queueConcurrency: 20,
       },
@@ -588,14 +595,17 @@ async function processManagedConnection(
   if (claimError) throw claimError;
   if (!claimed) return { has_next_page: true };
   try {
-    const hasNextPage = await processConnectionJob(
-      admin, run.user_id, runID, connectionID, job.page_number, job.provider_continuation,
+    const processed = await processConnectionJob(
+      admin, run.user_id, runID, connectionID, job.page_number, job.provider_continuation, true,
     );
     await admin.from("email_scan_jobs").update({ status: "completed", completed_at: new Date().toISOString() })
       .eq("id", job.id);
     await finalizeScanRunIfDrained(admin, runID);
     await publishBatchNotificationState(admin, run.user_id, job.batch_id);
-    return { has_next_page: hasNextPage };
+    return {
+      has_next_page: processed.hasNextPage,
+      page_id: processed.managedPageID,
+    };
   } catch (error) {
     const message = safeErrorMessage(error);
     await admin.from("email_scan_jobs").update({
@@ -657,7 +667,7 @@ async function processUserJobs(
     if (!claimed) continue;
 
     try {
-      const queuedNextPage = await processConnectionJob(
+      const processed = await processConnectionJob(
         admin,
         userID,
         job.scan_run_id,
@@ -665,7 +675,7 @@ async function processUserJobs(
         job.page_number,
         job.provider_continuation,
       );
-      needsFollowup = needsFollowup || queuedNextPage;
+      needsFollowup = needsFollowup || processed.hasNextPage;
       await admin.from("email_scan_jobs").update({
         status: "completed",
         completed_at: new Date().toISOString(),
@@ -747,7 +757,8 @@ async function processConnectionJob(
   connectionID: string,
   pageNumber: number,
   providerContinuation: string | null,
-): Promise<boolean> {
+  managedPage = false,
+): Promise<ProcessedConnectionPage> {
   const { data: connection, error: connectionError } = await admin
     .from("email_connections")
     .select(
@@ -809,7 +820,7 @@ async function processConnectionJob(
     provider,
     // The managed path obtains this token JIT in its task. The legacy local worker keeps the
     // existing behavior behind the feature gate until it is retired after rollout.
-    access_token: managedInboxEnabled() ? null : tokens.access_token,
+    access_token: managedPage ? null : tokens.access_token,
     raw_messages: providerBatch.metadata,
     scan_run_id: runID,
     batch_id: await scanRunBatchID(admin, runID),
@@ -817,14 +828,13 @@ async function processConnectionJob(
   }).select("id").single();
   if (enqueueError) throw enqueueError;
   if (!queuedScanJob) throw new Error("Could not queue managed scan page");
-  if (managedInboxEnabled()) {
-    await enqueueManagedPageAnalysis(
+  if (managedPage) {
+    await admitManagedPageAnalysis(
       admin,
       userID,
       runID,
       String(queuedScanJob.id),
       connection.id,
-      provider,
     );
   }
 
@@ -861,18 +871,23 @@ async function processConnectionJob(
       error_message: null,
     });
     if (nextPageError) throw nextPageError;
-    return true;
+    return {
+      hasNextPage: true,
+      managedPageID: managedPage ? String(queuedScanJob.id) : null,
+    };
   }
-  return false;
+  return {
+    hasNextPage: false,
+    managedPageID: managedPage ? String(queuedScanJob.id) : null,
+  };
 }
 
-async function enqueueManagedPageAnalysis(
+async function admitManagedPageAnalysis(
   admin: AdminClient,
   userID: string,
   runID: string,
   pageID: string,
   connectionID: string,
-  provider: Provider,
 ): Promise<void> {
   const idempotencyKey = managedPageIdempotencyKey(runID, pageID);
   // Persist the admission record before triggering so an immediately-started task has a durable
@@ -887,27 +902,6 @@ async function enqueueManagedPageAnalysis(
     p_runtime_task_id: null,
   });
   if (admissionError) throw admissionError;
-  const queue = managedPageQueue(provider);
-  const runtimeID = await triggerManagedInboxTask(
-    "analyze-inbox-page",
-    managedPagePayload(runID, pageID),
-    {
-      idempotencyKey,
-      concurrencyKey: `inbox-page:${provider}:${userID}`,
-      queueName: queue.name,
-      queueConcurrency: queue.concurrency,
-    },
-  );
-  const { error: updateError } = await admin.rpc("admit_inbox_agent_execution", {
-    p_user_id: userID,
-    p_scan_run_id: runID,
-    p_scan_job_id: pageID,
-    p_connection_id: connectionID,
-    p_task_kind: "page_analysis",
-    p_idempotency_key: idempotencyKey,
-    p_runtime_task_id: runtimeID,
-  });
-  if (updateError) throw updateError;
 }
 
 // --- Merchant lifecycle + candidate resolution -----------------------------------------------
@@ -1099,6 +1093,13 @@ async function scanStatus(
     .eq("batch_id", batchID);
   if (workerJobsError) throw workerJobsError;
 
+  const { data: managedExecutions, error: managedExecutionsError } = await admin
+    .from("inbox_agent_executions")
+    .select("scan_run_id,state")
+    .eq("user_id", userID)
+    .in("scan_run_id", runs.map((run) => run.id));
+  if (managedExecutionsError) throw managedExecutionsError;
+
   const { data: candidates, error: candidatesError } = await admin
     .from("subscription_candidates")
     .select(
@@ -1130,6 +1131,14 @@ async function scanStatus(
     const runID = String(job.scan_run_id);
     edgeJobsByRun.set(runID, [...(edgeJobsByRun.get(runID) ?? []), job]);
   }
+  const managedExecutionsByRun = new Map<string, Array<Record<string, unknown>>>();
+  for (const execution of managedExecutions ?? []) {
+    const runID = String(execution.scan_run_id);
+    managedExecutionsByRun.set(
+      runID,
+      [...(managedExecutionsByRun.get(runID) ?? []), execution],
+    );
+  }
   const classificationByRun = new Map<string, RunClassification>();
   // Runs the DB still reports as active but which are actually terminal-failed -- either the worker
   // is down (job never claimed, aged out) or the worker failed the job (it marks scan_jobs failed
@@ -1139,6 +1148,7 @@ async function scanStatus(
   for (const run of runs) {
     const jobsForRun = workerJobsByRun.get(run.id) ?? [];
     const edgeJobsForRun = edgeJobsByRun.get(run.id) ?? [];
+    const executionsForRun = managedExecutionsByRun.get(run.id) ?? [];
     const classification = classifyPaginatedScanRun(
       { status: run.status, started_at: run.started_at },
       edgeJobsForRun.map((job) => ({ status: String(job.status ?? "") })),
@@ -1148,6 +1158,7 @@ async function scanStatus(
       })),
       nowMs,
       timeoutMs,
+      executionsForRun.map((execution) => ({ state: String(execution.state ?? "") })),
     );
     classificationByRun.set(run.id, classification);
     if (
@@ -1159,6 +1170,8 @@ async function scanStatus(
         run.id,
         jobsForRun.some((job) => job.status === "failed")
           ? workerFailedMessage
+          : executionsForRun.some((execution) => execution.state === "failed")
+          ? "A managed page analysis could not complete."
           : edgeJobsForRun.some((job) => job.status === "failed")
           ? "A mailbox page could not complete."
           : workerTimeoutMessage,

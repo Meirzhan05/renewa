@@ -49,10 +49,10 @@ test("managed orchestrator asks the Edge Function to process the next opaque pag
         assert.deepEqual(await request.json(), {
           action: "managed_process_connection", scan_run_id: "run-1", connection_id: "connection-1",
         });
-        return Response.json({ has_next_page: true });
+        return Response.json({ has_next_page: true, page_id: "page-1" });
       },
     );
-    assert.deepEqual(result, { cancelled: false, hasNextPage: true });
+    assert.deepEqual(result, { cancelled: false, hasNextPage: true, pageId: "page-1" });
   } finally {
     if (previousURL === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousURL;
     if (previousSecret === undefined) delete process.env.MANAGED_AGENT_SHARED_SECRET;

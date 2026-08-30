@@ -123,6 +123,18 @@ Deno.test("active edge page keeps a run active while an earlier worker page is c
   assertEquals(c, "active");
 });
 
+Deno.test("a managed task waiting for capacity stays active beyond the legacy worker timeout", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "running", started_at: isoAgo(20 * 60_000) },
+    [{ status: "completed" }],
+    [{ status: "pending", created_at: isoAgo(20 * 60_000) }],
+    NOW,
+    TIMEOUT,
+    [{ state: "queued" }],
+  );
+  assertEquals(c, "active");
+});
+
 Deno.test("every terminal page completes only after the worker set is drained", () => {
   const c = classifyPaginatedScanRun(
     { status: "running", started_at: isoAgo(90_000) },
