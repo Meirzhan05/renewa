@@ -33,8 +33,12 @@ import { buildLearningSummary } from "../_shared/inbox-scan-dashboard.ts";
 import {
   aggregateRunStatus,
   classifyPaginatedScanRun,
+  EMPTY_RUN_PROGRESS,
+  indexRunProgress,
   type RunClassification,
+  type RunProgressRow,
   scanCompletionTimeoutMs,
+  totalRunProgress,
 } from "../_shared/scan-status.ts";
 import {
   cursorRecoveryLookbackDays,
@@ -822,6 +826,10 @@ async function processConnectionJob(
     // existing behavior behind the feature gate until it is retired after rollout.
     access_token: managedPage ? null : tokens.access_token,
     raw_messages: providerBatch.metadata,
+    // Per-page ledger entry: the run's app-visible "messages checked" is SUM(message_count) over its
+    // pages (see email_scan_batch_progress / change fix-managed-scan-page-counts), so this must be the
+    // page's own window size, never the running total.
+    message_count: providerBatch.metadata.length,
     scan_run_id: runID,
     batch_id: await scanRunBatchID(admin, runID),
     connection_id: connection.id,
@@ -1110,6 +1118,17 @@ async function scanStatus(
     .order("created_at", { ascending: false });
   if (candidatesError) throw candidatesError;
 
+  // Cumulative per-run progress from the page ledger (scan_jobs), computed in SQL so message payloads
+  // never transfer on a poll and a retried page cannot double-count. Replaces the per-page overwrite of
+  // email_scan_runs.messages_scanned / candidate_messages / events_detected, which froze at one page.
+  const { data: progressRows, error: progressError } = await admin.rpc(
+    "email_scan_batch_progress",
+    { p_user_id: userID, p_batch_id: batchID },
+  );
+  if (progressError) throw progressError;
+  const progressByRun = indexRunProgress((progressRows ?? []) as RunProgressRow[]);
+  const totalProgress = totalRunProgress(progressByRun);
+
   // Derive the app-visible status from the WORKER's real progress on each run (the run lifecycle it
   // finalizes + the worker queue's liveness), not the edge's `email_scan_jobs` queue -- which is
   // marked completed the moment the mailbox window is handed off, before the worker reasons at all.
@@ -1210,9 +1229,9 @@ async function scanStatus(
     status: aggregateStatus,
     stage: aggregateStage(runs, aggregateStatus),
     connection_count: runs.length,
-    scanned: sum(runs, "messages_scanned"),
-    candidate_messages: sum(runs, "candidate_messages"),
-    detected: sum(runs, "events_detected"),
+    scanned: totalProgress.scanned,
+    candidate_messages: totalProgress.likelyBilling,
+    detected: totalProgress.detected,
     validation_failures: sum(runs, "validation_failures"),
     withheld_ambiguities: sum(runs, "withheld_ambiguities"),
     pending_count: pendingCandidates.length,
@@ -1222,15 +1241,16 @@ async function scanStatus(
       );
       const classification = classificationByRun.get(run.id) ?? "active";
       const failureMessage = failureMessageByRun.get(run.id);
+      const progress = progressByRun.get(run.id) ?? EMPTY_RUN_PROGRESS;
       return {
         provider: run.provider,
         // Match the aggregate: active -> 'running', otherwise the terminal classification. The
         // edge's `email_scan_jobs` status is no longer used here (it completes at hand-off).
         status: classification === "active" ? "running" : classification,
         stage: failureMessage ? "failed" : run.stage,
-        scanned: run.messages_scanned,
-        candidate_messages: run.candidate_messages,
-        detected: run.events_detected,
+        scanned: progress.scanned,
+        candidate_messages: progress.likelyBilling,
+        detected: progress.detected,
         error: failureMessage ?? run.error_message ?? job?.error_message ?? null,
       };
     }),

@@ -150,3 +150,46 @@ function timestampMs(value: string | null | undefined): number | null {
   const ms = Date.parse(value);
   return Number.isNaN(ms) ? null : ms;
 }
+
+// --- Cumulative progress across a run's mailbox pages ---------------------------------------------
+// Progress (messages checked / likely-billing / detected) is derived from the per-page ledger by the
+// `email_scan_batch_progress` SQL function, which SUMs each page's count for a run. That aggregation
+// is intentionally in SQL (payloads never transfer; a retried page replaces its row rather than adding
+// one, so it cannot double-count). These helpers only shape the aggregate's rows for the response.
+
+/** One row of `email_scan_batch_progress` (bigints arrive as number or numeric-string). */
+export type RunProgressRow = {
+  scan_run_id: string;
+  messages_scanned: number | string | null;
+  likely_billing: number | string | null;
+  detected: number | string | null;
+};
+
+export type RunProgress = { scanned: number; likelyBilling: number; detected: number };
+
+export const EMPTY_RUN_PROGRESS: RunProgress = { scanned: 0, likelyBilling: 0, detected: 0 };
+
+/** Index the aggregate rows by run id, coercing bigint-as-string to number. */
+export function indexRunProgress(rows: RunProgressRow[]): Map<string, RunProgress> {
+  const byRun = new Map<string, RunProgress>();
+  for (const row of rows) {
+    byRun.set(String(row.scan_run_id), {
+      scanned: Number(row.messages_scanned ?? 0),
+      likelyBilling: Number(row.likely_billing ?? 0),
+      detected: Number(row.detected ?? 0),
+    });
+  }
+  return byRun;
+}
+
+/** Sum per-run progress into the batch-wide totals the app shows for the whole scan. */
+export function totalRunProgress(byRun: Map<string, RunProgress>): RunProgress {
+  return [...byRun.values()].reduce(
+    (acc, page) => ({
+      scanned: acc.scanned + page.scanned,
+      likelyBilling: acc.likelyBilling + page.likelyBilling,
+      detected: acc.detected + page.detected,
+    }),
+    { ...EMPTY_RUN_PROGRESS },
+  );
+}

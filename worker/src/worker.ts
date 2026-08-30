@@ -10,7 +10,7 @@ import { PgJobStore, type JobStore, type ScanJob } from "./db.ts";
 import { createScanExecutor } from "./executor.ts";
 import { buildGraph, type RouteOutcome } from "./graph/graph.ts";
 import { isAutonomousModeEnabled } from "./agent/pipeline.ts";
-import { analyzeInboxPage, bridgeInboxProposals } from "./managed/page-analysis.ts";
+import { analyzeInboxPage, bridgeInboxProposals, recordPageTriageCount } from "./managed/page-analysis.ts";
 import type { ProposalCandidate } from "./agent/types.ts";
 import {
   makeChatFn,
@@ -137,7 +137,8 @@ async function main(): Promise<void> {
       console.log(
         `[worker] claim ${job.id} · ${job.provider} · ${job.rawMessages.length} msgs · run=${job.scanRunId ?? "none"}`,
       );
-      const proposals = await analyzeInboxPage(pool, checkpointer, job);
+      const { proposals, lookCount } = await analyzeInboxPage(pool, checkpointer, job);
+      await recordPageTriageCount(pool, job.id, lookCount);
       await bridgeInboxProposals(pool, job, proposals);
       // Per-job visibility without including message content or credentials in logs.
       console.log(

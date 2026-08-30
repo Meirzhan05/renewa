@@ -5,7 +5,7 @@ import { loadConfig } from "../config.ts";
 import { PgJobStore } from "../db.ts";
 import { claimManagedPageContext } from "../managed/edge-client.ts";
 import { isAnalyzeInboxPagePayload, type AnalyzeInboxPagePayload } from "../managed/contracts.ts";
-import { analyzeInboxPage, bridgeInboxProposals } from "../managed/page-analysis.ts";
+import { analyzeInboxPage, bridgeInboxProposals, recordPageTriageCount } from "../managed/page-analysis.ts";
 
 export const analyzeInboxPageTask = task({
   id: "analyze-inbox-page",
@@ -27,7 +27,7 @@ export const analyzeInboxPageTask = task({
         return { alreadyCompleted: true };
       }
       try {
-        const proposals = await withExecutionHeartbeat(pool, context.executionId, async () =>
+        const analysis = await withExecutionHeartbeat(pool, context.executionId, async () =>
           analyzeInboxPage(pool, checkpointer, job)
         );
         if (await store.isRunCancellationRequested(job.scanRunId)) {
@@ -35,10 +35,11 @@ export const analyzeInboxPageTask = task({
           await completeExecution(pool, context.executionId, "cancelled");
           return { cancelled: true };
         }
-        await bridgeInboxProposals(pool, job, proposals);
-        await store.finishAutonomousJob(job.id, proposals);
+        await recordPageTriageCount(pool, job.id, analysis.lookCount);
+        await bridgeInboxProposals(pool, job, analysis.proposals);
+        await store.finishAutonomousJob(job.id, analysis.proposals);
         await completeExecution(pool, context.executionId, "completed");
-        return { proposals: proposals.length };
+        return { proposals: analysis.proposals.length };
       } catch (error) {
         await store.failJob(job.id, errorMessage(error));
         await completeExecution(pool, context.executionId, "retryable", errorMessage(error));

@@ -3,7 +3,10 @@ import {
   classifyPaginatedScanRun,
   classifyScanRun,
   DEFAULT_SCAN_COMPLETION_TIMEOUT_MS,
+  indexRunProgress,
+  type RunProgressRow,
   scanCompletionTimeoutMs,
+  totalRunProgress,
 } from "./scan-status.ts";
 
 function assertEquals<T>(actual: T, expected: T, message?: string): void {
@@ -185,4 +188,43 @@ Deno.test("timeout env parsing falls back on missing/invalid values", () => {
   assertEquals(scanCompletionTimeoutMs(""), DEFAULT_SCAN_COMPLETION_TIMEOUT_MS);
   assertEquals(scanCompletionTimeoutMs("nonsense"), DEFAULT_SCAN_COMPLETION_TIMEOUT_MS);
   assertEquals(scanCompletionTimeoutMs("-5"), DEFAULT_SCAN_COMPLETION_TIMEOUT_MS);
+});
+
+Deno.test("progress: index coerces bigint-as-string and maps by run", () => {
+  const rows: RunProgressRow[] = [
+    { scan_run_id: "run-a", messages_scanned: "1800", likely_billing: "8", detected: "6" },
+  ];
+  const byRun = indexRunProgress(rows);
+  const a = byRun.get("run-a");
+  assertEquals(a?.scanned, 1800);
+  assertEquals(a?.likelyBilling, 8);
+  assertEquals(a?.detected, 6);
+});
+
+Deno.test("progress: null/absent counts read as zero, not NaN", () => {
+  const byRun = indexRunProgress([
+    { scan_run_id: "run-a", messages_scanned: null, likely_billing: null, detected: null },
+  ]);
+  const total = totalRunProgress(byRun);
+  assertEquals(total.scanned, 0);
+  assertEquals(total.likelyBilling, 0);
+  assertEquals(total.detected, 0);
+});
+
+Deno.test("progress: batch total sums across connections (two runs)", () => {
+  const byRun = indexRunProgress([
+    { scan_run_id: "run-a", messages_scanned: 1200, likely_billing: 5, detected: 4 },
+    { scan_run_id: "run-b", messages_scanned: 600, likely_billing: 3, detected: 2 },
+  ]);
+  const total = totalRunProgress(byRun);
+  assertEquals(total.scanned, 1800);
+  assertEquals(total.likelyBilling, 8);
+  assertEquals(total.detected, 6);
+});
+
+Deno.test("progress: empty aggregate yields zero totals", () => {
+  const total = totalRunProgress(indexRunProgress([]));
+  assertEquals(total.scanned, 0);
+  assertEquals(total.likelyBilling, 0);
+  assertEquals(total.detected, 0);
 });
