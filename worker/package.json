@@ -10,7 +10,10 @@
   "scripts": {
     "test": "node --test test/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "start": "node --env-file-if-exists=.env src/worker.ts",
+    "start": "node scripts/start-help.ts",
+    "worker:local": "node --env-file-if-exists=.env src/worker.ts",
+    "trigger:dev": "npx trigger.dev@4.5.14 dev",
+    "trigger:deploy": "npx trigger.dev@4.5.14 deploy",
     "trace": "node --env-file-if-exists=.env scripts/trace-scan.ts",
     "eval": "node --env-file-if-exists=.env scripts/eval.ts",
     "gmail": "node --env-file-if-exists=.env scripts/gmail-scan.ts",
@@ -19,6 +22,7 @@
   "dependencies": {
     "@langchain/langgraph": "^1.4.12",
     "@langchain/langgraph-checkpoint-postgres": "^1.0.5",
+    "@trigger.dev/sdk": "^4.5.14",
     "googleapis": "^176.0.0",
     "langsmith": "^0.9.0",
     "pg": "^8.13.1"

@@ -1,15 +1,15 @@
 ## 1. Managed runtime foundation
 
-- [ ] 1.1 Add the Trigger.dev task-runtime package, project configuration, environment validation,
+- [x] 1.1 Add the Trigger.dev task-runtime package, project configuration, environment validation,
       and a narrow local adapter that keeps runtime calls out of the scan API and domain pipeline.
-- [ ] 1.2 Define versioned, identifier-only contracts for `scanInboxRun` and
+- [x] 1.2 Define versioned, identifier-only contracts for `scanInboxRun` and
       `analyzeInboxPage`, with deterministic idempotency keys based on run, page, and operation.
-- [ ] 1.3 Change local scripts so `npm start` cannot accidentally consume production-like agent
+- [x] 1.3 Change local scripts so `npm start` cannot accidentally consume production-like agent
       work; reserve an explicit development-only worker/task command for intentional local runs.
 
 ## 2. Durable execution and cancellation state
 
-- [ ] 2.1 Add an additive Supabase migration for managed agent-execution records or equivalent
+- [x] 2.1 Add an additive Supabase migration for managed agent-execution records or equivalent
       queue metadata: runtime task ID, idempotency key, attempt, state, lease, heartbeat,
       retry-at, terminal error, and correlation fields.
 - [ ] 2.2 Add owner-scoped scan cancellation state and a safe cancelled terminal outcome while
