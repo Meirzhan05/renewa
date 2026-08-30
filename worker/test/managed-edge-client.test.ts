@@ -61,3 +61,27 @@ test("managed orchestrator asks the Edge Function to process the next opaque pag
     else process.env.SUPABASE_PUBLISHABLE_KEY = previousPublicKey;
   }
 });
+
+test("managed tasks normalize a legacy Supabase REST URL before calling Edge Functions", async () => {
+  const previousURL = process.env.SUPABASE_URL;
+  const previousSecret = process.env.MANAGED_AGENT_SHARED_SECRET;
+  const previousPublicKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+  process.env.SUPABASE_URL = "https://dev.example.test/rest/v1/";
+  process.env.MANAGED_AGENT_SHARED_SECRET = "shared-development-secret";
+  process.env.SUPABASE_PUBLISHABLE_KEY = "public-development-key";
+  try {
+    await processManagedConnection(
+      { version: 1, scanRunId: "run-1", connectionId: "connection-1" },
+      async (input) => {
+        assert.equal(input, "https://dev.example.test/functions/v1/email-scan");
+        return Response.json({ has_next_page: false });
+      },
+    );
+  } finally {
+    if (previousURL === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousURL;
+    if (previousSecret === undefined) delete process.env.MANAGED_AGENT_SHARED_SECRET;
+    else process.env.MANAGED_AGENT_SHARED_SECRET = previousSecret;
+    if (previousPublicKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    else process.env.SUPABASE_PUBLISHABLE_KEY = previousPublicKey;
+  }
+});

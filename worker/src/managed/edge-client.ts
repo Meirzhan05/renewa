@@ -5,6 +5,7 @@ type ManagedPageContext = {
   cancelled?: unknown;
   execution_id?: unknown;
   access_token?: unknown;
+  message?: unknown;
 };
 
 export type ClaimedManagedPage =
@@ -18,7 +19,7 @@ export async function claimManagedPageContext(
   fetcher: typeof fetch = fetch,
 ): Promise<ClaimedManagedPage> {
   if (!isAnalyzeInboxPagePayload(payload)) throw new Error("Invalid managed Inbox page payload");
-  const baseURL = requiredEnv("SUPABASE_URL").replace(/\/$/, "");
+  const baseURL = supabaseFunctionsBaseURL();
   const response = await fetcher(`${baseURL}/functions/v1/email-scan`, {
     method: "POST",
     headers: {
@@ -34,7 +35,7 @@ export async function claimManagedPageContext(
     }),
   });
   const body = await response.json().catch(() => ({})) as ManagedPageContext;
-  if (!response.ok) throw new Error("Managed page context could not be loaded");
+  if (!response.ok) throw new Error(edgeErrorMessage(body, "Managed page context could not be loaded"));
   if (body.cancelled === true) return { cancelled: true };
   if (typeof body.execution_id !== "string" || typeof body.access_token !== "string") {
     throw new Error("Managed page context was incomplete");
@@ -47,7 +48,7 @@ export async function processManagedConnection(
   fetcher: typeof fetch = fetch,
 ): Promise<{ cancelled: boolean; hasNextPage: boolean }> {
   if (!isScanInboxRunPayload(payload)) throw new Error("Invalid managed Inbox run payload");
-  const response = await fetcher(`${requiredEnv("SUPABASE_URL").replace(/\/$/, "")}/functions/v1/email-scan`, {
+  const response = await fetcher(`${supabaseFunctionsBaseURL()}/functions/v1/email-scan`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -60,8 +61,12 @@ export async function processManagedConnection(
       connection_id: payload.connectionId,
     }),
   });
-  const body = await response.json().catch(() => ({})) as { cancelled?: unknown; has_next_page?: unknown };
-  if (!response.ok) throw new Error("Managed connection page could not be processed");
+  const body = await response.json().catch(() => ({})) as {
+    cancelled?: unknown;
+    has_next_page?: unknown;
+    message?: unknown;
+  };
+  if (!response.ok) throw new Error(edgeErrorMessage(body, "Managed connection page could not be processed"));
   return { cancelled: body.cancelled === true, hasNextPage: body.has_next_page === true };
 }
 
@@ -75,4 +80,14 @@ function requiredPublicKey(): string {
   const key = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY;
   if (!key) throw new Error("SUPABASE_PUBLISHABLE_KEY is required for managed Inbox tasks");
   return key;
+}
+
+/** Accept either a project root URL or the REST endpoint used by the legacy worker. */
+function supabaseFunctionsBaseURL(): string {
+  return requiredEnv("SUPABASE_URL").trim().replace(/\/+$/, "").replace(/\/rest\/v1$/, "");
+}
+
+function edgeErrorMessage(body: { message?: unknown }, fallback: string): string {
+  if (typeof body.message !== "string" || body.message.length === 0) return fallback;
+  return body.message.slice(0, 300);
 }
