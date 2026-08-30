@@ -170,7 +170,9 @@ Deno.serve(async (request) => {
       }
       case "status": {
         const scanID = optionalString(body.scan_id);
-        scheduleUserJobs(admin, user.id, scanID);
+        // Trigger.dev owns managed orchestration. Polling is read-only there; repeatedly
+        // scheduling from each status refresh can create redundant retries when a task fails.
+        if (!managedInboxEnabled()) scheduleUserJobs(admin, user.id, scanID);
         return json(await scanStatus(admin, user.id, scanID));
       }
       case "cancel":

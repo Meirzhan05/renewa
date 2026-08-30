@@ -23,6 +23,7 @@ export async function claimManagedPageContext(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      apikey: requiredPublicKey(),
       "x-renewa-managed-agent-secret": requiredEnv("MANAGED_AGENT_SHARED_SECRET"),
     },
     body: JSON.stringify({
@@ -50,6 +51,7 @@ export async function processManagedConnection(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      apikey: requiredPublicKey(),
       "x-renewa-managed-agent-secret": requiredEnv("MANAGED_AGENT_SHARED_SECRET"),
     },
     body: JSON.stringify({
@@ -67,4 +69,10 @@ function requiredEnv(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required for managed Inbox tasks`);
   return value;
+}
+
+function requiredPublicKey(): string {
+  const key = process.env.SUPABASE_PUBLISHABLE_KEY ?? process.env.SUPABASE_ANON_KEY;
+  if (!key) throw new Error("SUPABASE_PUBLISHABLE_KEY is required for managed Inbox tasks");
+  return key;
 }
