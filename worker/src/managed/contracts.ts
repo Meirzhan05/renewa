@@ -20,6 +20,15 @@ export function pageAnalysisIdempotencyKey(scanRunId: string, pageId: string): s
   return `inbox-page-analysis:v${MANAGED_INBOX_TASK_VERSION}:${scanRunId}:${pageId}`;
 }
 
+/**
+ * Concurrency key for page analyses of one run. Trigger.dev copies the queue per unique key, so every
+ * page of a run shares one copy bounded by the per-user analysis budget. A run belongs to a single
+ * user, so a per-run key is the per-user bound.
+ */
+export function pageAnalysisConcurrencyKey(scanRunId: string): string {
+  return `inbox-page:${scanRunId}`;
+}
+
 export function isScanInboxRunPayload(value: unknown): value is ScanInboxRunPayload {
   if (!value || typeof value !== "object") return false;
   const payload = value as Record<string, unknown>;

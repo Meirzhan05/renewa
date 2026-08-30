@@ -5,11 +5,14 @@ import { loadConfig } from "../config.ts";
 import { PgJobStore } from "../db.ts";
 import { claimManagedPageContext } from "../managed/edge-client.ts";
 import { isAnalyzeInboxPagePayload, type AnalyzeInboxPagePayload } from "../managed/contracts.ts";
+import { perUserAnalysisConcurrency } from "../managed/config.ts";
 import { analyzeInboxPage, bridgeInboxProposals, recordPageTriageCount } from "../managed/page-analysis.ts";
 
 export const analyzeInboxPageTask = task({
   id: "analyze-inbox-page",
-  queue: { name: "inbox-agent-pages", concurrencyLimit: 20 },
+  // With a per-run concurrency key (see scan-inbox-run), this limit applies per run, so it is the
+  // per-user analysis budget; global load stays bounded by the environment/provider ceilings.
+  queue: { name: "inbox-agent-pages", concurrencyLimit: perUserAnalysisConcurrency() },
   run: async (payload: AnalyzeInboxPagePayload, { ctx }) => {
     if (!isAnalyzeInboxPagePayload(payload)) throw new Error("Invalid managed Inbox page payload");
     const context = await claimManagedPageContext(payload, ctx.run.id);
