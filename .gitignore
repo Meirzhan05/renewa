@@ -8,4 +8,5 @@ xcuserdata/
 supabase/.temp/
 supabase/.branches/
 supabase/functions/.env
+worker/.trigger/
 Config.local.xcconfig

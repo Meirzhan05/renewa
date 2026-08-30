@@ -38,13 +38,9 @@ export function managedInboxEnabled(): boolean {
 }
 
 export function managedPageQueue(provider: string): { name: string; concurrency: number } {
-  const key = provider === "google"
-    ? "INBOX_AGENT_GOOGLE_CONCURRENCY"
-    : "INBOX_AGENT_MICROSOFT_CONCURRENCY";
-  const fallback = provider === "google" ? 10 : 10;
-  const configured = Number(Deno.env.get(key) ?? fallback);
-  const concurrency = Number.isInteger(configured) && configured > 0 ? configured : fallback;
-  return { name: `inbox-agent-pages-${provider}`, concurrency };
+  // Trigger creates a separate queue for every concurrency key. A limit of one therefore gives
+  // each user exactly one active page analysis; environment concurrency remains the global cap.
+  return { name: `inbox-agent-pages-${provider}`, concurrency: 1 };
 }
 
 export function managedPagePayload(scanRunId: string, pageId: string) {
