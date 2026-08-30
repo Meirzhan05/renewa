@@ -79,8 +79,9 @@ export async function bridgeProposalsToCandidates(
     const event = await runner.query(
       `insert into detected_billing_events
          (user_id, scan_run_id, provider, provider_message_id, event_type, merchant_name,
-          amount, currency, billing_cycle, event_date, renewal_date, confidence, evidence)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          amount, currency, billing_cycle, event_date, renewal_date, confidence, evidence,
+          source_received_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, coalesce($14::timestamptz, now()))
        on conflict (user_id, provider, provider_message_id, event_type)
          do update set merchant_name = excluded.merchant_name,
                        amount = excluded.amount,
@@ -101,6 +102,8 @@ export async function bridgeProposalsToCandidates(
         p.renewal_date,
         p.confidence,
         evidence,
+        // source_received_at is NOT NULL with no default; fall back to now() when the event has no date.
+        p.event_date,
       ],
     );
     const detectedEventId = event.rows[0]?.id;
