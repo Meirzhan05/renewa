@@ -135,6 +135,10 @@ private enum AppTab: String, CaseIterable {
         }
     }
 
+    /// Position in the tab bar, left to right. Drives the slide direction on a tab switch.
+    var order: Int {
+        Self.allCases.firstIndex(of: self) ?? 0
+    }
 }
 
 struct MainTabView: View {
@@ -142,6 +146,9 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .home
     @State private var showingAdd = false
     @State private var prefilledSubscriptionName: String?
+    /// True when the last switch moved to a tab further right, so the new screen slides
+    /// in from the trailing edge; false slides it in from the leading edge.
+    @State private var slideForward = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init() {
@@ -220,7 +227,15 @@ struct MainTabView: View {
     }
 
     private var tabTransition: AnyTransition {
-        .opacity.combined(with: .scale(scale: 0.985))
+        // The incoming screen enters from the side we're heading toward; the outgoing one
+        // exits the opposite side, so the two slide across together. A fade rounds off the
+        // hand-off, and the bouncy spring in `selectTab` adds the slight settle at the end.
+        let insertionEdge: Edge = slideForward ? .trailing : .leading
+        let removalEdge: Edge = slideForward ? .leading : .trailing
+        return .asymmetric(
+            insertion: .move(edge: insertionEdge).combined(with: .opacity),
+            removal: .move(edge: removalEdge).combined(with: .opacity)
+        )
     }
 
     private var showsCalendarForQA: Bool {
@@ -234,11 +249,11 @@ struct MainTabView: View {
     private func selectTab(_ tab: AppTab) {
         guard tab != selectedTab else { return }
 
-        withAnimation(
-            reduceMotion
-                ? .easeOut(duration: 0.12)
-                : .spring(response: 0.5, dampingFraction: 0.76)
-        ) {
+        // Set the slide direction before the switch so `tabTransition` reads the right edges
+        // for this render pass. Not wrapped in the animation — it just picks the transition.
+        slideForward = tab.order > selectedTab.order
+
+        withAnimation(reduceMotion ? .easeOut(duration: 0.12) : RenewaMotion.bouncy) {
             selectedTab = tab
         }
     }

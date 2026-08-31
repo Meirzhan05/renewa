@@ -35,6 +35,9 @@ enum RenewaMotion {
     static let quick = Animation.spring(response: 0.32, dampingFraction: 0.82)
     static let standard = Animation.spring(response: 0.52, dampingFraction: 0.84)
     static let gentle = Animation.spring(response: 0.72, dampingFraction: 0.88)
+    /// Directional slide with a slight overshoot at the end (used for tab switches).
+    /// The low damping is what produces the little bounce as the incoming view settles.
+    static let bouncy = Animation.spring(response: 0.44, dampingFraction: 0.74)
 }
 
 extension Font {
