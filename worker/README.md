@@ -53,8 +53,10 @@ npm run trigger:dev      # managed development runner, only when deliberately te
 ```
 
 The managed runner needs development-only `TRIGGER_PROJECT_REF`, `TRIGGER_SECRET_KEY`,
-`MANAGED_AGENT_SHARED_SECRET`, `MANAGED_DATABASE_URL`, and model configuration. Keep them in an
-ignored environment file, never in the app or task payload. For hosted Supabase, the managed URL
+`MANAGED_AGENT_SHARED_SECRET`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`,
+`MANAGED_DATABASE_URL`, and model configuration. Keep them in an ignored environment file, never
+in the app or task payload. The public Supabase key is required only to reach the protected
+Function; it is not a service-role credential. For hosted Supabase, the managed URL
 must be the **Transaction pooler** connection string (port `6543`) and
 `MANAGED_DATABASE_REQUIRE_TRANSACTION_POOLER=true`; local Postgres may use its ordinary URL.
 Start conservatively with a one-connection pool, global/provider capacity of four, and one page per
