@@ -1400,7 +1400,7 @@ async function reconcilePendingCandidates(
     .from("email_scan_runs")
     .select("id")
     .eq("user_id", userID)
-    .in("status", ["queued", "running"]);
+    .eq("status", "running"); // scan_status enum is running|completed|failed|cancelled (no 'queued')
   if (activeRunsError) throw activeRunsError;
   const activeRuns = new Set((activeRunRows ?? []).map((run) => String(run.id)));
 
