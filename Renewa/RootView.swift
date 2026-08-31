@@ -135,22 +135,6 @@ private enum AppTab: String, CaseIterable {
         }
     }
 
-    var index: Int {
-        AppTab.allCases.firstIndex(of: self) ?? 0
-    }
-}
-
-private enum TabNavigationDirection {
-    case forward
-    case backward
-
-    var insertionEdge: Edge {
-        self == .forward ? .trailing : .leading
-    }
-
-    var removalEdge: Edge {
-        self == .forward ? .leading : .trailing
-    }
 }
 
 struct MainTabView: View {
@@ -158,7 +142,6 @@ struct MainTabView: View {
     @State private var selectedTab: AppTab = .home
     @State private var showingAdd = false
     @State private var prefilledSubscriptionName: String?
-    @State private var tabNavigationDirection: TabNavigationDirection = .forward
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init() {
@@ -212,7 +195,7 @@ struct MainTabView: View {
                 }
             }
             .id(selectedTab)
-            .transition(reduceMotion ? .opacity : pageTransition)
+            .transition(reduceMotion ? .opacity : tabTransition)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(RenewaTheme.background.ignoresSafeArea())
@@ -236,14 +219,8 @@ struct MainTabView: View {
         }
     }
 
-    private var pageTransition: AnyTransition {
-        .asymmetric(
-            insertion: .move(edge: tabNavigationDirection.insertionEdge)
-                .combined(with: .opacity)
-                .combined(with: .scale(scale: 0.96)),
-            removal: .move(edge: tabNavigationDirection.removalEdge)
-                .combined(with: .opacity)
-        )
+    private var tabTransition: AnyTransition {
+        .opacity.combined(with: .scale(scale: 0.985))
     }
 
     private var showsCalendarForQA: Bool {
@@ -262,7 +239,6 @@ struct MainTabView: View {
                 ? .easeOut(duration: 0.12)
                 : .spring(response: 0.5, dampingFraction: 0.76)
         ) {
-            tabNavigationDirection = tab.index > selectedTab.index ? .forward : .backward
             selectedTab = tab
         }
     }
