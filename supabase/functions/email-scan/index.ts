@@ -540,6 +540,8 @@ async function managedPageContext(
 ): Promise<Record<string, unknown>> {
   const runID = requiredString(body.scan_run_id, "scan_run_id");
   const jobID = requiredString(body.scan_job_id, "scan_job_id");
+  const executionID = requiredString(body.execution_id, "execution_id");
+  const dispatchToken = requiredString(body.dispatch_token, "dispatch_token");
   const runtimeTaskID = requiredString(body.runtime_task_id, "runtime_task_id");
   const { data: job, error: jobError } = await admin.from("scan_jobs")
     .select("id,user_id,provider,scan_run_id,connection_id")
@@ -547,12 +549,13 @@ async function managedPageContext(
   if (jobError) throw jobError;
   if (!job) throw new Error("Managed scan page not found");
   const { data: execution, error: executionError } = await admin.from("inbox_agent_executions")
-    .select("id")
-    .eq("scan_job_id", jobID).eq("scan_run_id", runID).maybeSingle();
+    .select("id,scan_job_id,scan_run_id")
+    .eq("id", executionID).eq("scan_job_id", jobID).eq("scan_run_id", runID).maybeSingle();
   if (executionError) throw executionError;
   if (!execution) throw new Error("Managed scan execution not found");
-  const { data: claimed, error: claimError } = await admin.rpc("claim_inbox_agent_execution", {
+  const { data: claimed, error: claimError } = await admin.rpc("claim_dispatched_inbox_agent_execution", {
     p_execution_id: execution.id,
+    p_dispatch_token: dispatchToken,
     p_runtime_task_id: runtimeTaskID,
   });
   if (claimError) throw claimError;
@@ -1159,6 +1162,16 @@ async function scanStatus(
       [...(managedExecutionsByRun.get(runID) ?? []), execution],
     );
   }
+  const executionCounts = { queued: 0, analyzing: 0, retrying: 0, cancelled: 0, failed: 0 };
+  for (const execution of managedExecutions ?? []) {
+    switch (execution.state) {
+      case "queued": case "leased": executionCounts.queued += 1; break;
+      case "running": executionCounts.analyzing += 1; break;
+      case "retryable": executionCounts.retrying += 1; break;
+      case "cancelled": executionCounts.cancelled += 1; break;
+      case "failed": executionCounts.failed += 1; break;
+    }
+  }
   const classificationByRun = new Map<string, RunClassification>();
   // Runs the DB still reports as active but which are actually terminal-failed -- either the worker
   // is down (job never claimed, aged out) or the worker failed the job (it marks scan_jobs failed
@@ -1228,7 +1241,9 @@ async function scanStatus(
   return {
     scan_id: batchID,
     status: aggregateStatus,
-    stage: aggregateStage(runs, aggregateStatus),
+    stage: aggregateStatus === "running" && executionCounts.retrying > 0
+      ? "reasoning"
+      : aggregateStage(runs, aggregateStatus),
     connection_count: runs.length,
     scanned: totalProgress.scanned,
     candidate_messages: totalProgress.likelyBilling,
@@ -1236,6 +1251,7 @@ async function scanStatus(
     validation_failures: sum(runs, "validation_failures"),
     withheld_ambiguities: sum(runs, "withheld_ambiguities"),
     pending_count: pendingCandidates.length,
+    execution_counts: executionCounts,
     runs: runs.map((run) => {
       const job = (edgeJobsByRun.get(run.id) ?? []).find((item) =>
         typeof item.error_message === "string" && item.error_message.length > 0

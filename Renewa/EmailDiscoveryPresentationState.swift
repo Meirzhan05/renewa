@@ -36,6 +36,7 @@ struct EmailDiscoveryPresentationState: Equatable {
     let validationFailures: Int
     let learningSummary: EmailScanLearningSummary?
     let connections: [EmailConnectionSummary]
+    let executionCounts: EmailScanExecutionCounts?
 
     init(status: EmailScanStatus?) {
         self.status = status?.status ?? .idle
@@ -49,6 +50,7 @@ struct EmailDiscoveryPresentationState: Equatable {
         validationFailures = status?.validationFailures ?? 0
         learningSummary = status?.learningSummary
         connections = status?.connections ?? []
+        executionCounts = status?.executionCounts
     }
 
     var isScanning: Bool {
@@ -165,6 +167,16 @@ struct EmailDiscoveryPresentationState: Equatable {
         case .noInbox:
             return "Read-only access. Disconnect it whenever you want."
         case .scanning:
+            if let executionCounts, executionCounts.retrying > 0 {
+                return "Retrying \(executionCounts.retrying) page\(executionCounts.retrying == 1 ? "" : "s") safely."
+            }
+            if let executionCounts, executionCounts.queued > 0 || executionCounts.analyzing > 0 {
+                let parts = [
+                    executionCounts.analyzing > 0 ? "\(executionCounts.analyzing) analyzing" : nil,
+                    executionCounts.queued > 0 ? "\(executionCounts.queued) waiting" : nil,
+                ].compactMap { $0 }.joined(separator: " · ")
+                return "\(scanned) messages fetched · \(parts)"
+            }
             if scanned == 0 { return "Preparing \(connectionCount) connected inbox\(connectionCount == 1 ? "" : "es")." }
             return "\(scanned) messages checked · \(candidateMessages) likely billing emails"
         case .reviewReady:

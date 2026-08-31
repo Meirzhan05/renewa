@@ -12,7 +12,7 @@ export type ManagedTriggerResult = { id: string };
 export type TriggerTask = (
   taskIdentifier: string,
   payload: Record<string, unknown>,
-  options: { idempotencyKey: string; concurrencyKey: string },
+  options: { idempotencyKey: string; concurrencyKey?: string },
 ) => Promise<ManagedTriggerResult>;
 
 export interface ManagedInboxRuntime {
@@ -44,9 +44,10 @@ export class TriggerManagedInboxRuntime implements ManagedInboxRuntime {
     userID: string,
     provider: string,
   ): Promise<ManagedTriggerResult> {
+    void userID;
+    void provider;
     return this.triggerTask("analyze-inbox-page", payload, {
-      idempotencyKey: pageAnalysisIdempotencyKey(payload.scanRunId, payload.pageId),
-      concurrencyKey: `inbox-page:${provider}:${userID}`,
+      idempotencyKey: pageAnalysisIdempotencyKey(payload.executionId, payload.dispatchToken),
     });
   }
 }

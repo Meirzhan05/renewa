@@ -175,6 +175,54 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
+    func test_fetchedMessagesRemainScanningWhilePagesAreAnalyzing() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .running,
+                stage: .reasoning,
+                scanned: 3_000,
+                executionCounts: EmailScanExecutionCounts(
+                    queued: 2, analyzing: 1, retrying: 0, cancelled: 0, failed: 0
+                )
+            )
+        )
+
+        XCTAssertTrue(state.isScanning)
+        XCTAssertEqual(state.progressText, "3000 messages fetched · 1 analyzing · 2 waiting")
+    }
+
+    @MainActor
+    func test_retryingPagesArePresentedAsDurableRecovery() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .running,
+                stage: .reasoning,
+                executionCounts: EmailScanExecutionCounts(
+                    queued: 0, analyzing: 0, retrying: 2, cancelled: 0, failed: 0
+                )
+            )
+        )
+
+        XCTAssertEqual(state.progressText, "Retrying 2 pages safely.")
+    }
+
+    @MainActor
+    func test_terminalFailureIsNotPresentedAsAStillRunningScan() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .failed,
+                errors: ["A managed page analysis could not complete."],
+                executionCounts: EmailScanExecutionCounts(
+                    queued: 0, analyzing: 0, retrying: 0, cancelled: 0, failed: 1
+                )
+            )
+        )
+
+        XCTAssertFalse(state.isScanning)
+        XCTAssertEqual(state.dashboardState, .needsAttention)
+    }
+
+    @MainActor
     func test_activeProviderMonitoring_isPresentedAsAutomaticInboxMonitoring() {
         let state = EmailDiscoveryPresentationState(
             status: makeStatus(status: .completed, monitoringHealth: "active")
@@ -279,7 +327,8 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         errors: [String] = [],
         learningSummary: EmailScanLearningSummary? = nil,
         monitoringHealth: String? = nil,
-        lastScannedAt: Date? = nil
+        lastScannedAt: Date? = nil,
+        executionCounts: EmailScanExecutionCounts? = nil
     ) -> EmailScanStatus {
         let connections = (0..<connectionCount).map { index in
             EmailConnectionSummary(
@@ -310,7 +359,8 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
             errors: errors,
             withheldAmbiguities: nil,
             learningSummary: learningSummary,
-            runs: nil
+            runs: nil,
+            executionCounts: executionCounts
         )
     }
 

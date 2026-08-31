@@ -31,6 +31,8 @@ export async function claimManagedPageContext(
       action: "managed_page_context",
       scan_run_id: payload.scanRunId,
       scan_job_id: payload.pageId,
+      execution_id: payload.executionId,
+      dispatch_token: payload.dispatchToken,
       runtime_task_id: runtimeTaskID,
     }),
   });

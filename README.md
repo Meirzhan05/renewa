@@ -71,6 +71,22 @@ supabase functions deploy mail-oauth-callback --no-verify-jwt
 supabase functions deploy email-scan
 ```
 
+### Managed Inbox agent rollout
+
+The Inbox agent is a Trigger.dev workflow; publishing the iOS app does **not** start it on users'
+devices or through `npm start`. Apply the current migration and deploy the `email-scan` Function,
+then configure the Trigger development/production environment with the server-only worker values
+from [`worker/.env.example`](worker/.env.example). For hosted Supabase, set
+`MANAGED_DATABASE_URL` to the Transaction pooler URL (port `6543`), set
+`MANAGED_DATABASE_REQUIRE_TRANSACTION_POOLER=true`, and keep `MANAGED_DATABASE_POOL_MAX=1`.
+
+`dispatch-inbox-pages` admits small, fair batches from the database, so multiple people can scan at
+once rather than waiting behind one local terminal. Begin with global/provider concurrency `4` and
+one page per user; adjust only after monitoring database connections, retryable page count, and
+expired lease recovery. The Inbox **Stop** action persists cancellation first, cancels queued work,
+and asks active work to stop safely at its next boundary. See [`worker/README.md`](worker/README.md)
+for development runner, monitoring, and rollback details.
+
 Supabase provides the project URL and client/server keys to hosted Edge Functions. The functions accept both the newer `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY` names and the legacy `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` names. The other required secrets are documented in `.env.example`.
 
 ## Configure mail providers
