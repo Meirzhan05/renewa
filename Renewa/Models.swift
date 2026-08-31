@@ -468,6 +468,7 @@ struct EmailScanStatus: Codable, Equatable {
     let learningSummary: EmailScanLearningSummary?
     let recentActivity: [EmailScanActivity]? = nil
     let runs: [EmailScanRunProgress]?
+    let executionCounts: EmailScanExecutionCounts?
 
     enum CodingKeys: String, CodingKey {
         case scanID = "scan_id"
@@ -487,11 +488,20 @@ struct EmailScanStatus: Codable, Equatable {
         case learningSummary = "learning_summary"
         case recentActivity = "recent_activity"
         case runs
+        case executionCounts = "execution_counts"
     }
 
     var isActive: Bool {
         status == .queued || status == .running
     }
+}
+
+struct EmailScanExecutionCounts: Codable, Equatable {
+    let queued: Int
+    let analyzing: Int
+    let retrying: Int
+    let cancelled: Int
+    let failed: Int
 }
 
 struct EmailScanRunProgress: Codable, Hashable, Identifiable {

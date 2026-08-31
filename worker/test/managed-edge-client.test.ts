@@ -12,7 +12,7 @@ test("managed page context sends opaque ids and the service credential only", as
   let request: Request | undefined;
   try {
     const result = await claimManagedPageContext(
-      { version: 1, scanRunId: "run-1", pageId: "page-1" },
+      { version: 2, scanRunId: "run-1", pageId: "page-1", executionId: "execution-1", dispatchToken: "token-1" },
       "trigger-run-1",
       async (input, init) => {
         request = new Request(input, init);
@@ -23,7 +23,7 @@ test("managed page context sends opaque ids and the service credential only", as
     assert.equal(request?.headers.get("x-renewa-managed-agent-secret"), "shared-development-secret");
     assert.equal(request?.headers.get("apikey"), "public-development-key");
     assert.deepEqual(await request?.json(), {
-      action: "managed_page_context", scan_run_id: "run-1", scan_job_id: "page-1", runtime_task_id: "trigger-run-1",
+      action: "managed_page_context", scan_run_id: "run-1", scan_job_id: "page-1", execution_id: "execution-1", dispatch_token: "token-1", runtime_task_id: "trigger-run-1",
     });
   } finally {
     if (previousURL === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousURL;
@@ -43,7 +43,7 @@ test("managed orchestrator asks the Edge Function to process the next opaque pag
   process.env.SUPABASE_PUBLISHABLE_KEY = "public-development-key";
   try {
     const result = await processManagedConnection(
-      { version: 1, scanRunId: "run-1", connectionId: "connection-1" },
+      { version: 2, scanRunId: "run-1", connectionId: "connection-1" },
       async (input, init) => {
         const request = new Request(input, init);
         assert.deepEqual(await request.json(), {
@@ -71,7 +71,7 @@ test("managed tasks normalize a legacy Supabase REST URL before calling Edge Fun
   process.env.SUPABASE_PUBLISHABLE_KEY = "public-development-key";
   try {
     await processManagedConnection(
-      { version: 1, scanRunId: "run-1", connectionId: "connection-1" },
+      { version: 2, scanRunId: "run-1", connectionId: "connection-1" },
       async (input) => {
         assert.equal(input, "https://dev.example.test/functions/v1/email-scan");
         return Response.json({ has_next_page: false });
@@ -96,7 +96,7 @@ test("managed page context retries a short Edge service outage before claiming w
   let calls = 0;
   try {
     const result = await claimManagedPageContext(
-      { version: 1, scanRunId: "run-1", pageId: "page-1" },
+      { version: 2, scanRunId: "run-1", pageId: "page-1", executionId: "execution-1", dispatchToken: "token-1" },
       "trigger-run-1",
       async () => {
         calls += 1;

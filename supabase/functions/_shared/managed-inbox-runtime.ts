@@ -1,8 +1,8 @@
-const taskVersion = 1;
+const taskVersion = 2;
 
 type TriggerResponse = { id?: unknown; message?: unknown };
 
-export type ManagedInboxTask = "scan-inbox-run" | "analyze-inbox-page";
+export type ManagedInboxTask = "scan-inbox-run";
 
 export async function triggerManagedInboxTask(
   task: ManagedInboxTask,

@@ -1,9 +1,13 @@
 export type ManagedRuntimeConfig = {
-  triggerSecretKey: string;
   globalConcurrency: number;
   googleConcurrency: number;
   microsoftConcurrency: number;
   perUserConcurrency: number;
+};
+
+export type ManagedDatabaseConfig = {
+  databaseUrl: string;
+  poolMax: number;
 };
 
 function positiveInteger(name: string, value: string | undefined, fallback: number): number {
@@ -15,11 +19,10 @@ function positiveInteger(name: string, value: string | undefined, fallback: numb
   return parsed;
 }
 
-// Default number of pages a single user's scan may analyze concurrently. The orchestrator fans page
-// analyses out under a per-run concurrency key, so this is the per-user bound; the global/provider
-// ceilings still cap total load. Kept as a standalone reader (no TRIGGER_SECRET_KEY required) so the
-// page task can set its queue limit at module load without pulling in the full runtime config.
-export const DEFAULT_PER_USER_ANALYSIS_CONCURRENCY = 4;
+// The durable dispatcher admits page work fairly by user and provider before it reaches Trigger.
+// Kept as a standalone reader so module-level task configuration does not need unrelated secrets.
+export const DEFAULT_GLOBAL_ANALYSIS_CONCURRENCY = 4;
+export const DEFAULT_PER_USER_ANALYSIS_CONCURRENCY = 1;
 
 export function perUserAnalysisConcurrency(env: NodeJS.ProcessEnv = process.env): number {
   return positiveInteger(
@@ -29,14 +32,36 @@ export function perUserAnalysisConcurrency(env: NodeJS.ProcessEnv = process.env)
   );
 }
 
-export function loadManagedRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ManagedRuntimeConfig {
-  const triggerSecretKey = env.TRIGGER_SECRET_KEY;
-  if (!triggerSecretKey) throw new Error("TRIGGER_SECRET_KEY is required for managed Inbox tasks");
+/**
+ * Managed tasks are short-lived workers. In deployed Supabase environments this must point at the
+ * transaction pooler (port 6543), while local development can continue to use a local Postgres URL.
+ * Keeping it separate prevents an accidental reuse of a long-lived/session-pool worker URL.
+ */
+export function loadManagedDatabaseConfig(env: NodeJS.ProcessEnv = process.env): ManagedDatabaseConfig {
+  const databaseUrl = env.MANAGED_DATABASE_URL ?? env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("MANAGED_DATABASE_URL or DATABASE_URL is required for managed Inbox tasks");
+  const requireTransactionPooler = env.MANAGED_DATABASE_REQUIRE_TRANSACTION_POOLER === "true";
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error("Managed Inbox database URL must be a valid Postgres URL");
+  }
+  if (requireTransactionPooler && parsed.hostname.includes("pooler.supabase.com") && parsed.port !== "6543") {
+    throw new Error("MANAGED_DATABASE_URL must use the Supabase transaction pooler (port 6543)");
+  }
   return {
-    triggerSecretKey,
-    globalConcurrency: positiveInteger("INBOX_AGENT_GLOBAL_CONCURRENCY", env.INBOX_AGENT_GLOBAL_CONCURRENCY, 20),
-    googleConcurrency: positiveInteger("INBOX_AGENT_GOOGLE_CONCURRENCY", env.INBOX_AGENT_GOOGLE_CONCURRENCY, 10),
-    microsoftConcurrency: positiveInteger("INBOX_AGENT_MICROSOFT_CONCURRENCY", env.INBOX_AGENT_MICROSOFT_CONCURRENCY, 10),
+    databaseUrl,
+    // A page owns exactly one database connection. Global capacity is enforced by the dispatcher.
+    poolMax: positiveInteger("MANAGED_DATABASE_POOL_MAX", env.MANAGED_DATABASE_POOL_MAX, 1),
+  };
+}
+
+export function loadManagedRuntimeConfig(env: NodeJS.ProcessEnv = process.env): ManagedRuntimeConfig {
+  return {
+    globalConcurrency: positiveInteger("INBOX_AGENT_GLOBAL_CONCURRENCY", env.INBOX_AGENT_GLOBAL_CONCURRENCY, DEFAULT_GLOBAL_ANALYSIS_CONCURRENCY),
+    googleConcurrency: positiveInteger("INBOX_AGENT_GOOGLE_CONCURRENCY", env.INBOX_AGENT_GOOGLE_CONCURRENCY, DEFAULT_GLOBAL_ANALYSIS_CONCURRENCY),
+    microsoftConcurrency: positiveInteger("INBOX_AGENT_MICROSOFT_CONCURRENCY", env.INBOX_AGENT_MICROSOFT_CONCURRENCY, DEFAULT_GLOBAL_ANALYSIS_CONCURRENCY),
     perUserConcurrency: perUserAnalysisConcurrency(env),
   };
 }

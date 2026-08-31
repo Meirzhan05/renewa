@@ -20,11 +20,15 @@ test("managed task contracts accept opaque identifiers only", () => {
     version: MANAGED_INBOX_TASK_VERSION,
     scanRunId: "run-1",
     pageId: "page-1",
+    executionId: "execution-1",
+    dispatchToken: "token-1",
   }), true);
   assert.equal(isAnalyzeInboxPagePayload({
-    version: 1,
+    version: MANAGED_INBOX_TASK_VERSION,
     scanRunId: "run-1",
     pageId: "page-1",
+    executionId: "execution-1",
+    dispatchToken: "token-1",
     accessToken: "must-not-be-a-contract-field",
   }), false, "credential data must never enter a managed task contract");
   assert.equal(isAnalyzeInboxPagePayload({ version: 1, scanRunId: "run-1" }), false);
@@ -45,28 +49,21 @@ test("managed runtime config validates bounded concurrency", () => {
   );
 });
 
-test("Trigger runtime applies stable idempotency and per-user concurrency keys", async () => {
+test("Trigger runtime applies one idempotency key per durable dispatch attempt", async () => {
   const calls: Array<{ id: string; payload: Record<string, unknown>; options: Record<string, string> }> = [];
   const trigger: TriggerTask = async (id, payload, options) => {
     calls.push({ id, payload, options });
     return { id: "run_trigger_1" };
   };
-  const original = process.env.TRIGGER_SECRET_KEY;
-  process.env.TRIGGER_SECRET_KEY = "tr_dev_test";
-  try {
-    const runtime = new TriggerManagedInboxRuntime(trigger);
-    await runtime.triggerScanRun({ version: 1, scanRunId: "scan-1", connectionId: "conn-1" });
-    await runtime.triggerPageAnalysis({ version: 1, scanRunId: "scan-1", pageId: "page-1" }, "user-1", "google");
-  } finally {
-    if (original === undefined) delete process.env.TRIGGER_SECRET_KEY;
-    else process.env.TRIGGER_SECRET_KEY = original;
-  }
+  const runtime = new TriggerManagedInboxRuntime(trigger);
+  await runtime.triggerScanRun({ version: 2, scanRunId: "scan-1", connectionId: "conn-1" });
+  await runtime.triggerPageAnalysis({ version: 2, scanRunId: "scan-1", pageId: "page-1", executionId: "execution-1", dispatchToken: "token-1" }, "user-1", "google");
   assert.deepEqual(calls.map((call) => call.id), ["scan-inbox-run", "analyze-inbox-page"]);
   const [scanCall, pageCall] = calls;
   assert.ok(scanCall);
   assert.ok(pageCall);
   assert.equal(scanCall.options.idempotencyKey, scanRunIdempotencyKey("scan-1"));
-  assert.equal(pageCall.options.idempotencyKey, pageAnalysisIdempotencyKey("scan-1", "page-1"));
-  assert.equal(pageCall.options.concurrencyKey, "inbox-page:google:user-1");
-  assert.deepEqual(Object.keys(pageCall.payload).sort(), ["pageId", "scanRunId", "version"]);
+  assert.equal(pageCall.options.idempotencyKey, pageAnalysisIdempotencyKey("execution-1", "token-1"));
+  assert.equal(pageCall.options.concurrencyKey, undefined);
+  assert.deepEqual(Object.keys(pageCall.payload).sort(), ["dispatchToken", "executionId", "pageId", "scanRunId", "version"]);
 });

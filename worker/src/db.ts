@@ -32,6 +32,8 @@ export interface JobStore {
   finishAutonomousJob(jobId: string, proposals: ProposalCandidate[]): Promise<void>;
   /** Record a run that failed so it is not retried forever. */
   failJob(jobId: string, error: string): Promise<void>;
+  /** Return a transiently failed managed page to the durable dispatcher. */
+  releaseJobForRetry(jobId: string, error: string): Promise<void>;
   isRunCancellationRequested(scanRunId: string | null): Promise<boolean>;
 }
 
@@ -178,6 +180,15 @@ export class PgJobStore implements JobStore {
     } finally {
       client.release();
     }
+  }
+
+  async releaseJobForRetry(jobId: string, error: string): Promise<void> {
+    await this.pool.query(
+      `update scan_jobs
+          set status = 'pending', error = $2, started_at = null
+        where id = $1 and status = 'running'`,
+      [jobId, error.slice(0, 500)],
+    );
   }
 
   async isRunCancellationRequested(scanRunId: string | null): Promise<boolean> {
