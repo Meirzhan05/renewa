@@ -8,7 +8,7 @@
 - [x] Remove tab text labels, retaining clear accessibility labels and selected-state treatment for every icon.
 - [x] Make the tab bar opaque and express the active tab through the icon rather than a background pill.
 - [x] Redesign the tab bar as a floating, rounded control with breathing room around it.
-- [x] Animate tab changes with directional, lightly springy page movement and a moving active-tab accent, while respecting Reduce Motion.
+- [x] Animate tab changes with a uniform, lightly springy fade-and-scale transition and a moving active-tab accent, while respecting Reduce Motion.
 - [x] Give all interactive buttons a visible press acknowledgment through the shared scale, opacity, and brightness feedback style; retain an opacity-only response for Reduce Motion.
 - [x] Remove the exchange-rate status title from the home-page spending summary.
 - [x] Replace the home-page avatar with a calendar shortcut to a Logo.dev-powered upcoming-payments view.
