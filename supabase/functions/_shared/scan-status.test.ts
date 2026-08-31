@@ -3,9 +3,11 @@ import {
   classifyPaginatedScanRun,
   classifyScanRun,
   DEFAULT_SCAN_COMPLETION_TIMEOUT_MS,
+  DEFAULT_SCAN_DISPATCH_GRACE_MS,
   indexRunProgress,
   type RunProgressRow,
   scanCompletionTimeoutMs,
+  scanDispatchGraceMs,
   totalRunProgress,
 } from "./scan-status.ts";
 
@@ -138,6 +140,64 @@ Deno.test("a managed task waiting for capacity stays active beyond the legacy wo
   assertEquals(c, "active");
 });
 
+// The regression this fixes: a managed scan whose `scan-inbox-run` EXPIRED (no worker connected)
+// leaves the edge page window `queued` with no worker job and no execution record. Left as "active"
+// it hangs forever and the app shows 0 with no error. Past the dispatch grace it must fail.
+Deno.test("managed scan whose runtime task never materialized fails past the dispatch grace", () => {
+  const GRACE = DEFAULT_SCAN_DISPATCH_GRACE_MS;
+  const c = classifyPaginatedScanRun(
+    { status: "running", started_at: isoAgo(15 * 60_000) },
+    [{ status: "queued" }],
+    [],
+    NOW,
+    TIMEOUT,
+    [],
+    GRACE,
+  );
+  assertEquals(c, "failed");
+  assertEquals(aggregateRunStatus([c]), "failed");
+});
+
+Deno.test("a freshly dispatched managed scan stays active within the dispatch grace", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "running", started_at: isoAgo(60_000) },
+    [{ status: "queued" }],
+    [],
+    NOW,
+    TIMEOUT,
+    [],
+    DEFAULT_SCAN_DISPATCH_GRACE_MS,
+  );
+  assertEquals(c, "active");
+});
+
+Deno.test("a queued edge page with a live execution stays active past the dispatch grace", () => {
+  // A durable execution record means the runtime owns the work; the grace backstop must not fire.
+  const c = classifyPaginatedScanRun(
+    { status: "running", started_at: isoAgo(15 * 60_000) },
+    [{ status: "queued" }],
+    [],
+    NOW,
+    TIMEOUT,
+    [{ state: "queued" }],
+    DEFAULT_SCAN_DISPATCH_GRACE_MS,
+  );
+  assertEquals(c, "active");
+});
+
+Deno.test("a queued edge page with a worker job in flight stays active past the dispatch grace", () => {
+  const c = classifyPaginatedScanRun(
+    { status: "running", started_at: isoAgo(15 * 60_000) },
+    [{ status: "queued" }],
+    [{ status: "running", created_at: isoAgo(30_000) }],
+    NOW,
+    TIMEOUT,
+    [],
+    DEFAULT_SCAN_DISPATCH_GRACE_MS,
+  );
+  assertEquals(c, "active");
+});
+
 Deno.test("a terminal failed run is not revived by residual managed execution records", () => {
   const c = classifyPaginatedScanRun(
     { status: "failed", started_at: isoAgo(20 * 60_000) },
@@ -188,6 +248,14 @@ Deno.test("timeout env parsing falls back on missing/invalid values", () => {
   assertEquals(scanCompletionTimeoutMs(""), DEFAULT_SCAN_COMPLETION_TIMEOUT_MS);
   assertEquals(scanCompletionTimeoutMs("nonsense"), DEFAULT_SCAN_COMPLETION_TIMEOUT_MS);
   assertEquals(scanCompletionTimeoutMs("-5"), DEFAULT_SCAN_COMPLETION_TIMEOUT_MS);
+});
+
+Deno.test("dispatch grace env parsing falls back on missing/invalid values", () => {
+  assertEquals(scanDispatchGraceMs("720000"), 720000);
+  assertEquals(scanDispatchGraceMs(undefined), DEFAULT_SCAN_DISPATCH_GRACE_MS);
+  assertEquals(scanDispatchGraceMs(""), DEFAULT_SCAN_DISPATCH_GRACE_MS);
+  assertEquals(scanDispatchGraceMs("nonsense"), DEFAULT_SCAN_DISPATCH_GRACE_MS);
+  assertEquals(scanDispatchGraceMs("-5"), DEFAULT_SCAN_DISPATCH_GRACE_MS);
 });
 
 Deno.test("progress: index coerces bigint-as-string and maps by run", () => {

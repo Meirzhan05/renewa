@@ -89,6 +89,18 @@ Supabase migration/function secrets and the Trigger development runner have been
 development runner is connected. In production, deploy the Trigger project and do not run a local
 worker process.
 
+**Environment contract (must hold or every scan silently expires).** The `email-scan` Edge Function
+dispatches `scan-inbox-run` into the Trigger environment its `TRIGGER_SECRET_KEY` belongs to (a
+`tr_dev_…` key targets the **dev** environment, `tr_prod_…` the **prod** environment). A live worker
+**must** exist in that same environment, or the dispatched run has no version to execute, sits in the
+queue, and **EXPIRES at its 10-minute TTL** — the run stays `running`, no candidate is produced, and
+the app shows 0 forever. So: with a **dev** key, keep `npm run trigger:dev` connected while scanning;
+for real users, put a **prod** key on the edge and `trigger deploy` the worker. A stalled run is now
+failed within `SCAN_DISPATCH_GRACE_MS` (default 12m ≥ the run TTL) by the edge classifier on the next
+poll and by the `recover_stalled_inbox_scan_runs()` pg_cron backstop even with no poll — surfacing
+"Scan worker is unavailable" instead of a silent hang, but that is a safety net, not a substitute for
+a live worker.
+
 Watch `inbox_agent_executions` by state, the age of `leased`/`running` rows, retryable counts, and
 database connection usage. A lease is recoverable after two minutes; after three attempts it fails
 the page and finalizes the run instead of leaving it permanently “preparing”. To stop a scan, use

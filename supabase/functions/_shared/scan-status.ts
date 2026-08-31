@@ -45,6 +45,19 @@ export function scanCompletionTimeoutMs(raw: string | null | undefined): number 
     : DEFAULT_SCAN_COMPLETION_TIMEOUT_MS;
 }
 
+// Grace before a managed scan whose runtime task never materialized (dispatched `scan-inbox-run`
+// EXPIRED with no worker connected) is failed. It must be at least as long as the dispatched run's
+// TTL (10m) so a validly-queued runtime run is not failed prematurely.
+export const DEFAULT_SCAN_DISPATCH_GRACE_MS = 12 * 60_000;
+
+/** Parse `SCAN_DISPATCH_GRACE_MS` (env string) into a positive ms value, else the default. */
+export function scanDispatchGraceMs(raw: string | null | undefined): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_SCAN_DISPATCH_GRACE_MS;
+}
+
 /**
  * Classify a single run from the worker-owned run lifecycle plus its worker-queue job.
  *
@@ -89,12 +102,26 @@ export function classifyPaginatedScanRun(
   nowMs: number,
   timeoutMs: number,
   managedExecutions: ManagedExecutionState[] = [],
+  dispatchGraceMs: number = timeoutMs,
 ): RunClassification {
   if (run.status === "cancelled") return "cancelled";
   // A persisted failure is terminal. It may have residual queued execution records from an older
   // delivery, but those records must not revive a run the coordinator has already failed.
   if (run.status === "failed") return "failed";
   if (edgeJobs.some((job) => job.status === "queued" || job.status === "running")) {
+    // A queued/running edge page is normally active work. But a managed scan whose runtime task
+    // never materialized -- the dispatched `scan-inbox-run` EXPIRED because no worker was connected
+    // -- leaves the page window queued with NOTHING downstream: no worker job and no execution
+    // record. If that persists past the dispatch-grace window the run can never progress, so fail it
+    // rather than report it active forever. Any real work (a worker page or a durable execution
+    // record) exempts the run, so a multi-page or capacity-waiting scan is never affected.
+    if (
+      workerJobs.length === 0 &&
+      managedExecutions.length === 0 &&
+      isPastTimeout(run.started_at, nowMs, dispatchGraceMs)
+    ) {
+      return "failed";
+    }
     return "active";
   }
   // A managed task waiting for Trigger capacity is healthy work. Unlike a legacy pending
@@ -149,6 +176,16 @@ function timestampMs(value: string | null | undefined): number | null {
   if (!value) return null;
   const ms = Date.parse(value);
   return Number.isNaN(ms) ? null : ms;
+}
+
+/** True when `anchor` is a parseable timestamp older than `timeoutMs` before `nowMs`. */
+function isPastTimeout(
+  anchor: string | null | undefined,
+  nowMs: number,
+  timeoutMs: number,
+): boolean {
+  const ms = timestampMs(anchor);
+  return ms !== null && nowMs - ms > timeoutMs;
 }
 
 // --- Cumulative progress across a run's mailbox pages ---------------------------------------------

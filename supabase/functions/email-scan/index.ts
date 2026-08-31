@@ -39,6 +39,7 @@ import {
   type RunClassification,
   type RunProgressRow,
   scanCompletionTimeoutMs,
+  scanDispatchGraceMs,
   totalRunProgress,
 } from "../_shared/scan-status.ts";
 import {
@@ -503,6 +504,30 @@ function scheduleUserJobs(
   }
 }
 
+/**
+ * Best-effort: mark an active run `failed` with a user-facing reason. Mirrors the status
+ * write-through (status only, no finalize) so a scan that cannot be dispatched surfaces as failed
+ * instead of hanging at 0 forever. Never throws.
+ */
+async function failScanRunForReason(
+  admin: AdminClient,
+  runID: string,
+  message: string,
+): Promise<void> {
+  const { error } = await admin.from("email_scan_runs")
+    .update({
+      status: "failed",
+      stage: "failed",
+      error_message: message.slice(0, 280),
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", runID)
+    .eq("status", "running");
+  if (error) {
+    console.error("Could not persist scan dispatch failure", safeErrorMessage(error));
+  }
+}
+
 async function processManagedUserJobs(
   admin: AdminClient,
   userID: string,
@@ -518,19 +543,31 @@ async function processManagedUserJobs(
   const { data: jobs, error } = await query;
   if (error) throw error;
   for (const job of jobs ?? []) {
-    await triggerManagedInboxTask(
-      "scan-inbox-run",
-      managedRunPayload(String(job.scan_run_id), String(job.connection_id)),
-      {
-        idempotencyKey: managedRunIdempotencyKey(String(job.scan_run_id), String(job.connection_id)),
-        // A user may have several connections, but only one scan orchestrator may advance their
-        // mailbox at a time. Waiting parent tasks checkpoint while their child analysis runs, so
-        // this is fair across users without consuming an execution slot.
-        concurrencyKey: managedRunConcurrencyKey(userID),
-        queueName: "inbox-agent-runs",
-        queueConcurrency: 20,
-      },
-    );
+    try {
+      await triggerManagedInboxTask(
+        "scan-inbox-run",
+        managedRunPayload(String(job.scan_run_id), String(job.connection_id)),
+        {
+          idempotencyKey: managedRunIdempotencyKey(String(job.scan_run_id), String(job.connection_id)),
+          // A user may have several connections, but only one scan orchestrator may advance their
+          // mailbox at a time. Waiting parent tasks checkpoint while their child analysis runs, so
+          // this is fair across users without consuming an execution slot.
+          concurrencyKey: managedRunConcurrencyKey(userID),
+          queueName: "inbox-agent-runs",
+          queueConcurrency: 20,
+        },
+      );
+    } catch (error) {
+      // Do NOT swallow. A dispatch that cannot be queued (missing key, task absent in the deployed
+      // version, transport failure) would otherwise leave the run hanging at 0 forever. Record it on
+      // the run so the scan surfaces as failed, and keep dispatching the remaining connections.
+      console.error("managed inbox dispatch failed", safeErrorMessage(error));
+      await failScanRunForReason(
+        admin,
+        String(job.scan_run_id),
+        "Scan worker is unavailable — please try again shortly.",
+      );
+    }
   }
 }
 
@@ -1138,8 +1175,16 @@ async function scanStatus(
   // marked completed the moment the mailbox window is handed off, before the worker reasons at all.
   const workerTimeoutMessage = "Scan worker did not complete the job in time.";
   const workerFailedMessage = "Scan worker failed to complete the job.";
+  const workerUnavailableMessage =
+    "Scan worker is unavailable — please try again shortly.";
   const timeoutMs = scanCompletionTimeoutMs(
     Deno.env.get("SCAN_COMPLETION_TIMEOUT_MS"),
+  );
+  // Managed dispatch grace: how long a scan whose runtime task never materialized (dispatched
+  // `scan-inbox-run` EXPIRED with no worker connected) may sit before it is reported failed instead
+  // of hanging at 0. Kept >= the dispatched run TTL so a validly-queued runtime run is not failed early.
+  const dispatchGraceMs = scanDispatchGraceMs(
+    Deno.env.get("SCAN_DISPATCH_GRACE_MS"),
   );
   // The 5-minute-scale timeout compares enqueue time (a DB timestamp) against the edge clock;
   // NTP-synced sub-second skew is immaterial at this granularity, so no extra round trip for now().
@@ -1192,6 +1237,7 @@ async function scanStatus(
       nowMs,
       timeoutMs,
       executionsForRun.map((execution) => ({ state: String(execution.state ?? "") })),
+      dispatchGraceMs,
     );
     classificationByRun.set(run.id, classification);
     if (
@@ -1199,6 +1245,11 @@ async function scanStatus(
       run.status !== "failed" &&
       run.status !== "completed"
     ) {
+      const runtimeNeverMaterialized = jobsForRun.length === 0 &&
+        executionsForRun.length === 0 &&
+        edgeJobsForRun.some((job) =>
+          job.status === "queued" || job.status === "running"
+        );
       failureMessageByRun.set(
         run.id,
         jobsForRun.some((job) => job.status === "failed")
@@ -1207,6 +1258,8 @@ async function scanStatus(
           ? "A managed page analysis could not complete."
           : edgeJobsForRun.some((job) => job.status === "failed")
           ? "A mailbox page could not complete."
+          : runtimeNeverMaterialized
+          ? workerUnavailableMessage
           : workerTimeoutMessage,
       );
     }
