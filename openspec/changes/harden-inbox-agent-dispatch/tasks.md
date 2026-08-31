@@ -20,7 +20,7 @@
       scan run idempotently.
 - [x] 2.4 Update the existing reaper to reclaim both abandoned dispatch reservations and running leases,
       preserving bounded attempts and terminal finalization semantics.
-- [ ] 2.5 Add migration-level assertions for overlapping dispatch claims, fair multi-user selection,
+- [x] 2.5 Add migration-level assertions for overlapping dispatch claims, fair multi-user selection,
       cancellation exclusion, expiry recovery, and exhausted-attempt failure.
 
 ## 3. Managed dispatcher and page task contract
@@ -36,7 +36,7 @@
 - [x] 3.5 Configure non-keyed shared page and fetch queues with conservative development limits; enforce
       global, provider, and per-user budgets in the dispatcher rather than relying on concurrency-key
       copies of a queue.
-- [ ] 3.6 Add worker tests for stale-token rejection, redelivery after dispatcher/runtime interruption,
+- [x] 3.6 Add worker tests for stale-token rejection, redelivery after dispatcher/runtime interruption,
       capacity limits, and one-user-per-round fairness.
 
 ## 4. Truthful status and cancellation experience

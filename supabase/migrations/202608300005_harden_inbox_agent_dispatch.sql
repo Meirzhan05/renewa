@@ -56,7 +56,7 @@ begin
       and e.available_at <= now() and r.cancel_requested_at is null
   ), selected as (
     select * from eligible
-    where user_rank <= greatest(1, p_per_user_limit - user_active)
+    where user_rank <= greatest(0, p_per_user_limit - user_active)
       and provider_rank <= case provider when 'google' then greatest(0, p_google_limit - provider_active)
                                           when 'microsoft' then greatest(0, p_microsoft_limit - provider_active)
                                           else 0 end
@@ -79,7 +79,7 @@ begin
     from locked s
     where e.id = s.id and e.state in ('queued', 'retryable')
     returning e.id, e.scan_run_id, e.scan_job_id, e.dispatch_token
-  ) select id, scan_run_id, scan_job_id, dispatch_token from claimed;
+  ) select c.id, c.scan_run_id, c.scan_job_id, c.dispatch_token from claimed c;
 end $$;
 
 create or replace function public.attach_inbox_agent_runtime(
