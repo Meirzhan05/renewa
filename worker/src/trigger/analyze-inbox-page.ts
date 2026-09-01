@@ -75,12 +75,26 @@ async function completeExecution(pool: Pool, executionID: string, state: "comple
 
 async function withExecutionHeartbeat<T>(pool: Pool, executionID: string, work: () => Promise<T>): Promise<T> {
   const interval = setInterval(() => {
-    void pool.query("select public.heartbeat_inbox_agent_execution($1)", [executionID]);
+    void heartbeatOnce(pool, executionID);
   }, 45_000);
   try {
     return await work();
   } finally {
     clearInterval(interval);
+  }
+}
+
+/**
+ * One best-effort heartbeat tick. A DB blip here (e.g. a connect timeout) MUST never become an
+ * unhandled rejection that crashes the task as TASK_RUN_UNCAUGHT_EXCEPTION and bypasses the ledger's
+ * retryable/failed handling — a genuinely dead worker is covered by the lease reaper. So it catches
+ * and drops. Exported for tests. Never rejects.
+ */
+export async function heartbeatOnce(pool: Pool, executionID: string): Promise<void> {
+  try {
+    await pool.query("select public.heartbeat_inbox_agent_execution($1)", [executionID]);
+  } catch (error) {
+    console.warn(`inbox heartbeat failed for execution ${executionID}: ${errorMessage(error)}`);
   }
 }
 

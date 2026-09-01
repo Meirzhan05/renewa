@@ -1,7 +1,6 @@
 import { schedules } from "@trigger.dev/sdk";
 import { Pool } from "pg";
 import { loadManagedDatabaseConfig, loadManagedRuntimeConfig } from "../managed/config.ts";
-import { initializeManagedCheckpointer } from "../managed/database.ts";
 import {
   MANAGED_INBOX_TASK_VERSION,
   pageAnalysisIdempotencyKey,
@@ -74,9 +73,8 @@ export const dispatchInboxPagesTask = schedules.task({
   retry: { maxAttempts: 1 },
   run: async () => {
     const database = loadManagedDatabaseConfig();
-    // Bootstrap outside individual page tasks. This completes before the bounded
-    // dispatcher pool is opened, so it never increases concurrent DB pressure.
-    await initializeManagedCheckpointer();
+    // Page graphs now use an in-process MemorySaver, so there are no Postgres checkpoint tables to
+    // bootstrap here anymore.
     const pool = new Pool({ connectionString: database.databaseUrl, max: database.poolMax });
     try {
       const pages = await reserveInboxPages(pool);

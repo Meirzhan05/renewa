@@ -52,8 +52,11 @@ export function loadManagedDatabaseConfig(env: NodeJS.ProcessEnv = process.env):
   }
   return {
     databaseUrl,
-    // A page owns exactly one database connection. Global capacity is enforced by the dispatcher.
-    poolMax: positiveInteger("MANAGED_DATABASE_POOL_MAX", env.MANAGED_DATABASE_POOL_MAX, 1),
+    // Two connections per page so the periodic heartbeat query never has to wait out a checkpoint or
+    // store operation holding the only connection. Peak pooled connections is bounded by the
+    // dispatcher: INBOX_AGENT_GLOBAL_CONCURRENCY (default 4) x poolMax (2) = 8, well within the
+    // Supabase transaction pooler. Overridable for a smaller pooler.
+    poolMax: positiveInteger("MANAGED_DATABASE_POOL_MAX", env.MANAGED_DATABASE_POOL_MAX, 2),
   };
 }
 

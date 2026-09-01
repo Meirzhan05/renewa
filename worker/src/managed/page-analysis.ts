@@ -1,4 +1,4 @@
-import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { Pool } from "pg";
 import { bridgeProposalsToCandidates } from "../agent/candidate-bridge.ts";
 import { runTwoTierScan } from "../agent/pipeline.ts";
@@ -24,7 +24,7 @@ export type PageAnalysis = {
  */
 export async function analyzeInboxPage(
   pool: Pool,
-  checkpointer: PostgresSaver,
+  checkpointer: BaseCheckpointSaver,
   job: ScanJob,
 ): Promise<PageAnalysis> {
   const chat: ChatFn = makeChatFn(resolveReasonerConfig());
