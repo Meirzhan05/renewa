@@ -47,6 +47,18 @@
       execution or an in-flight worker job → active; plus `scanDispatchGraceMs` env parsing. 83 edge
       tests green (`deno test supabase/functions/`); `deno check` clean on the edited files.
 
+## 7. Follow-up: dead-batch reuse (found during 6.x verification)
+
+- [x] 7.1 Edge write-through also fails the run's `email_scan_jobs` page window(s) when it fails a run,
+      so `startScan`'s reuse guard cannot hand back a dead batch (observed as an instant `reused=True`
+      failure when the classifier failed the run but left its window `queued`).
+- [x] 7.2 Migration `202608310002`: `recover_stalled_inbox_scan_runs()` also finalizes page windows
+      left `queued`/`running` under an already-terminal run; one-off cleanup of the current lingering rows.
+- [x] 7.3 DB test extended (a page window under a terminal run is finalized); validated against the live
+      schema in a rolled-back tx. `deno check` clean; 83 edge tests green.
+- [ ] 7.4 Deploy: `db push` (applies `202608310002` + its one-off) and redeploy the edge. Same op step
+      as 6.1 — left for the operator.
+
 ## 6. Verification and release  (ops — requires deploy; left for the operator)
 
 - [ ] 6.1 Deploy edge + apply migration `202608310001` (this applies the one-off orphan cleanup and

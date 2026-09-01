@@ -1289,6 +1289,20 @@ async function scanStatus(
         safeErrorMessage(failWriteError),
       );
     }
+    // Fail the run's page window(s) too. Otherwise a still-`queued` email_scan_jobs row under a
+    // now-failed run keeps `startScan`'s reuse guard handing back the dead batch (observed as an
+    // instant `reused=True` failure). The reaper is the durable backstop; this closes the window.
+    const { error: failJobsError } = await admin
+      .from("email_scan_jobs")
+      .update({ status: "failed", error_message: message })
+      .eq("scan_run_id", runID)
+      .in("status", ["queued", "running"]);
+    if (failJobsError) {
+      console.error(
+        "Could not fail scan run page windows",
+        safeErrorMessage(failJobsError),
+      );
+    }
   }
 
   return {

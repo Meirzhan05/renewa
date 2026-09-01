@@ -12,6 +12,7 @@ declare
   run_fresh uuid := gen_random_uuid();     -- within grace -> should be spared
   run_exec uuid := gen_random_uuid();      -- old but has an execution -> not this backstop's job
   run_orphan uuid := gen_random_uuid();    -- no email_scan_runs row; owns an orphaned scan_job
+  run_terminal uuid := gen_random_uuid();  -- already failed, but its page window is still queued
   job_exec uuid := gen_random_uuid();
   orphan_job uuid := gen_random_uuid();
 begin
@@ -23,15 +24,18 @@ begin
   values (conn, u, 'google', 'stalled@test.invalid', 'fixture');
 
   insert into public.email_scan_runs (id, user_id, provider, status, stage, batch_id, started_at)
-  values (run_stalled, u, 'google', 'running', 'queued', gen_random_uuid(), now() - interval '20 minutes'),
-         (run_fresh,   u, 'google', 'running', 'queued', gen_random_uuid(), now()),
-         (run_exec,    u, 'google', 'running', 'queued', gen_random_uuid(), now() - interval '20 minutes');
+  values (run_stalled,  u, 'google', 'running', 'queued', gen_random_uuid(), now() - interval '20 minutes'),
+         (run_fresh,    u, 'google', 'running', 'queued', gen_random_uuid(), now()),
+         (run_exec,     u, 'google', 'running', 'queued', gen_random_uuid(), now() - interval '20 minutes'),
+         (run_terminal, u, 'google', 'failed',  'failed', gen_random_uuid(), now() - interval '20 minutes');
 
-  -- Each real run has a queued page window (the edge job) that never advanced.
+  -- Each run has a queued page window (the edge job). run_terminal's run is already failed but its
+  -- window was left queued -- the reaper must finalize it so the batch is not reused.
   insert into public.email_scan_jobs (id, user_id, batch_id, scan_run_id, connection_id, status)
-  values (gen_random_uuid(), u, gen_random_uuid(), run_stalled, conn, 'queued'),
-         (gen_random_uuid(), u, gen_random_uuid(), run_fresh,   conn, 'queued'),
-         (gen_random_uuid(), u, gen_random_uuid(), run_exec,    conn, 'queued');
+  values (gen_random_uuid(), u, gen_random_uuid(), run_stalled,  conn, 'queued'),
+         (gen_random_uuid(), u, gen_random_uuid(), run_fresh,    conn, 'queued'),
+         (gen_random_uuid(), u, gen_random_uuid(), run_exec,     conn, 'queued'),
+         (gen_random_uuid(), u, gen_random_uuid(), run_terminal, conn, 'queued');
 
   -- run_exec has downstream work (a worker job + a durable execution) -> the stalled backstop skips it.
   -- (inbox_agent_executions.scan_job_id references scan_jobs.id, so the job row must exist first.)
@@ -65,6 +69,11 @@ begin
   -- 4) The orphaned worker job is finalized.
   if not exists (select 1 from public.scan_jobs where id = orphan_job and status = 'failed') then
     raise exception 'orphaned worker job was not finalized';
+  end if;
+
+  -- 5) A page window left queued under an already-terminal run is finalized (no dead-batch reuse).
+  if exists (select 1 from public.email_scan_jobs where scan_run_id = run_terminal and status in ('queued', 'running')) then
+    raise exception 'page window under a terminal run was not finalized';
   end if;
 
   -- Idempotent: a second pass changes nothing.
