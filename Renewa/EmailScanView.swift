@@ -377,7 +377,7 @@ struct EmailScanView: View {
 
     private var scanStatusTint: Color {
         switch presentation.dashboardState {
-        case .needsAttention: RenewaTheme.coral
+        case .needsAttention, .scanFailed: RenewaTheme.coral
         case .noInbox: Color(red: 0.76, green: 0.73, blue: 0.66)
         default: RenewaTheme.sage
         }
@@ -394,6 +394,7 @@ struct EmailScanView: View {
         case .upToDate:
             return presentation.isMonitoringAutomatically ? "Watching for new mail" : "Inbox is ready for a check"
         case .needsAttention: return "An inbox needs attention"
+        case .scanFailed: return "Couldn’t finish the scan"
         }
     }
 
@@ -982,12 +983,15 @@ struct EmailScanView: View {
         case .noInbox: .envelope
         case .scanning: .sparkles
         case .reviewReady, .upToDate: .checkCircle
-        case .needsAttention: .exclamationTriangle
+        case .needsAttention, .scanFailed: .exclamationTriangle
         }
     }
 
     private var statusTint: Color {
-        presentation.dashboardState == .needsAttention ? RenewaTheme.coral : RenewaTheme.sage
+        switch presentation.dashboardState {
+        case .needsAttention, .scanFailed: RenewaTheme.coral
+        default: RenewaTheme.sage
+        }
     }
 
     private var assistantTitle: String {
@@ -997,6 +1001,7 @@ struct EmailScanView: View {
         case .reviewReady: "Your review is ready"
         case .upToDate: "You’re all caught up"
         case .needsAttention: "Your inbox needs attention"
+        case .scanFailed: "Couldn’t finish the scan"
         }
     }
 
@@ -1012,11 +1017,15 @@ struct EmailScanView: View {
             return "We’re watching for new subscription changes and will let you know when something needs review."
         case .needsAttention:
             return store.emailScanStatus?.errors.first ?? "Reconnect this inbox to keep monitoring new email."
+        case .scanFailed:
+            return store.emailScanStatus?.errors.first ?? "Something interrupted this scan. Please try again."
         }
     }
 
     private var needsSettingsAction: Bool {
-        presentation.dashboardState == .noInbox || presentation.dashboardState == .needsAttention
+        presentation.dashboardState == .noInbox
+            || presentation.dashboardState == .needsAttention
+            || presentation.dashboardState == .scanFailed
     }
 
     private var attentionConnection: EmailConnectionSummary? {

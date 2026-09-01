@@ -6,6 +6,7 @@ import { claimManagedPageContext } from "../managed/edge-client.ts";
 import { isAnalyzeInboxPagePayload, type AnalyzeInboxPagePayload } from "../managed/contracts.ts";
 import { loadManagedRuntimeConfig } from "../managed/config.ts";
 import { analyzeInboxPage, bridgeInboxProposals, recordPageTriageCount } from "../managed/page-analysis.ts";
+import { isPermanentProviderError } from "../managed/provider-errors.ts";
 
 export const analyzeInboxPageTask = task({
   id: "analyze-inbox-page",
@@ -44,6 +45,14 @@ export const analyzeInboxPageTask = task({
           return { proposals: analysis.proposals.length };
         } catch (error) {
           const message = errorMessage(error);
+          if (isPermanentProviderError(message)) {
+            // A permanent provider error (billing/quota/auth) will never succeed on retry and would
+            // otherwise loop under the dispatcher forever. Fail the page terminally (same shape as the
+            // cancellation path) so the run finalizes as failed instead of retrying every minute.
+            await store.failJob(job.id, message);
+            await completeExecution(pool, context.executionId, "failed", message);
+            return { failed: true, error: message };
+          }
           await store.releaseJobForRetry(job.id, message);
           await completeExecution(pool, context.executionId, "retryable", message);
           return { retryable: true, error: message };
@@ -57,7 +66,7 @@ export const analyzeInboxPageTask = task({
   },
 });
 
-async function completeExecution(pool: Pool, executionID: string, state: "completed" | "retryable" | "cancelled", error?: string) {
+async function completeExecution(pool: Pool, executionID: string, state: "completed" | "retryable" | "cancelled" | "failed", error?: string) {
   await pool.query(
     "select public.complete_inbox_agent_execution($1, $2::public.inbox_agent_execution_state, $3)",
     [executionID, state, error?.slice(0, 500) ?? null],

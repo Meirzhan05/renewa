@@ -41,13 +41,14 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
-    func test_partialScan_preservesConnectionIssueMessaging() {
+    func test_partialScanWithoutConnectionIssue_mapsToScanFailed() {
         let state = EmailDiscoveryPresentationState(
             status: makeStatus(status: .partial, errors: ["Microsoft mail could not be read."])
         )
 
-        XCTAssertEqual(state.headline, "An inbox needs attention")
-        XCTAssertEqual(state.progressText, "Completed with 1 connection issue.")
+        XCTAssertEqual(state.dashboardState, .scanFailed)
+        XCTAssertEqual(state.headline, "Couldn’t finish the scan")
+        XCTAssertEqual(state.progressText, "Something interrupted this scan. You can try again.")
     }
 
     @MainActor
@@ -154,11 +155,26 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
     }
 
     @MainActor
-    func test_failedScan_mapsToNeedsAttention() {
+    func test_failedScanWithoutConnectionIssue_mapsToScanFailed() {
         let state = EmailDiscoveryPresentationState(
-            status: makeStatus(status: .failed, errors: ["Gmail needs reconnection."])
+            status: makeStatus(status: .failed, errors: ["We couldn’t finish scanning — please try again later."])
         )
 
+        XCTAssertEqual(state.dashboardState, .scanFailed)
+        XCTAssertEqual(state.headline, "Couldn’t finish the scan")
+    }
+
+    @MainActor
+    func test_failedScanWithReconnectRequiredConnection_mapsToNeedsAttention() {
+        let state = EmailDiscoveryPresentationState(
+            status: makeStatus(
+                status: .failed,
+                errors: ["We couldn’t access your inbox. Please reconnect it and try again."],
+                monitoringHealth: "reconnect_required"
+            )
+        )
+
+        // A real connection problem stays needs-attention (reconnect), not a generic scan failure.
         XCTAssertEqual(state.dashboardState, .needsAttention)
         XCTAssertEqual(state.headline, "An inbox needs attention")
     }
@@ -219,7 +235,7 @@ final class EmailDiscoveryPresentationStateTests: XCTestCase {
         )
 
         XCTAssertFalse(state.isScanning)
-        XCTAssertEqual(state.dashboardState, .needsAttention)
+        XCTAssertEqual(state.dashboardState, .scanFailed)
     }
 
     @MainActor

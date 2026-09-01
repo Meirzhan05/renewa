@@ -42,6 +42,7 @@ import {
   scanDispatchGraceMs,
   totalRunProgress,
 } from "../_shared/scan-status.ts";
+import { userFacingScanError } from "../_shared/scan-errors.ts";
 import {
   cursorRecoveryLookbackDays,
   gmailHistoricalQuery,
@@ -1351,11 +1352,19 @@ async function scanStatus(
     connections: await connectionSummaries(admin, userID),
     learning_summary: await learningSummary(admin, userID),
     recent_activity: await recentActivity(admin, userID),
-    errors: uniqueStrings([
-      ...runs.map((run) => run.error_message),
-      ...(jobs ?? []).map((job) => job.error_message),
-      ...failureMessageByRun.values(),
-    ]),
+    // User-safe, categorized messages only — never raw provider text ("Insufficient Balance",
+    // "Bad Request", …). Map non-empty internal reasons; no errors -> empty array (no generic injected).
+    errors: uniqueStrings(
+      [
+        ...runs.map((run) => run.error_message),
+        ...(jobs ?? []).map((job) => job.error_message),
+        ...failureMessageByRun.values(),
+      ]
+        .filter((message): message is string =>
+          typeof message === "string" && message.trim().length > 0
+        )
+        .map((message) => userFacingScanError(message)),
+    ),
   };
 }
 

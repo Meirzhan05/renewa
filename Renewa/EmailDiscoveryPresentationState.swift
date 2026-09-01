@@ -15,6 +15,10 @@ struct EmailDiscoveryPresentationState: Equatable {
         case reviewReady
         case upToDate
         case needsAttention
+        /// A scan finished in a failed/partial state for a non-connection reason (e.g. the analysis
+        /// service was unavailable). Distinct from `needsAttention`, which is a connection/reconnect
+        /// problem: this offers "try again", not "reconnect your inbox".
+        case scanFailed
     }
 
     enum MonitoringState: Equatable {
@@ -64,8 +68,10 @@ struct EmailDiscoveryPresentationState: Equatable {
     var dashboardState: DashboardState {
         if connectionCount == 0 { return .noInbox }
         if isScanning { return .scanning }
+        // A connection that needs reconnection is the only "needs attention" case; everything else that
+        // failed is a scan failure the user retries rather than reconnects.
         if monitoringState == .reconnectRequired { return .needsAttention }
-        if errorCount > 0 || status == .failed || status == .partial { return .needsAttention }
+        if errorCount > 0 || status == .failed || status == .partial { return .scanFailed }
         if pendingCount > 0 { return .reviewReady }
         return .upToDate
     }
@@ -154,6 +160,7 @@ struct EmailDiscoveryPresentationState: Equatable {
             case .notConfigured: "No action needed"
             }
         case .needsAttention: "An inbox needs attention"
+        case .scanFailed: "Couldn’t finish the scan"
         }
     }
 
@@ -184,6 +191,8 @@ struct EmailDiscoveryPresentationState: Equatable {
             return "\(pendingCount) \(noun) waiting for confirmation."
         case .needsAttention:
             return "Completed with \(errorCount) connection issue\(errorCount == 1 ? "" : "s")."
+        case .scanFailed:
+            return "Something interrupted this scan. You can try again."
         case .upToDate:
             switch monitoringState {
             case .active:
