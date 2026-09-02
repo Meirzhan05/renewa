@@ -25,6 +25,208 @@
             store.hasLoadedSubscriptions = true
             store.hasLoadedInsightsData = true
             store.state = .ready
+
+            if let scenario = InboxScenario.current {
+                store.emailScanStatus = emailScanStatus(scenario)
+                store.isLoadingEmailDiscovery = scenario == .loading
+            }
+        }
+
+        /// The Inbox screen's states, addressable from `RENEWA_QA_SCREEN` so each one can be
+        /// booted in the simulator as well as opened in a preview.
+        enum InboxScenario: String, CaseIterable {
+            case reviewReady = "inbox"
+            case empty = "inbox-empty"
+            case scanning = "inbox-scanning"
+            case clear = "inbox-clear"
+            case failed = "inbox-failed"
+            case reconnect = "inbox-reconnect"
+            case loading = "inbox-loading"
+            /// Empty inbox with the connect sheet already open.
+            case connect = "inbox-connect"
+
+            static var current: InboxScenario? {
+                ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"]
+                    .flatMap(InboxScenario.init(rawValue:))
+            }
+        }
+
+        static func emailScanStatus(_ scenario: InboxScenario) -> EmailScanStatus? {
+            switch scenario {
+            case .loading:
+                return nil
+            case .empty, .connect:
+                return inboxStatus(status: .idle, stage: .idle, scanned: 0, connections: [])
+            case .scanning:
+                return inboxStatus(
+                    status: .running,
+                    stage: .fetching,
+                    scanned: 1146,
+                    connections: [inboxConnection()]
+                )
+            case .reviewReady:
+                return inboxStatus(
+                    status: .completed,
+                    stage: .reviewReady,
+                    scanned: 3204,
+                    candidates: [
+                        inboxCandidate(
+                            "Figma Professional",
+                            amount: 15,
+                            evidence: "Receipt from figma.com · 4 minutes ago"
+                        ),
+                        inboxCandidate(
+                            "Duolingo Super",
+                            amount: 12.99,
+                            evidence: "Free trial, first charge Sep 2 · Aug 19"
+                        ),
+                        inboxCandidate(
+                            "Adobe Creative Cloud",
+                            amount: nil,
+                            evidence: "Order confirmation, no renewal date named · Aug 20",
+                            action: .review,
+                            validationIssues: ["missing_amount"]
+                        ),
+                    ],
+                    connections: [
+                        inboxConnection(),
+                        inboxConnection(provider: "microsoft", email: "alex•••@contoso.com"),
+                    ]
+                )
+            case .clear:
+                return inboxStatus(
+                    status: .completed,
+                    stage: .completed,
+                    scanned: 3204,
+                    connections: [inboxConnection()],
+                    learning: [
+                        EmailScanLearningItem(
+                            merchantName: "Headspace",
+                            outcome: .ended,
+                            eventType: "cancellation",
+                            receivedAt: Date().addingTimeInterval(-60 * 60 * 30),
+                            explanation: "The cancellation email matched a subscription you had already ended."
+                        ),
+                        EmailScanLearningItem(
+                            merchantName: "Notion",
+                            outcome: .uncertain,
+                            eventType: "receipt",
+                            receivedAt: Date().addingTimeInterval(-60 * 60 * 52),
+                            explanation: "The receipt did not name a billing period, so nothing was added."
+                        ),
+                    ]
+                )
+            case .failed:
+                return inboxStatus(
+                    status: .failed,
+                    stage: .failed,
+                    scanned: 412,
+                    connections: [inboxConnection()],
+                    errors: ["The analysis service was unavailable partway through this scan."]
+                )
+            case .reconnect:
+                return inboxStatus(
+                    status: .partial,
+                    stage: .failed,
+                    scanned: 118,
+                    connections: [
+                        inboxConnection(
+                            health: "attention",
+                            monitoringHealth: "reconnect_required",
+                            monitoringError: "Google sign-in expired. Reconnect to keep reading new mail."
+                        )
+                    ],
+                    errors: ["Google sign-in expired."]
+                )
+            }
+        }
+
+        static func inboxConnection(
+            provider: String = "google",
+            email: String = "alex.k•••@gmail.com",
+            health: String = "healthy",
+            monitoringHealth: String = "active",
+            monitoringError: String? = nil
+        ) -> EmailConnectionSummary {
+            let lastScannedAt = Date().addingTimeInterval(-780)
+            return EmailConnectionSummary(
+                id: UUID(),
+                provider: provider,
+                redactedEmail: email,
+                lastScannedAt: lastScannedAt,
+                health: health,
+                scanStatus: "completed",
+                automaticMonitoringEnabled: true,
+                monitoringHealth: monitoringHealth,
+                monitoringError: monitoringError,
+                monitoringExpiresAt: nil,
+                lastAutomaticScanAt: lastScannedAt,
+                monitoringFallbackActive: false
+            )
+        }
+
+        static func inboxCandidate(
+            _ name: String,
+            amount: Decimal?,
+            evidence: String,
+            action: EmailCandidateAction = .add,
+            validationIssues: [String] = []
+        ) -> EmailSubscriptionCandidate {
+            EmailSubscriptionCandidate(
+                id: UUID(),
+                matchedSubscriptionID: nil,
+                suggestedAction: action,
+                reviewStatus: .pending,
+                merchantName: name,
+                amount: amount,
+                currency: amount == nil ? nil : "USD",
+                billingCycle: .monthly,
+                renewalDate: Date().addingTimeInterval(60 * 60 * 24 * 21),
+                category: .entertainment,
+                eventType: "renewal",
+                confidence: 0.82,
+                evidence: evidence,
+                validationIssues: validationIssues,
+                resolutionReason: nil,
+                evidenceEvents: nil,
+                createdAt: Date().addingTimeInterval(-240)
+            )
+        }
+
+        static func inboxStatus(
+            status: EmailScanAggregateStatus,
+            stage: EmailScanStage,
+            scanned: Int,
+            candidates: [EmailSubscriptionCandidate] = [],
+            connections: [EmailConnectionSummary],
+            errors: [String] = [],
+            learning: [EmailScanLearningItem] = []
+        ) -> EmailScanStatus {
+            EmailScanStatus(
+                scanID: UUID(),
+                status: status,
+                stage: stage,
+                connectionCount: connections.count,
+                scanned: scanned,
+                candidateMessages: scanned / 24,
+                detected: candidates.count,
+                validationFailures: 0,
+                pendingCount: candidates.count,
+                candidates: candidates,
+                suppressedMerchants: [],
+                connections: connections,
+                errors: errors,
+                withheldAmbiguities: 0,
+                learningSummary: learning.isEmpty
+                    ? nil
+                    : EmailScanLearningSummary(
+                        endedCount: learning.filter { $0.outcome == .ended }.count,
+                        uncertainCount: learning.filter { $0.outcome == .uncertain }.count,
+                        items: learning
+                    ),
+                runs: nil,
+                executionCounts: nil
+            )
         }
 
         static func store() -> AppStore {

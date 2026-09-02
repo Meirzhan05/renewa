@@ -156,7 +156,7 @@ struct MainTabView: View {
             switch ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"] {
             case "insights", "insights-empty", "insights-failure", "insights-inactive":
                 _selectedTab = State(initialValue: .insights)
-            case "inbox":
+            case let screen? where screen.hasPrefix("inbox"):
                 _selectedTab = State(initialValue: .inbox)
             case "profile":
                 _selectedTab = State(initialValue: .profile)
@@ -197,7 +197,8 @@ struct MainTabView: View {
                             selectTab(.inbox)
                         }
                     )
-                case .inbox: EmailScanView()
+                case .inbox:
+                    EmailScanView(onAddManually: { showingAdd = true })
                 case .profile: ProfileView()
                 }
             }
