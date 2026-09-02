@@ -8,7 +8,9 @@ type Call = { text: string; params: unknown[] };
 
 // A fake runner that routes each query by the table it touches and records every call, so tests can
 // assert what the bridge wrote. detected_billing_events inserts return a synthetic id; candidate
-// inserts return one row unless the merchant is in `conflictKeys` (simulating the unique conflict).
+// upserts always return a row, with `inserted` false when the merchant is in `conflictMerchants`
+// (the row MERGED into an existing card rather than creating one) — the `xmax = 0` flag in the real
+// statement. `senders` maps a message id to its sender so identity resolves as it does in production.
 function fakeRunner(opts: {
   suppressed?: string[];
   subs?: Array<{ id: string; key: string }>;
@@ -32,7 +34,7 @@ function fakeRunner(opts: {
       if (/insert into subscription_candidates/.test(text)) {
         const key = String(params[6]); // canonical_merchant_key position
         const conflict = (opts.conflictMerchants ?? []).includes(key);
-        return { rows: conflict ? [] : [{ id: `cand-${key}` }] };
+        return { rows: [{ id: `cand-${key}`, inserted: !conflict }] };
       }
       return { rows: [] };
     },
@@ -110,7 +112,7 @@ test("a matched existing subscription becomes a 'review' card, unmatched becomes
   assert.equal(byKey.get("notion")?.[4], "add");
 });
 
-test("a duplicate candidate (detected-event conflict) is not counted", async () => {
+test("a proposal that MERGES into an existing card is not counted as surfaced", async () => {
   const { runner } = fakeRunner({ conflictMerchants: ["netflix"] });
   const written = await bridgeProposalsToCandidates(runner, {
     userId: "u1",
@@ -119,5 +121,70 @@ test("a duplicate candidate (detected-event conflict) is not counted", async () 
     messagesScanned: 5,
     proposals: [proposal({ merchant_key: "netflix", merchant_name: "Netflix" })],
   });
+  // The upsert returns the merged row; only a fresh insert counts as a card surfaced.
   assert.equal(written, 0);
+});
+
+test("identity comes from the evidence sender, not the model's label", async () => {
+  const { runner, calls } = fakeRunner({});
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    // Two names the model produced for ONE vendor, each citing a different email from that vendor.
+    proposals: [
+      proposal({ merchant_key: "anthropic", merchant_name: "Anthropic", evidence_refs: ["m1"] }),
+      proposal({
+        merchant_key: "anthropic-claude-pro",
+        merchant_name: "Anthropic (Claude Pro)",
+        evidence_refs: ["m2"],
+      }),
+    ],
+    messageSenders: new Map([
+      ["m1", "Anthropic <no-reply@mail.anthropic.com>"],
+      ["m2", "Anthropic <no-reply@mail.anthropic.com>"],
+    ]),
+  });
+
+  const keys = calls
+    .filter((c) => /insert into subscription_candidates/.test(c.text))
+    .map((c) => String(c.params[6]));
+  assert.deepEqual(keys, ["anthropic", "anthropic"], "both must resolve to one identity");
+  // The display name still reflects what the model said — identity changed, presentation did not.
+  const names = calls
+    .filter((c) => /insert into subscription_candidates/.test(c.text))
+    .map((c) => String(c.params[5]));
+  assert.deepEqual(names, ["Anthropic", "Anthropic (Claude Pro)"]);
+});
+
+test("a merchant suppressed under one label is suppressed under another", async () => {
+  const { runner, calls } = fakeRunner({ suppressed: ["openai"] });
+  const written = await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [proposal({
+      merchant_key: "openai-chatgpt-plus",
+      merchant_name: "OpenAI (ChatGPT Plus)",
+      evidence_refs: ["m1"],
+    })],
+    messageSenders: new Map([["m1", "OpenAI <noreply@tm.openai.com>"]]),
+  });
+  assert.equal(written, 0);
+  assert.equal(calls.some((c) => /insert into subscription_candidates/.test(c.text)), false);
+});
+
+test("without a sender lookup the proposal's own key is used", async () => {
+  const { runner, calls } = fakeRunner({});
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [proposal({ merchant_key: "netflix", merchant_name: "Netflix" })],
+  });
+  const insert = calls.find((c) => /insert into subscription_candidates/.test(c.text));
+  assert.equal(String(insert?.params[6]), "netflix");
 });

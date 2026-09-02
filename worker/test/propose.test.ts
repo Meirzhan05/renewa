@@ -60,3 +60,45 @@ test("dedupeProposal rejects a merchant already tracked or rejected", () => {
   const fresh = dedupeProposal(base.proposal, { tracked: new Set(["spotify"]), suppressed: new Set(["uber"]) });
   assert.equal(fresh.ok, true);
 });
+
+test("a vendor proposed twice under different names is one identity within a page", () => {
+  const sender = "Anthropic <no-reply@mail.anthropic.com>";
+  const first = validateProposal(
+    { merchant_name: "Anthropic", recurrence: "recurring", evidence_refs: ["m1"] },
+    sender,
+  );
+  const second = validateProposal(
+    { merchant_name: "Anthropic (Claude Pro)", recurrence: "recurring", evidence_refs: ["m2"] },
+    sender,
+  );
+  assert.equal(first.ok && second.ok, true);
+  if (!first.ok || !second.ok) return;
+  assert.equal(first.proposal.merchant_key, second.proposal.merchant_key);
+
+  // The agent accepts the first, adds its key to `tracked`, and the second is then a duplicate —
+  // which is exactly what failed before, since the two names slugged to two different keys.
+  const tracked = new Set([first.proposal.merchant_key]);
+  const dup = dedupeProposal(second.proposal, { tracked, suppressed: new Set() });
+  assert.equal(dup.ok === false && dup.reason, "duplicate_tracked");
+
+  // The display name is untouched — only identity changed.
+  assert.equal(second.proposal.merchant_name, "Anthropic (Claude Pro)");
+});
+
+test("a suppressed merchant stays suppressed under a new display name", () => {
+  const res = validateProposal(
+    { merchant_name: "OpenAI (ChatGPT Plus)", recurrence: "recurring", evidence_refs: ["m3"] },
+    "OpenAI <noreply@tm.openai.com>",
+  );
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  const out = dedupeProposal(res.proposal, { tracked: new Set(), suppressed: new Set(["openai"]) });
+  assert.equal(out.ok === false && out.reason, "duplicate_suppressed");
+});
+
+test("without a sender the merchant key still falls back to the display name", () => {
+  const res = validateProposal({ merchant_name: "Netflix", recurrence: "recurring", evidence_refs: [] });
+  assert.equal(res.ok, true);
+  if (!res.ok) return;
+  assert.equal(res.proposal.merchant_key, "netflix");
+});

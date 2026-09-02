@@ -67,5 +67,8 @@ export async function bridgeInboxProposals(
     provider: job.provider,
     messagesScanned: job.rawMessages.length,
     proposals,
+    // The page's messages are already in hand, so merchant identity resolves from the evidence
+    // sender without an extra fetch.
+    messageSenders: new Map(job.rawMessages.map((m) => [m.id, m.sender])),
   });
 }

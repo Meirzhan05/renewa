@@ -239,7 +239,14 @@ export function buildAgentGraph(deps: AgentGraphDeps, checkpointer?: BaseCheckpo
             payload = { prior_decisions: await deps.reconcile.listPriorDecisions(req.merchant) };
           } else {
             // propose — the human-gated write. Validate (anti-exfil) then dedup (idempotency).
-            const valid = validateProposal(req.candidate);
+            // The sender of the cited evidence makes the merchant key identity-bearing, so the
+            // in-page tracked set below recognises one vendor proposed twice under different labels.
+            const refs = req.candidate.evidence_refs;
+            const firstRef = Array.isArray(refs) && typeof refs[0] === "string" ? refs[0] : undefined;
+            const valid = validateProposal(
+              req.candidate,
+              firstRef ? surfacedById.get(firstRef)?.sender : undefined,
+            );
             if (!valid.ok) {
               payload = { accepted: false, reason: valid.reason };
             } else {

@@ -8,6 +8,7 @@
 // from email content (the `evidence` string is synthesized from typed fields only), so the anti-exfil
 // wall from `propose.ts` extends all the way to the human-facing card.
 
+import { resolveMerchantIdentity } from "../domain/email.ts";
 import type { ProposalCandidate } from "./types.ts";
 import type { SqlRunner } from "./reconcile-db.ts";
 
@@ -26,6 +27,11 @@ export type BridgeInput = {
   provider: string; // mail_provider: 'google' | 'microsoft'
   messagesScanned: number;
   proposals: ProposalCandidate[];
+  /**
+   * `messageId -> sender` for this page's messages, used to resolve merchant identity from WHO BILLED
+   * rather than from the model's chosen label. Absent entries fall back to the proposal's own key.
+   */
+  messageSenders?: Map<string, string>;
 };
 
 /** A short, human-facing summary built ONLY from typed fields (never from raw email content). */
@@ -69,9 +75,12 @@ export async function bridgeProposalsToCandidates(
 
   let written = 0;
   for (const p of input.proposals) {
-    if (suppressedKeys.has(p.merchant_key)) continue;
+    // Identity comes from WHO BILLED, not from the label the model chose: the same vendor named two
+    // ways ("Anthropic" / "Anthropic (Claude Pro)") must reconcile and roll up as one merchant.
+    const identity = resolveIdentity(p, input.messageSenders);
+    if (suppressedKeys.has(identity)) continue;
 
-    const providerMessageId = p.evidence_refs[0] ?? `agent-${p.merchant_key}`;
+    const providerMessageId = p.evidence_refs[0] ?? `agent-${identity}`;
     const evidence = synthesizeEvidence(p);
     const type = eventType(p);
 
@@ -109,35 +118,91 @@ export async function bridgeProposalsToCandidates(
     const detectedEventId = event.rows[0]?.id;
     if (!detectedEventId) continue;
 
-    const matchedId = subByKey.get(p.merchant_key) ?? null;
-    const candidate = await runner.query(
-      `insert into subscription_candidates
-         (user_id, scan_run_id, detected_event_id, matched_subscription_id, suggested_action,
-          merchant_name, canonical_merchant_key, amount, currency, billing_cycle, renewal_date,
-          category, event_type, confidence, evidence, resolution_reason)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'agentic_proposal')
-       on conflict (detected_event_id) do nothing
-       returning id`,
-      [
-        input.userId,
-        input.scanRunId,
-        detectedEventId,
-        matchedId,
-        matchedId ? "review" : "add",
-        p.merchant_name,
-        p.merchant_key,
-        p.amount,
-        p.currency,
-        p.billing_cycle,
-        p.renewal_date,
-        p.category ?? "other",
-        type,
-        p.confidence,
-        evidence,
-      ],
-    );
-    if (candidate.rows.length > 0) written += 1;
+    const matchedId = subByKey.get(identity) ?? null;
+    // One PENDING card per merchant per user — the scope the inbox actually queries (it filters on
+    // user + review_status with no run filter, so a per-run invariant would be invisible to the user
+    // and later runs would stack a second card for the same vendor). The conflict target is the
+    // merchant identity, so another page — or a later scan — MERGES into the existing card; the
+    // partial unique index makes that hold even when pages run concurrently with no shared state.
+    //
+    // Merge rule: the higher-confidence proposal supplies the field, and `coalesce` then fills from
+    // the loser, so a null never erases a value already known. That makes the merge order-independent
+    // — page completion order is not deterministic.
+    const candidate = await insertOrMergeCandidate(runner, [
+      input.userId,
+      input.scanRunId,
+      detectedEventId,
+      matchedId,
+      matchedId ? "review" : "add",
+      p.merchant_name,
+      identity,
+      p.amount,
+      p.currency,
+      p.billing_cycle,
+      p.renewal_date,
+      p.category ?? "other",
+      type,
+      p.confidence,
+      evidence,
+    ]);
+    // Count cards SURFACED, not rows touched: a merge updates an existing card and must not inflate
+    // the run's "found" figure. `xmax = 0` distinguishes a fresh insert from an upsert-update.
+    if (candidate.rows[0]?.inserted === true) written += 1;
   }
 
   return written;
+}
+
+/** Resolve a proposal's merchant identity from its evidence sender, falling back to its own key. */
+function resolveIdentity(p: ProposalCandidate, senders?: Map<string, string>): string {
+  const sender = senders?.get(p.evidence_refs[0] ?? "");
+  return sender ? resolveMerchantIdentity(sender, p.merchant_name) : p.merchant_key;
+}
+
+const CAND_COLUMNS = `(user_id, scan_run_id, detected_event_id, matched_subscription_id,
+  suggested_action, merchant_name, canonical_merchant_key, amount, currency, billing_cycle,
+  renewal_date, category, event_type, confidence, evidence, resolution_reason)`;
+
+/** `excluded` wins the field when it is more confident, then either side fills a gap in the other. */
+function mergeField(column: string): string {
+  return `${column} = case when excluded.confidence > c.confidence
+      then coalesce(excluded.${column}, c.${column})
+      else coalesce(c.${column}, excluded.${column}) end`;
+}
+
+async function insertOrMergeCandidate(runner: SqlRunner, params: unknown[]) {
+  try {
+    return await runner.query(
+      `insert into subscription_candidates as c ${CAND_COLUMNS}
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'agentic_proposal')
+       on conflict (user_id, canonical_merchant_key) where review_status = 'pending' do update set
+         -- The card belongs to the most recent scan that saw the merchant, so a merged card stays
+         -- coherent with the latest run's summary.
+         scan_run_id = excluded.scan_run_id,
+         ${mergeField("merchant_name")},
+         ${mergeField("amount")},
+         ${mergeField("currency")},
+         ${mergeField("billing_cycle")},
+         ${mergeField("renewal_date")},
+         ${mergeField("evidence")},
+         matched_subscription_id =
+           coalesce(excluded.matched_subscription_id, c.matched_subscription_id),
+         -- Keep the action consistent with the match: a later proposal that matches a tracked
+         -- subscription must flip the card from 'add' to 'review'.
+         suggested_action = case
+           when coalesce(excluded.matched_subscription_id, c.matched_subscription_id) is not null
+             then 'review' else c.suggested_action end,
+         confidence = greatest(c.confidence, excluded.confidence)
+       returning id, (xmax = 0) as inserted`,
+      params,
+    );
+  } catch (error) {
+    // One email can evidence two merchants (an aggregator receipt listing several subscriptions).
+    // Those proposals share a detected event, and `unique (detected_event_id)` rejects the second —
+    // a constraint OTHER than our conflict target, so it raises instead of merging. The previous
+    // `on conflict (detected_event_id) do nothing` silently skipped it; preserve exactly that rather
+    // than letting one proposal abort the whole page's bridge.
+    if ((error as { code?: string })?.code === "23505") return { rows: [] };
+    throw error;
+  }
 }

@@ -12,6 +12,7 @@ import {
   billingCycles,
   billingEventTypes,
   canonicalMerchantKey,
+  resolveMerchantIdentity,
   subscriptionCategories,
 } from "../domain/email.ts";
 import type { ProposalCandidate, RecurrenceKind } from "./types.ts";
@@ -28,8 +29,14 @@ export type ValidationResult =
  * Coerce raw model output into a typed proposal. Unknown/extra keys are ignored (never surfaced),
  * out-of-range values are nulled, and a merchant name is required. The merchant name is bounded and
  * control-stripped so it cannot carry markup or newlines onto the card.
+ *
+ * `evidenceSender` — the sender of the email backing this proposal, when known — makes the merchant
+ * key identity-bearing rather than a slug of the model's chosen label, so the dedup guard below
+ * recognises one vendor named two ways ("Anthropic" / "Anthropic (Claude Pro)") as a duplicate. The
+ * sender is used ONLY to derive that key; it never reaches a human-facing field, so the anti-exfil
+ * wall is unchanged.
  */
-export function validateProposal(raw: unknown): ValidationResult {
+export function validateProposal(raw: unknown, evidenceSender?: string): ValidationResult {
   if (typeof raw !== "object" || raw === null) return { ok: false, reason: "not_an_object" };
   const r = raw as Record<string, unknown>;
 
@@ -41,7 +48,9 @@ export function validateProposal(raw: unknown): ValidationResult {
     : "unknown";
 
   const proposal: ProposalCandidate = {
-    merchant_key: canonicalMerchantKey(merchant_name),
+    merchant_key: evidenceSender
+      ? resolveMerchantIdentity(evidenceSender, merchant_name)
+      : canonicalMerchantKey(merchant_name),
     merchant_name,
     recurrence,
     amount: coerceAmount(r.amount),
