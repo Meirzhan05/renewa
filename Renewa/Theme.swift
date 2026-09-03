@@ -183,6 +183,7 @@ private struct RenewaEntranceModifier: ViewModifier {
     let isVisible: Bool
     let delay: Double
     let distance: CGFloat
+    let motion: Animation
 
     func body(content: Content) -> some View {
         content
@@ -190,18 +191,29 @@ private struct RenewaEntranceModifier: ViewModifier {
             .offset(y: isVisible || reduceMotion ? 0 : distance)
             .scaleEffect(isVisible || reduceMotion ? 1 : 0.985)
             .animation(
-                reduceMotion ? .easeOut(duration: 0.12) : RenewaMotion.gentle.delay(delay),
+                reduceMotion ? .easeOut(duration: 0.12) : motion.delay(delay),
                 value: isVisible
             )
     }
 }
 
 extension View {
+    /// Fades and lifts a section into place. `motion` defaults to the unhurried curve a root screen
+    /// arrives on; a sheet that already animates itself in passes a shorter one, so its own
+    /// presentation is not left racing the content inside it.
     func renewaEntrance(
         _ isVisible: Bool,
         delay: Double = 0,
-        distance: CGFloat = 16
+        distance: CGFloat = 16,
+        motion: Animation = RenewaMotion.gentle
     ) -> some View {
-        modifier(RenewaEntranceModifier(isVisible: isVisible, delay: delay, distance: distance))
+        modifier(
+            RenewaEntranceModifier(
+                isVisible: isVisible,
+                delay: delay,
+                distance: distance,
+                motion: motion
+            )
+        )
     }
 }

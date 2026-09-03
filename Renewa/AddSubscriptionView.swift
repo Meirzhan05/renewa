@@ -42,10 +42,11 @@ struct AddSubscriptionView: View {
             }
         }
         .onAppear {
-            // Waits out the sheet's presentation before raising the keyboard, so the two animations
-            // run one after the other rather than over each other.
+            // Waits out the sheet's presentation and the form's entrance before raising the
+            // keyboard, so the three run in sequence rather than over each other. The last band
+            // settles around 0.45s; the keyboard follows it rather than cutting through it.
             Task {
-                try? await Task.sleep(for: .milliseconds(350))
+                try? await Task.sleep(for: .milliseconds(480))
                 focusedField = .name
             }
         }

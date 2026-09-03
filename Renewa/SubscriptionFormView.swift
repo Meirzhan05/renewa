@@ -137,6 +137,7 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingBrandPicker = false
+    @State private var appeared = false
     /// The name the logo lookup is allowed to use, held one pause behind what is being typed.
     /// `nil` only until the first resolution lands.
     @State private var logoLookupName: String?
@@ -146,114 +147,136 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
         GridItem(.flexible(), spacing: 10)
     ]
 
+    /// One animated layer per band of the form rather than one per card. This form is shown in a
+    /// sheet that already animates itself in, so the entrance rides along with that presentation
+    /// instead of outlasting it: a short curve, a small lift, three bands — the visible motion over
+    /// before the keyboard arrives.
+    @ViewBuilder
+    private func entranceGroup<Content: View>(
+        delay: Double,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 22) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .renewaEntrance(appeared, delay: delay, distance: 10, motion: RenewaMotion.quick)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                header
+                entranceGroup(delay: 0) {
+                    header
 
-                preview
-
-                sectionCard(title: "Details") {
-                    VStack(spacing: 12) {
-                        inputField(
-                            title: "Subscription name",
-                            text: $draft.name,
-                            icon: .rectangleStack,
-                            field: .name
-                        )
-                        .textInputAutocapitalization(.words)
-
-                        if showsBillingFields {
-                            HStack(spacing: 12) {
-                                inputField(
-                                    title: "0.00",
-                                    text: $draft.priceText,
-                                    icon: .currencyDollar,
-                                    field: .price
-                                )
-                                .keyboardType(.decimalPad)
-
-                                currencyControl
-                            }
-                        }
-                    }
+                    preview
                 }
 
-                if showsBillingFields, !draft.trimmedName.isEmpty {
-                    sectionCard(title: "Logo") {
-                        brandSelection
-                    }
-                }
-
-                if showsBillingFields {
-                    sectionCard(title: "Billing cycle") {
-                        LazyVGrid(columns: columns, spacing: 10) {
-                            ForEach(BillingCycle.allCases) { item in
-                                selectionTile(
-                                    title: item.title,
-                                    subtitle: item.cadenceHint,
-                                    selected: draft.billingCycle == item
-                                ) {
-                                    withAnimation(reduceMotion ? nil : RenewaMotion.quick) {
-                                        draft.billingCycle = item
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    sectionCard(title: "Category") {
-                        LazyVGrid(columns: columns, spacing: 10) {
-                            ForEach(SubscriptionCategory.allCases) { item in
-                                Button {
-                                    withAnimation(reduceMotion ? nil : RenewaMotion.quick) {
-                                        draft.category = item
-                                    }
-                                } label: {
-                                    HStack(spacing: 10) {
-                                        HeroIcon(item.heroIcon, size: 20)
-                                            .foregroundStyle(draft.category == item ? .white : item.color)
-                                        Text(item.title)
-                                            .font(.renewa(14, weight: .semibold))
-                                            .lineLimit(1)
-                                        Spacer(minLength: 0)
-                                    }
-                                    .foregroundStyle(draft.category == item ? .white : RenewaTheme.ink)
-                                    .padding(.horizontal, 13)
-                                    .frame(height: 50)
-                                    .background(
-                                        draft.category == item ? item.color : RenewaTheme.background.opacity(0.8),
-                                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    )
-                                }
-                                .buttonStyle(PressScaleStyle())
-                                .accessibilityAddTraits(draft.category == item ? .isSelected : [])
-                            }
-                        }
-                    }
-
-                    sectionCard(title: "Next renewal") {
-                        HStack(spacing: 12) {
-                            HeroIcon(.arrowPath, size: 22)
-                                .foregroundStyle(RenewaTheme.sage)
-                            DatePicker(
-                                "Renewal date",
-                                selection: $draft.renewalDate,
-                                displayedComponents: .date
+                entranceGroup(delay: 0.05) {
+                    sectionCard(title: "Details") {
+                        VStack(spacing: 12) {
+                            inputField(
+                                title: "Subscription name",
+                                text: $draft.name,
+                                icon: .rectangleStack,
+                                field: .name
                             )
-                            .font(.renewa(15, weight: .medium))
+                            .textInputAutocapitalization(.words)
+
+                            if showsBillingFields {
+                                HStack(spacing: 12) {
+                                    inputField(
+                                        title: "0.00",
+                                        text: $draft.priceText,
+                                        icon: .currencyDollar,
+                                        field: .price
+                                    )
+                                    .keyboardType(.decimalPad)
+
+                                    currencyControl
+                                }
+                            }
+                        }
+                    }
+
+                    if showsBillingFields, !draft.trimmedName.isEmpty {
+                        sectionCard(title: "Logo") {
+                            brandSelection
                         }
                     }
                 }
 
-                if let validationMessage {
-                    Text(validationMessage)
-                        .font(.renewa(13, weight: .medium))
-                        .foregroundStyle(RenewaTheme.coral)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                }
+                entranceGroup(delay: 0.1) {
+                    if showsBillingFields {
+                        sectionCard(title: "Billing cycle") {
+                            LazyVGrid(columns: columns, spacing: 10) {
+                                ForEach(BillingCycle.allCases) { item in
+                                    selectionTile(
+                                        title: item.title,
+                                        subtitle: item.cadenceHint,
+                                        selected: draft.billingCycle == item
+                                    ) {
+                                        withAnimation(reduceMotion ? nil : RenewaMotion.quick) {
+                                            draft.billingCycle = item
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
-                footer
+                        sectionCard(title: "Category") {
+                            LazyVGrid(columns: columns, spacing: 10) {
+                                ForEach(SubscriptionCategory.allCases) { item in
+                                    Button {
+                                        withAnimation(reduceMotion ? nil : RenewaMotion.quick) {
+                                            draft.category = item
+                                        }
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            HeroIcon(item.heroIcon, size: 20)
+                                                .foregroundStyle(draft.category == item ? .white : item.color)
+                                            Text(item.title)
+                                                .font(.renewa(14, weight: .semibold))
+                                                .lineLimit(1)
+                                            Spacer(minLength: 0)
+                                        }
+                                        .foregroundStyle(draft.category == item ? .white : RenewaTheme.ink)
+                                        .padding(.horizontal, 13)
+                                        .frame(height: 50)
+                                        .background(
+                                            draft.category == item ? item.color : RenewaTheme.background.opacity(0.8),
+                                            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        )
+                                    }
+                                    .buttonStyle(PressScaleStyle())
+                                    .accessibilityAddTraits(draft.category == item ? .isSelected : [])
+                                }
+                            }
+                        }
+
+                        sectionCard(title: "Next renewal") {
+                            HStack(spacing: 12) {
+                                HeroIcon(.arrowPath, size: 22)
+                                    .foregroundStyle(RenewaTheme.sage)
+                                DatePicker(
+                                    "Renewal date",
+                                    selection: $draft.renewalDate,
+                                    displayedComponents: .date
+                                )
+                                .font(.renewa(15, weight: .medium))
+                            }
+                        }
+                    }
+
+                    if let validationMessage {
+                        Text(validationMessage)
+                            .font(.renewa(13, weight: .medium))
+                            .foregroundStyle(RenewaTheme.coral)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+
+                    footer
+                }
             }
             .padding(.horizontal, 22)
             .padding(.top, 18)
@@ -261,6 +284,7 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
         }
         .scrollIndicators(.hidden)
         .background(RenewaTheme.background)
+        .onAppear { appeared = true }
         .task(id: draft.trimmedName) {
             // A name with no catalog brand behind it is looked up by text, which is a network
             // request built from the text itself. Following every keystroke fires one request per
