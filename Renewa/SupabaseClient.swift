@@ -581,6 +581,8 @@ private struct CandidateEditBody: Encodable {
     let billingCycle: BillingCycle
     let renewalDate: String
     let category: SubscriptionCategory
+    let brandID: String?
+    let hasLogoChoice: Bool
 
     init(_ edits: EmailCandidateEdits) {
         merchantName = edits.merchantName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -589,6 +591,8 @@ private struct CandidateEditBody: Encodable {
         billingCycle = edits.billingCycle
         renewalDate = Self.dayFormatter.string(from: edits.renewalDate)
         category = edits.category
+        brandID = edits.brandID
+        hasLogoChoice = edits.hasLogoChoice
     }
 
     enum CodingKeys: String, CodingKey {
@@ -598,6 +602,23 @@ private struct CandidateEditBody: Encodable {
         case billingCycle = "billing_cycle"
         case renewalDate = "renewal_date"
         case category
+        case brandID = "brand_id"
+    }
+
+    /// `brand_id` is written only when a screen offered the logo picker, and then it is written even
+    /// when nil. The synthesized encoder would drop a nil, which the server cannot tell apart from
+    /// "the client never asked" — so choosing no logo would silently get one resolved from the name.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(merchantName, forKey: .merchantName)
+        try container.encodeIfPresent(amount, forKey: .amount)
+        try container.encode(currency, forKey: .currency)
+        try container.encode(billingCycle, forKey: .billingCycle)
+        try container.encode(renewalDate, forKey: .renewalDate)
+        try container.encode(category, forKey: .category)
+        if hasLogoChoice {
+            try container.encode(brandID, forKey: .brandID)
+        }
     }
 
     private static let dayFormatter: DateFormatter = {

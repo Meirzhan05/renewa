@@ -120,6 +120,9 @@ type CandidateEdits = {
   billing_cycle?: BillingCycle;
   renewal_date?: string;
   category?: SubscriptionCategory;
+  // Present only when the review screen offered the logo picker. An explicit `null` then means the
+  // user chose no logo, which is why absent and null are handled differently below.
+  brand_id?: string | null;
 };
 
 const maximumMessagesPerHistoricalPage = 100;
@@ -1659,6 +1662,7 @@ async function reviewCandidate(
   const renewalDate = edits.renewal_date ?? candidate.renewal_date;
   const category =
     (edits.category ?? candidate.category) as SubscriptionCategory;
+  const brandID = normalizedBrandEdit(edits, merchantName);
   const action = lifecycleAction;
 
   // Validate the decision AS SUBMITTED — the merged card plus whatever the person edited — and do it
@@ -1741,7 +1745,7 @@ async function reviewCandidate(
       category,
       status: "active",
       icon_name: merchantName.slice(0, 1).toUpperCase(),
-      brand_id: brandIDForMerchant(merchantName),
+      brand_id: brandID,
       tint_hex: tintForCategory(category),
       canonical_merchant_key: key,
     };
@@ -2852,6 +2856,24 @@ function normalizedNumberEdit(
   if (typeof value === "number" && Number.isFinite(value)) return value;
   const parsed = typeof fallback === "number" ? fallback : Number(fallback);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+// The logo the confirmation should store. A client that showed the logo picker sends `brand_id` and
+// owns the answer — including `null`, which is the user saying "no logo" and must not be quietly
+// overridden. A client that never showed one (the one-tap track path, or a build predating the
+// picker) omits the key, and the name-derived brand stands as it always did. Anything else in the
+// field is not a choice anyone made, so it falls back rather than clearing a logo.
+function normalizedBrandEdit(
+  edits: CandidateEdits,
+  merchantName: string,
+): string | null {
+  const value = edits.brand_id;
+  if (value === null) return null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed.slice(0, 120);
+  }
+  return brandIDForMerchant(merchantName);
 }
 
 function normalizedCurrencyEdit(

@@ -558,14 +558,43 @@ struct EmailCandidateEdits: Equatable {
     var billingCycle: BillingCycle
     var renewalDate: Date
     var category: SubscriptionCategory
+    /// The logo the user settled on. `nil` means "no company logo" when the user reviewed the
+    /// discovery, and the server resolves one from the name for the one-tap track path that never
+    /// showed a picker — the two are told apart by `hasLogoChoice`.
+    var brandID: String?
+    /// True once a screen actually offered the logo picker, so `brandID == nil` reads as a decision
+    /// rather than as an absent field.
+    var hasLogoChoice: Bool
+
+    init(
+        merchantName: String,
+        amount: Decimal?,
+        currency: String,
+        billingCycle: BillingCycle,
+        renewalDate: Date,
+        category: SubscriptionCategory,
+        brandID: String? = nil,
+        hasLogoChoice: Bool = false
+    ) {
+        self.merchantName = merchantName
+        self.amount = amount
+        self.currency = currency
+        self.billingCycle = billingCycle
+        self.renewalDate = renewalDate
+        self.category = category
+        self.brandID = brandID
+        self.hasLogoChoice = hasLogoChoice
+    }
 
     init(candidate: EmailSubscriptionCandidate) {
-        merchantName = candidate.merchantName
-        amount = candidate.amount
-        currency = candidate.currency ?? "USD"
-        billingCycle = candidate.billingCycle ?? .monthly
-        renewalDate = candidate.renewalDate ?? Calendar.current.date(byAdding: .month, value: 1, to: .now) ?? .now
-        category = candidate.category
+        self.init(
+            merchantName: candidate.merchantName,
+            amount: candidate.amount,
+            currency: candidate.currency ?? "USD",
+            billingCycle: candidate.billingCycle ?? .monthly,
+            renewalDate: candidate.renewalDate ?? Calendar.current.date(byAdding: .month, value: 1, to: .now) ?? .now,
+            category: candidate.category
+        )
     }
 }
 

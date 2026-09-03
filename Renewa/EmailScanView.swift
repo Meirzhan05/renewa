@@ -1799,156 +1799,52 @@ private struct EmailScanLearningDetailSheet: View {
     }
 }
 
+/// Reviewing a discovery uses the same form as adding a subscription by hand — the agent only
+/// pre-fills it. The evidence sits in the header so the user can see what the values came from, and
+/// the correction picker follows the fields it is asking about.
 private struct EmailCandidateReviewSheet: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     let candidate: EmailSubscriptionCandidate
 
-    @State private var edits: EmailCandidateEdits
-    @State private var amountText: String
+    @State private var draft: SubscriptionDraft
     @State private var correctionReason = ""
     @State private var warningMessage: String?
+    @FocusState private var focusedField: SubscriptionFormField?
 
     init(candidate: EmailSubscriptionCandidate) {
         self.candidate = candidate
-        let initialEdits = EmailCandidateEdits(candidate: candidate)
-        _edits = State(initialValue: initialEdits)
-        _amountText = State(initialValue: candidate.amount.map { NSDecimalNumber(decimal: $0).stringValue } ?? "")
+        _draft = State(initialValue: SubscriptionDraft(candidate: candidate))
     }
 
-    private var normalizedEdits: EmailCandidateEdits {
-        var value = edits
-        value.amount = Decimal(string: amountText, locale: Locale(identifier: "en_US_POSIX"))
-        value.currency = edits.currency.uppercased()
-        return value
+    private var isCancellation: Bool {
+        candidate.eventType == "canceled"
     }
 
     private var issues: [String] {
-        EmailDiscoveryPresentationState.confirmationIssues(for: candidate, edits: normalizedEdits)
+        EmailDiscoveryPresentationState.confirmationIssues(for: candidate, edits: draft.candidateEdits)
     }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(candidate.suggestedAction.title)
-                            .font(.renewa(24, weight: .bold))
-                        Text(candidate.evidence)
-                            .font(.renewa(14))
-                            .foregroundStyle(RenewaTheme.muted)
-                        if let events = candidate.evidenceEvents, !events.isEmpty {
-                            Divider()
-                            Text("Why we found this")
-                                .font(.renewa(14, weight: .bold))
-                            ForEach(events) { event in
-                                Text("\(event.eventType.capitalized) · \(event.receivedAt.formatted(date: .abbreviated, time: .omitted))")
-                                    .font(.renewa(13))
-                                    .foregroundStyle(RenewaTheme.muted)
-                            }
-                        }
-                        if let reason = candidate.resolutionReason {
-                            Text(reason.replacingOccurrences(of: "_", with: " ").capitalized)
-                                .font(.renewa(12, weight: .medium))
-                                .foregroundStyle(RenewaTheme.sage)
-                        }
-                    }
-
-                    RenewaCard {
-                        VStack(alignment: .leading, spacing: 16) {
-                            fieldLabel("Subscription")
-                            TextField("Subscription name", text: $edits.merchantName)
-                                .textInputAutocapitalization(.words)
-                                .renewaField()
-
-                            if candidate.eventType != "canceled" {
-                                HStack(spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        fieldLabel("Amount")
-                                        TextField("0.00", text: $amountText)
-                                            .keyboardType(.decimalPad)
-                                            .renewaField()
-                                    }
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        fieldLabel("Currency")
-                                        TextField("USD", text: $edits.currency)
-                                            .textInputAutocapitalization(.characters)
-                                            .autocorrectionDisabled()
-                                            .renewaField()
-                                    }
-                                }
-
-                                Picker("Billing cycle", selection: $edits.billingCycle) {
-                                    ForEach(BillingCycle.allCases) { cycle in
-                                        Text(cycle.title).tag(cycle)
-                                    }
-                                }
-                                .font(.renewa(14, weight: .semibold))
-
-                                Picker("Category", selection: $edits.category) {
-                                    ForEach(SubscriptionCategory.allCases) { category in
-                                        Text(category.title).tag(category)
-                                    }
-                                }
-                                .font(.renewa(14, weight: .semibold))
-
-                                DatePicker(
-                                    "Next renewal",
-                                    selection: $edits.renewalDate,
-                                    displayedComponents: .date
-                                )
-                                .font(.renewa(14, weight: .semibold))
-                            }
-                        }
-                    }
-
-                    if !issues.isEmpty {
-                        HStack(alignment: .top, spacing: 8) {
-                            HeroIcon(.exclamationTriangle, size: 18)
-                            Text(issues.joined(separator: " "))
-                        }
-                        .font(.renewa(13, weight: .medium))
-                        .foregroundStyle(RenewaTheme.coral)
-                    }
-
-                    Picker("Anything to correct?", selection: $correctionReason) {
-                        Text("No correction").tag("")
-                        Text("Wrong service").tag("wrong_merchant")
-                        Text("Wrong amount").tag("wrong_amount")
-                        Text("Wrong billing cycle").tag("wrong_cycle")
-                        Text("Not a subscription").tag("not_a_subscription")
-                        Text("Other").tag("other")
-                    }
-                    .font(.renewa(14, weight: .medium))
-
-                    Button {
-                        Task { await confirm() }
-                    } label: {
-                        RenewaPrimaryActionLabel(
-                            title: candidate.eventType == "canceled" ? "Confirm cancellation" : "Confirm discovery",
-                            pendingTitle: "Applying confirmed change…",
-                            isPending: store.emailCandidatePendingID == candidate.id,
-                            icon: .checkCircle
-                        )
-                        .font(.renewa(15, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 54)
-                        .background(RenewaTheme.ink, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
-                    }
-                    .buttonStyle(PressScaleStyle())
-                    .disabled(!issues.isEmpty || store.isReviewingEmailCandidate)
-                    .opacity(issues.isEmpty ? 1 : 0.48)
-                }
-                .padding(24)
-                .padding(.bottom, 20)
-            }
-            .background(RenewaTheme.background)
+            SubscriptionFormView(
+                draft: $draft,
+                focusedField: $focusedField,
+                showsBillingFields: !isCancellation,
+                currencyIsEditable: true,
+                validationMessage: issues.isEmpty ? nil : issues.joined(separator: " "),
+                header: { evidenceHeader },
+                footer: { correctionPicker }
+            )
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Close") { dismiss() }
                         .font(.renewa(14, weight: .semibold))
                 }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                confirmButton
             }
             .confirmationDialog(
                 "Add \(candidate.merchantName) anyway?",
@@ -1969,6 +1865,67 @@ private struct EmailCandidateReviewSheet: View {
         }
     }
 
+    private var evidenceHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SubscriptionFormHeader(
+                title: candidate.suggestedAction.title,
+                subtitle: candidate.evidence
+            )
+            if let events = candidate.evidenceEvents, !events.isEmpty {
+                Divider()
+                Text("Why we found this")
+                    .font(.renewa(14, weight: .bold))
+                ForEach(events) { event in
+                    Text("\(event.eventType.capitalized) · \(event.receivedAt.formatted(date: .abbreviated, time: .omitted))")
+                        .font(.renewa(13))
+                        .foregroundStyle(RenewaTheme.muted)
+                }
+            }
+            if let reason = candidate.resolutionReason {
+                Text(reason.replacingOccurrences(of: "_", with: " ").capitalized)
+                    .font(.renewa(12, weight: .medium))
+                    .foregroundStyle(RenewaTheme.sage)
+            }
+        }
+    }
+
+    private var correctionPicker: some View {
+        Picker("Anything to correct?", selection: $correctionReason) {
+            Text("No correction").tag("")
+            Text("Wrong service").tag("wrong_merchant")
+            Text("Wrong amount").tag("wrong_amount")
+            Text("Wrong billing cycle").tag("wrong_cycle")
+            Text("Not a subscription").tag("not_a_subscription")
+            Text("Other").tag("other")
+        }
+        .font(.renewa(14, weight: .medium))
+    }
+
+    private var confirmButton: some View {
+        Button {
+            focusedField = nil
+            Task { await confirm() }
+        } label: {
+            RenewaPrimaryActionLabel(
+                title: isCancellation ? "Confirm cancellation" : "Confirm discovery",
+                pendingTitle: "Applying confirmed change…",
+                isPending: store.emailCandidatePendingID == candidate.id,
+                icon: .checkCircle
+            )
+            .font(.renewa(17, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 57)
+            .background(RenewaTheme.ink, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
+        }
+        .buttonStyle(PressScaleStyle())
+        .disabled(!issues.isEmpty || store.isReviewingEmailCandidate)
+        .opacity(issues.isEmpty ? 1 : 0.48)
+        .padding(.horizontal, 22)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+    }
+
     /// Only dismisses once the confirmation actually applied. A warning keeps the sheet open with
     /// the user's edits intact, so proceeding re-sends exactly what they typed rather than making
     /// them fill the form in again.
@@ -1976,7 +1933,7 @@ private struct EmailCandidateReviewSheet: View {
         let outcome = await store.reviewEmailCandidate(
             candidate,
             decision: .confirm,
-            edits: normalizedEdits,
+            edits: draft.candidateEdits,
             correctionReason: correctionReason.isEmpty ? nil : correctionReason,
             acknowledgeWarning: acknowledging
         )
@@ -1985,22 +1942,6 @@ private struct EmailCandidateReviewSheet: View {
         } else if outcome.didApply {
             dismiss()
         }
-    }
-
-    private func fieldLabel(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.renewa(10, weight: .bold))
-            .foregroundStyle(RenewaTheme.muted)
-    }
-}
-
-private extension View {
-    func renewaField() -> some View {
-        self
-            .font(.renewa(15, weight: .medium))
-            .padding(.horizontal, 13)
-            .frame(height: 46)
-            .background(RenewaTheme.background, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
     }
 }
 
@@ -2042,5 +1983,29 @@ private extension View {
 
     #Preview("Inbox · warned") {
         EmailScanView().environment(inboxPreviewStore(.warned))
+    }
+
+    #Preview("Inbox · review sheet") {
+        EmailCandidateReviewSheet(
+            candidate: RenewaPreviewFixture.inboxCandidate(
+                "Figma Professional",
+                amount: 15,
+                evidence: "Receipt from figma.com · 4 minutes ago"
+            )
+        )
+        .environment(inboxPreviewStore(.reviewReady))
+    }
+
+    #Preview("Inbox · review sheet · needs an amount") {
+        EmailCandidateReviewSheet(
+            candidate: RenewaPreviewFixture.inboxCandidate(
+                "Adobe Creative Cloud",
+                amount: nil,
+                evidence: "Order confirmation, no renewal date named · Aug 20",
+                action: .review,
+                validationIssues: ["missing_amount"]
+            )
+        )
+        .environment(inboxPreviewStore(.reviewReady))
     }
 #endif
