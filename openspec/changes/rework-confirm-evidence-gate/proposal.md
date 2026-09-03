@@ -6,7 +6,8 @@ is the worst available outcome: a silent refusal dressed as a success.
 
 `restore-detected-event-identity` fixes the immediate cause of the refusals (evidence rows written
 without a merchant key, so the gate matched nothing). It deliberately leaves the shape of the
-mechanism alone. Three problems survive it:
+mechanism alone. Four problems survive it, all four observed live on 2026-09-03 after that change
+was deployed:
 
 1. **The gate is a silent veto.** `reviewCandidate` reconstructs a merchant lifecycle from evidence
    rows and, if the state is not `current`, calls `resolveCandidateForLifecycle` — marking the card
@@ -25,21 +26,27 @@ mechanism alone. Three problems survive it:
    precisely the duplication `dedupe-inbox-proposals-by-merchant` was written to eliminate,
    reappearing on the far side of the review.
 
-   Observed on 2026-09-03, the first confirmation to succeed after
+   Observed on 2026-09-03 on a fresh account, the first confirmation to succeed after
    `restore-detected-event-identity` shipped. The card carried identity `anthropic`; the
    subscription it created carries `canonical_merchant_key = 'anthropic-claude-pro'` and
    `source_key = 'email:anthropic-claude-pro'`. The bridge's lookup for `anthropic` will not find
-   it, so the merchant is queued to be proposed again. The user's Home screen now also lists
-   `Anthropic` (created 2026-07-29, `google:anthropic`, renewal 2026-07-23) alongside
-   `Anthropic (Claude Pro)` (renewal 2026-09-22) — one subscription shown twice, because the
-   confirm path had no way to recognize the older row as the same merchant.
+   it, so the merchant is queued to be proposed again on the next scan.
+
+4. **A refused card is re-raised, so the failure repeats rather than settling.** The partial unique
+   index from `dedupe-inbox-proposals-by-merchant` covers pending rows only, so resolving a card to
+   `ignored` frees the slot and a later page inserts another card for the same merchant. Observed on
+   the same account: `OpenAI (ChatGPT Plus)` (key `openai`) was ignored by the gate at `01:10:36`,
+   and at `01:15:33` a new pending card `ChatGPT Plus` — same `openai` identity, different display
+   name, backed by an older event — took its place. It is backed by evidence just as thin, so
+   confirming it will be refused the same way. The user is offered the same impossible card
+   indefinitely.
 
 The third problem is worse than a key mismatch. The bridge's lookup filters
-`where canonical_merchant_key is not null`, and **0 of the 4 subscriptions in the live database carry
-one** — two were added manually, and manual creation assigns no identity at all. The tracked-
-subscription match is not merely wrong, it is empty. Every card the agent raises is an "add", even
-for a subscription already on the user's Home screen. Under the fix-forward decision the user will
-re-add Anthropic by hand, and the agent will propose it again after every scan, forever.
+`where canonical_merchant_key is not null`, and the manual creation path never sets that column:
+`SubscriptionInsert` (`SupabaseClient.swift:667`) has no such field, so a hand-added subscription is
+excluded from the lookup entirely. For those merchants the tracked-subscription match is not merely
+wrong, it is empty — every card the agent raises is an "add", even for a subscription already on the
+user's Home screen, and it will be raised again after every scan.
 
 ## What Changes
 
