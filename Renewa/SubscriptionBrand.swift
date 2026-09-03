@@ -55,6 +55,11 @@ struct SubscriptionBrandIcon: View {
     var size: CGFloat = 54
     /// Fill behind the mark — override when the tile sits on a surface of its own colour.
     var background: Color = RenewaTheme.surface
+    /// Name used for the by-name logo lookup, when it needs to lag behind `subscription.name`. That
+    /// lookup is a network request keyed on the text itself, so a screen where the name is being
+    /// typed passes a settled value here rather than letting the request chase every keystroke.
+    /// `nil` keeps the original behaviour of looking up whatever the subscription is called.
+    var logoLookupName: String?
 
     var body: some View {
         let brand = SubscriptionBrand.find(id: subscription.brandID)
@@ -62,7 +67,9 @@ struct SubscriptionBrandIcon: View {
             nil
         } else {
             brand.flatMap { AppConfiguration.current.logoDevURL(forVerifiedDomain: $0.logoDevDomain) }
-                ?? AppConfiguration.current.logoDevURL(forCompanyName: subscription.name)
+                ?? AppConfiguration.current.logoDevURL(
+                    forCompanyName: logoLookupName ?? subscription.name
+                )
         }
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)

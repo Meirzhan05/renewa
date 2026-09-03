@@ -217,7 +217,10 @@ struct MainTabView: View {
             .padding(.bottom, 10)
         }
         .sheet(isPresented: $showingAdd, onDismiss: { prefilledSubscriptionName = nil }) {
-            AddSubscriptionView(prefilledName: prefilledSubscriptionName)
+            AddSubscriptionView(
+                prefilledName: prefilledSubscriptionName,
+                currency: store.defaultCurrency
+            )
                 .presentationDetents([.large])
                 .presentationCornerRadius(30)
         }

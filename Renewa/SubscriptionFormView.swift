@@ -136,8 +136,10 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
     @ViewBuilder var footer: Footer
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var appeared = false
     @State private var showingBrandPicker = false
+    /// The name the logo lookup is allowed to use, held one pause behind what is being typed.
+    /// `nil` only until the first resolution lands.
+    @State private var logoLookupName: String?
 
     private let columns = [
         GridItem(.flexible(), spacing: 10),
@@ -148,10 +150,8 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 header
-                    .renewaEntrance(appeared, delay: 0.02)
 
                 preview
-                    .renewaEntrance(appeared, delay: 0.07)
 
                 sectionCard(title: "Details") {
                     VStack(spacing: 12) {
@@ -178,13 +178,11 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
                         }
                     }
                 }
-                .renewaEntrance(appeared, delay: 0.12)
 
                 if showsBillingFields, !draft.trimmedName.isEmpty {
                     sectionCard(title: "Logo") {
                         brandSelection
                     }
-                    .renewaEntrance(appeared, delay: 0.15)
                 }
 
                 if showsBillingFields {
@@ -203,7 +201,6 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
                             }
                         }
                     }
-                    .renewaEntrance(appeared, delay: 0.17)
 
                     sectionCard(title: "Category") {
                         LazyVGrid(columns: columns, spacing: 10) {
@@ -234,7 +231,6 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
                             }
                         }
                     }
-                    .renewaEntrance(appeared, delay: 0.22)
 
                     sectionCard(title: "Next renewal") {
                         HStack(spacing: 12) {
@@ -248,7 +244,6 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
                             .font(.renewa(15, weight: .medium))
                         }
                     }
-                    .renewaEntrance(appeared, delay: 0.27)
                 }
 
                 if let validationMessage {
@@ -259,7 +254,6 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
                 }
 
                 footer
-                    .renewaEntrance(appeared, delay: 0.3)
             }
             .padding(.horizontal, 22)
             .padding(.top, 18)
@@ -267,7 +261,20 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
         }
         .scrollIndicators(.hidden)
         .background(RenewaTheme.background)
-        .onAppear { appeared = true }
+        .task(id: draft.trimmedName) {
+            // A name with no catalog brand behind it is looked up by text, which is a network
+            // request built from the text itself. Following every keystroke fires one request per
+            // character and flickers the mark back to the initial between each, so the lookup waits
+            // for typing to settle. The first resolution has nothing to flicker away from — a
+            // discovery under review opens with its name already final — so it goes straight
+            // through and only later edits pay the wait.
+            let settledName = draft.trimmedName
+            if logoLookupName != nil {
+                try? await Task.sleep(for: .milliseconds(400))
+                if Task.isCancelled { return }
+            }
+            logoLookupName = settledName
+        }
         .sheet(isPresented: $showingBrandPicker) {
             SubscriptionBrandPicker(
                 subscriptionName: draft.trimmedName,
@@ -305,7 +312,11 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
                     }
                     .frame(width: 58, height: 58)
                 } else {
-                    SubscriptionBrandIcon(subscription: previewSubscription, size: 58)
+                    SubscriptionBrandIcon(
+                        subscription: previewSubscription,
+                        size: 58,
+                        logoLookupName: logoLookupName
+                    )
                 }
             }
             .animation(reduceMotion ? nil : RenewaMotion.standard, value: draft.category)
@@ -391,7 +402,11 @@ struct SubscriptionFormView<Header: View, Footer: View>: View {
             showingBrandPicker = true
         } label: {
             HStack(spacing: 13) {
-                SubscriptionBrandIcon(subscription: previewSubscription, size: 46)
+                SubscriptionBrandIcon(
+                    subscription: previewSubscription,
+                    size: 46,
+                    logoLookupName: logoLookupName
+                )
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(selectedBrand?.displayName ?? "Subscription initial")

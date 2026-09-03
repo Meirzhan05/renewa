@@ -8,9 +8,12 @@ struct AddSubscriptionView: View {
     @State private var isSaving = false
     @FocusState private var focusedField: SubscriptionFormField?
 
-    /// `prefilledName` seeds the form from a Home suggestion chip; the brand logo still resolves from it.
-    init(prefilledName: String? = nil) {
-        _draft = State(initialValue: SubscriptionDraft(name: prefilledName ?? "", currency: "USD"))
+    /// `prefilledName` seeds the form from a Home suggestion chip; the brand logo still resolves from
+    /// it. The caller passes `currency` because the account default lives in the store, which no
+    /// initializer can reach — adopting it on appear would instead rewrite the form's state during
+    /// the sheet's own presentation, re-diffing every section for a value known before the first frame.
+    init(prefilledName: String? = nil, currency: String) {
+        _draft = State(initialValue: SubscriptionDraft(name: prefilledName ?? "", currency: currency))
     }
 
     var body: some View {
@@ -39,9 +42,8 @@ struct AddSubscriptionView: View {
             }
         }
         .onAppear {
-            // The account currency lives in the store, which no initializer can reach. Manual entry
-            // never lets the user change it, so adopting it as the form appears is enough.
-            draft.currency = store.defaultCurrency
+            // Waits out the sheet's presentation before raising the keyboard, so the two animations
+            // run one after the other rather than over each other.
             Task {
                 try? await Task.sleep(for: .milliseconds(350))
                 focusedField = .name
