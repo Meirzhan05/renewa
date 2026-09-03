@@ -144,9 +144,17 @@ a future `available_at`, or failed.
 - **A retried page extends a scan that would previously have failed fast** → Bounded by the existing
   3-attempt limit and 2s-per-attempt backoff, so at most a few extra seconds per page. Preferable to
   discarding seven pages of completed work.
-- **Rate limiting may not clear within the backoff** → Then the page exhausts its attempts and fails
-  as it does today, but with an accurate message. Honouring `Retry-After` would do better and is left
-  as an open question rather than guessed at.
+- **Rate limiting may not clear within the backoff** → Confirmed in production, then fixed. The
+  quota error names its limit as `Total Query Cost / Units per minute per user` — a per-*minute*
+  budget. The original 2s/4s backoff burned all three attempts inside 1.3 seconds of wall time and
+  could never clear a minute-long window; page 23 of a 23-page scan did exactly that. The base is now
+  60s, which is what the budget actually needs. Trigger's `wait.for` is durable, so this costs wall
+  time only.
+- **A 60s base backoff lengthens the worst case** → 23 pages each retrying twice would exceed the
+  task's `maxDuration: 3600`, where the old backoff could not. Accepted for now: the budget is shared
+  per user per minute, so the first 60s wait refills it for every page that follows, and sustained
+  exhaustion across a whole scan means something else is consuming the quota. Worth a per-run retry
+  cap if that turns out to be wrong.
 - **New categories must reach the Inbox UI intact** → The screen renders `userFacingScanError`'s
   output, so new categories flow through without a client change. Verify the copy reads sensibly in
   the failed-scan state before deploying.

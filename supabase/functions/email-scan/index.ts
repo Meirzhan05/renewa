@@ -629,7 +629,14 @@ async function managedPageContext(
 
 /** One retry policy for `email_scan_jobs`, shared by the managed and legacy page paths. */
 const maximumPageAttempts = 3;
-const managedRetryBackoffMs = 2_000;
+/**
+ * Long enough for the provider's budget to refill, because the limit we actually hit is a *per
+ * minute* one — Gmail rejects with `Total Query Cost / Units per minute per user`. The first version
+ * of this retried at 2s and 4s, which burned all three attempts inside 1.3 seconds of wall time and
+ * could never clear a minute-long window; observed doing exactly that on page 23 of a 23-page scan.
+ * Trigger's `wait.for` is durable, so the wait costs wall time and nothing else.
+ */
+const managedRetryBackoffMs = 60_000;
 
 async function processManagedConnection(
   admin: AdminClient,

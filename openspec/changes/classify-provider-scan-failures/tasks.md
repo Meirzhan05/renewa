@@ -70,6 +70,14 @@
       than inferred.
 - [x] 4b.5 Tests for both directions, real Google and Graph body shapes, and the prose rejection.
 
+## 4c. Back off for long enough to matter
+
+- [x] 4c.1 The limit is per *minute* (`Total Query Cost / Units per minute per user`), so a 2s/4s
+      backoff can never clear it — observed burning three attempts in 1.3s on page 23. Base backoff
+      raised to 60s.
+- [x] 4c.2 Note the worst-case duration trade-off in the design; the per-minute budget is shared, so
+      the first wait refills it for subsequent pages.
+
 ## 5. Verify
 
 - [x] 5.1 `deno check` the edge function and run both edge test suites.
