@@ -72,6 +72,26 @@ current bug: `inbox-authorization` matches "reconnect", a word only our own code
 *Alternative rejected — pass a category per call site:* the call site does not know what the provider
 will do. It knows which request it is making, not why it failed.
 
+### The provider's reason outranks the status
+
+Shipped wrong first time, and worth recording why. `401`/`403` were both mapped to authorization on
+the reasoning that they are the auth statuses. But **Gmail reports per-user quota exhaustion as 403**
+with a `reason` of `userRateLimitExceeded`, not as 429. So the single most likely failure during a
+long scan was classified as a revoked credential — and since authorization is deliberately not
+retryable, the retry built in this same change never engaged for it.
+
+Observed on 2026-09-03 after deploying: pages 1-3 completed on a token minted six seconds earlier and
+valid for another hour, page 4 returned 403, and the run failed telling the user to reconnect.
+
+So the failure path now reads the body for its machine reason and classifies from that, falling back
+to the status when there is none. Only identifier-shaped tokens are accepted (`^[A-Za-z_]+$`, bounded
+length), so a provider's free text cannot ride along — the anti-exfiltration boundary holds, and the
+user still sees fixed copy per category. A bare 403 with no reason stays authorization, which is the
+conservative reading.
+
+The lesson generalises: a status code is a weaker signal than the provider's own error taxonomy, and
+mapping statuses without checking how each provider actually reports quota is guessing.
+
 ### Map status ranges, not individual codes
 
 `401`/`403` → authorization. `429` → rate limited. `5xx` → provider unavailable. Everything else →

@@ -55,6 +55,21 @@
       authorization is not, and attempts are exhausted after the third.
 - [x] 4.5 Test that backoff grows with attempts.
 
+## 4b. Classify from the provider's reason, not the status alone
+
+- [x] 4b.1 Gmail reports per-user quota as **403**, not 429, so the status alone classified a
+      throttled scan as a revoked credential — and authorization is not retryable, so the retry never
+      engaged for the one failure it existed for. Observed 2026-09-03: pages 1-3 completed on a token
+      minted six seconds earlier, page 4 returned 403, run failed.
+- [x] 4b.2 Read the error body on the failure path only and extract the machine reason
+      (`error.errors[].reason`, `error.status`, Graph's `error.code`). Accept identifier-shaped
+      tokens only, so provider prose cannot ride along.
+- [x] 4b.3 Map quota reasons to rate-limited and auth reasons to authorization; fall back to the
+      status when the reason is absent or unrecognized. A bare 403 stays authorization.
+- [x] 4b.4 Record the status and reason in the stored error, so the next failure is diagnosed rather
+      than inferred.
+- [x] 4b.5 Tests for both directions, real Google and Graph body shapes, and the prose rejection.
+
 ## 5. Verify
 
 - [x] 5.1 `deno check` the edge function and run both edge test suites.

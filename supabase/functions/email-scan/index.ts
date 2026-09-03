@@ -44,8 +44,10 @@ import {
   totalRunProgress,
 } from "../_shared/scan-status.ts";
 import {
+  classifyProviderFailure,
   classifyProviderStatus,
   isRetryableProviderFailure,
+  providerFailureReason,
   providerFailureClassOf,
   taggedProviderFailure,
   userFacingScanError,
@@ -2310,11 +2312,14 @@ async function gmailHistory(
     if (response.status === 404) throw new Error("Gmail cursor expired");
     if (!response.ok) {
       // Hand-rolled rather than `providerFetch` because 404 means an expired cursor here, which is
-      // recoverable. Everything else still gets classified from its status.
+      // recoverable. Everything else is classified the same way, reason included.
+      const reason = providerFailureReason(
+        await response.json().catch(() => null),
+      );
       throw new Error(
         taggedProviderFailure(
-          classifyProviderStatus(response.status),
-          "Gmail history could not be read.",
+          classifyProviderFailure(response.status, reason),
+          `Gmail history could not be read. (${response.status}${reason ? ` ${reason}` : ""})`,
         ),
       );
     }
@@ -2638,10 +2643,18 @@ async function providerFetch(
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!response.ok) {
+    // Read the body only on the failure path, and only for its machine reason: Gmail reports quota
+    // exhaustion as 403, so the status by itself would call a throttled scan a revoked credential.
+    // The reason is an identifier, never prose, and the user still sees fixed copy per category.
+    const reason = providerFailureReason(
+      await response.json().catch(() => null),
+    );
     throw new Error(
       taggedProviderFailure(
-        classifyProviderStatus(response.status),
-        requestDescription,
+        classifyProviderFailure(response.status, reason),
+        reason
+          ? `${requestDescription} (${response.status} ${reason})`
+          : `${requestDescription} (${response.status})`,
       ),
     );
   }

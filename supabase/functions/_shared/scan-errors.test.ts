@@ -1,6 +1,8 @@
 import {
   categorizeScanError,
+  classifyProviderFailure,
   classifyProviderStatus,
+  providerFailureReason,
   isRetryableProviderFailure,
   providerFailureClassOf,
   taggedProviderFailure,
@@ -121,4 +123,67 @@ Deno.test("an auth failure with no status still asks the user to reconnect", () 
   if (!userFacingScanError(expired).includes("reconnect")) {
     throw new Error("an expired credential must still ask the user to reconnect");
   }
+});
+
+// The failure this was shipped wrong for: Gmail returns 403 for per-user quota, not 429. Three pages
+// succeeded on a token minted six seconds earlier, page four came back 403, and the scan told the
+// user to reconnect a healthy inbox — and, because authorization is not retryable, never retried the
+// one failure the retry existed for.
+Deno.test("Gmail quota exhaustion is rate limiting, not a revoked credential", () => {
+  for (const reason of ["userRateLimitExceeded", "rateLimitExceeded", "dailyLimitExceeded"]) {
+    assertEquals(classifyProviderFailure(403, reason), "rate-limited");
+    assertEquals(isRetryableProviderFailure(classifyProviderFailure(403, reason)), true);
+  }
+});
+
+Deno.test("a genuinely revoked credential is still authorization", () => {
+  assertEquals(classifyProviderFailure(401, null), "authorization");
+  assertEquals(classifyProviderFailure(403, "authError"), "authorization");
+  assertEquals(classifyProviderFailure(401, "InvalidAuthenticationToken"), "authorization");
+  assertEquals(classifyProviderFailure(403, "insufficientPermissions"), "authorization");
+  // Without a reason, a bare 403 keeps the conservative reading.
+  assertEquals(classifyProviderFailure(403, null), "authorization");
+});
+
+Deno.test("a reason overrides the status in both directions", () => {
+  // Graph throttling arrives as 429 already, but the reason must not fight the status.
+  assertEquals(classifyProviderFailure(429, "TooManyRequests"), "rate-limited");
+  // An unrecognized reason falls back to the status rather than guessing.
+  assertEquals(classifyProviderFailure(500, "somethingNovel"), "provider-unavailable");
+  assertEquals(classifyProviderFailure(418, "somethingNovel"), "provider-failure");
+});
+
+Deno.test("the reason is extracted from real provider error shapes", () => {
+  // Google
+  assertEquals(
+    providerFailureReason({
+      error: {
+        code: 403,
+        message: "User-rate limit exceeded.",
+        errors: [{ domain: "usageLimits", reason: "userRateLimitExceeded", message: "…" }],
+        status: "PERMISSION_DENIED",
+      },
+    }),
+    "userRateLimitExceeded",
+  );
+  // Microsoft Graph
+  assertEquals(
+    providerFailureReason({ error: { code: "TooManyRequests", message: "…" } }),
+    "TooManyRequests",
+  );
+  assertEquals(providerFailureReason({ error: { message: "no machine reason here" } }), null);
+  assertEquals(providerFailureReason(null), null);
+  assertEquals(providerFailureReason("not json"), null);
+});
+
+Deno.test("only identifier-shaped reasons are carried, never provider prose", () => {
+  // Free text must not ride along under the guise of a reason.
+  assertEquals(
+    providerFailureReason({ error: { errors: [{ reason: "Quota exceeded for user 12345" }] } }),
+    null,
+  );
+  assertEquals(
+    providerFailureReason({ error: { code: "a".repeat(80) } }),
+    null,
+  );
 });

@@ -41,6 +41,78 @@ export function classifyProviderStatus(status: number): ProviderFailureClass {
   return "provider-failure";
 }
 
+// Gmail reports quota exhaustion as **403 with a reason**, not as 429. Status alone therefore calls a
+// throttled scan a revoked credential — which is exactly what happened: three pages succeeded on a
+// token minted six seconds earlier, then page four came back 403 and the scan told the user to
+// reconnect. Only 401 reliably means the credential is actually gone.
+const RATE_LIMIT_REASONS = new Set([
+  "ratelimitexceeded",
+  "userratelimitexceeded",
+  "dailylimitexceeded",
+  "quotaexceeded",
+  "resource_exhausted",
+  "toomanyrequests",
+  "activitylimitreached",
+]);
+
+const AUTHORIZATION_REASONS = new Set([
+  "autherror",
+  "authenticationerror",
+  "invalidauthenticationtoken",
+  "insufficientpermissions",
+  "accessdenied",
+  "unauthenticated",
+  "forbidden",
+]);
+
+/**
+ * Classify from the provider's machine-readable reason when it gave one, falling back to the status.
+ * The reason is a fixed token (`userRateLimitExceeded`, `InvalidAuthenticationToken`), never prose,
+ * so nothing a provider wrote in free text can influence this or reach a user.
+ */
+export function classifyProviderFailure(
+  status: number,
+  reason?: string | null,
+): ProviderFailureClass {
+  const normalized = (reason ?? "").trim().toLowerCase();
+  if (normalized) {
+    if (RATE_LIMIT_REASONS.has(normalized)) return "rate-limited";
+    if (AUTHORIZATION_REASONS.has(normalized)) return "authorization";
+  }
+  return classifyProviderStatus(status);
+}
+
+/**
+ * The machine reason from a provider error body, or null.
+ *
+ * Google puts it at `error.errors[].reason` (with `domain: "usageLimits"` for quota) and
+ * `error.status`; Microsoft Graph uses `error.code`. Only an identifier-shaped token is accepted —
+ * anything else is discarded rather than carried, so a provider's free text cannot ride along.
+ */
+export function providerFailureReason(body: unknown): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const error = (body as { error?: unknown }).error;
+  if (typeof error !== "object" || error === null) return null;
+  const detail = error as { errors?: unknown; status?: unknown; code?: unknown };
+  const candidates: unknown[] = [];
+  if (Array.isArray(detail.errors)) {
+    for (const entry of detail.errors) {
+      if (typeof entry === "object" && entry !== null) {
+        candidates.push((entry as { reason?: unknown }).reason);
+      }
+    }
+  }
+  candidates.push(detail.status, detail.code);
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const token = candidate.trim();
+    if (token.length > 0 && token.length <= 40 && /^[A-Za-z_]+$/.test(token)) {
+      return token;
+    }
+  }
+  return null;
+}
+
 /** Retrying a revoked token only delays the one message that would help, so it is not retryable. */
 export function isRetryableProviderFailure(value: ProviderFailureClass): boolean {
   return value === "rate-limited" || value === "provider-unavailable";
