@@ -188,3 +188,104 @@ test("without a sender lookup the proposal's own key is used", async () => {
   const insert = calls.find((c) => /insert into subscription_candidates/.test(c.text));
   assert.equal(String(insert?.params[6]), "netflix");
 });
+
+// canonical_merchant_key sits at the same 0-indexed position in both statements.
+const KEY = 6;
+const eventKeys = (calls: Call[]) =>
+  calls.filter((c) => /insert into detected_billing_events/.test(c.text)).map((c) => c.params[KEY]);
+const cardKeys = (calls: Call[]) =>
+  calls.filter((c) => /insert into subscription_candidates/.test(c.text)).map((c) => c.params[KEY]);
+
+// The regression these guard was not a wrong value but two rows that stopped agreeing: the bridge
+// wrote identity to the card and omitted it on the event, so every merchant-scoped read in the edge
+// function — the confirm gate above all — matched nothing. Assert the EQUALITY, never a literal: a
+// test pinned to "anthropic" would still pass if a later change altered derivation on one path only.
+test("the evidence record carries the same identity as the card it backs", async () => {
+  const { runner, calls } = fakeRunner({});
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [proposal({
+      merchant_key: "anthropic-claude-pro",
+      merchant_name: "Anthropic (Claude Pro)",
+      evidence_refs: ["m1"],
+    })],
+    messageSenders: new Map([["m1", "Anthropic <no-reply@mail.anthropic.com>"]]),
+  });
+
+  assert.deepEqual(eventKeys(calls), cardKeys(calls), "event and card must share one identity");
+  assert.equal(eventKeys(calls).length, 1);
+  assert.ok(eventKeys(calls)[0], "the evidence record must not be written with a null key");
+});
+
+test("a fallback identity is written to the evidence record too, never a null", async () => {
+  const { runner, calls } = fakeRunner({});
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [
+      // Unparseable sender: identity falls back to the proposal's own key.
+      proposal({ merchant_key: "notion", merchant_name: "Notion", evidence_refs: ["m1"] }),
+      // Aggregator sender: the processor billed, so identity falls back to the display name and
+      // must not become "apple" on either row — that would fuse every App Store subscription.
+      proposal({ merchant_key: "spotify", merchant_name: "Spotify", evidence_refs: ["m2"] }),
+    ],
+    messageSenders: new Map([
+      ["m1", "Notion (no address)"],
+      ["m2", "Apple <no_reply@email.apple.com>"],
+    ]),
+  });
+
+  assert.deepEqual(eventKeys(calls), cardKeys(calls));
+  assert.deepEqual(eventKeys(calls), ["notion", "spotify"]);
+});
+
+test("two labels for one sender agree on both evidence records and the merged card", async () => {
+  const { runner, calls } = fakeRunner({ conflictMerchants: ["anthropic"] });
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [
+      proposal({ merchant_key: "anthropic", merchant_name: "Anthropic", evidence_refs: ["m1"] }),
+      proposal({
+        merchant_key: "anthropic-claude-pro",
+        merchant_name: "Anthropic (Claude Pro)",
+        evidence_refs: ["m2"],
+      }),
+    ],
+    messageSenders: new Map([
+      ["m1", "Anthropic <no-reply@mail.anthropic.com>"],
+      ["m2", "Anthropic <billing@anthropic.com>"],
+    ]),
+  });
+
+  // Two evidence records (one per email), one card they merge into, one identity across all three.
+  assert.deepEqual(eventKeys(calls), ["anthropic", "anthropic"]);
+  assert.deepEqual(cardKeys(calls), ["anthropic", "anthropic"]);
+});
+
+test("the evidence upsert repairs an unkeyed row instead of writing a second one", async () => {
+  const { runner, calls } = fakeRunner({});
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [proposal({ merchant_key: "netflix", merchant_name: "Netflix" })],
+  });
+
+  const insert = calls.find((c) => /insert into detected_billing_events/.test(c.text))!;
+  // The fake runner cannot execute Postgres upsert semantics, so assert the statement carries the
+  // repair: rows written before this column was populated gain identity on the next re-derivation,
+  // which is why no backfill migration is needed.
+  assert.match(insert.text, /do update set[\s\S]*canonical_merchant_key = excluded\.canonical_merchant_key/);
+  // Grain is unchanged — same natural key, so repair never forks a second evidence record.
+  assert.match(insert.text, /on conflict \(user_id, provider, provider_message_id, event_type\)/);
+  assert.equal(eventKeys(calls).length, 1);
+});

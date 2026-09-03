@@ -85,14 +85,29 @@ export async function bridgeProposalsToCandidates(
     const type = eventType(p);
 
     // Upsert the evidence record; DO UPDATE (not NOTHING) so we always get the id back on a re-scan.
+    //
+    // The event carries the SAME identity as the card, from the one `identity` resolved above. This
+    // column is the join for every merchant-scoped read in the edge function — the confirm-time
+    // lifecycle gate, the learning summary, evidence bundles — all of which select evidence by it.
+    // An evidence row without it is invisible to all of them: the gate then finds no billing history
+    // for a merchant that has one, reads that as "uncertain", and silently resolves the user's
+    // confirmation to `ignored` without creating a subscription. `dedupe-inbox-proposals-by-merchant`
+    // task 2.4 deliberately left this insert untouched, which is where the invariant was lost.
+    //
+    // Deriving the key here from `merchant_name` instead would defeat the purpose: it yields
+    // `anthropic-claude-pro` where the card carries `anthropic`, so the join would still miss.
+    // Resolve once, write to both rows.
     const event = await runner.query(
       `insert into detected_billing_events
          (user_id, scan_run_id, provider, provider_message_id, event_type, merchant_name,
-          amount, currency, billing_cycle, event_date, renewal_date, confidence, evidence,
-          source_received_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, coalesce($14::timestamptz, now()))
+          canonical_merchant_key, amount, currency, billing_cycle, event_date, renewal_date,
+          confidence, evidence, source_received_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, coalesce($15::timestamptz, now()))
        on conflict (user_id, provider, provider_message_id, event_type)
          do update set merchant_name = excluded.merchant_name,
+                       -- Repair on conflict, not by migration: a row written before this column was
+                       -- populated gains its identity the next time a scan re-derives the same event.
+                       canonical_merchant_key = excluded.canonical_merchant_key,
                        amount = excluded.amount,
                        renewal_date = excluded.renewal_date,
                        confidence = excluded.confidence
@@ -104,6 +119,7 @@ export async function bridgeProposalsToCandidates(
         providerMessageId,
         type,
         p.merchant_name,
+        identity,
         p.amount,
         p.currency,
         p.billing_cycle,
