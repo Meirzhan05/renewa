@@ -504,17 +504,22 @@ final class AppStore {
                     accessToken: accessToken
                 )
             }
-            let status = try await performAuthenticated { accessToken in
-                try await self.client.emailScanStatus(
-                    scanID: self.emailScanStatus?.scanID,
-                    accessToken: accessToken
-                )
-            }
-            withAnimation(RenewaMotion.standard) {
-                emailScanStatus = status
+            // Start the status refetch and let the subscription refresh run alongside it, not after.
+            // Home reads `subscriptions`, so a confirmed discovery is invisible there until that
+            // refresh lands — and `scanStatus` opens with a reconcile plus half a dozen sequential
+            // queries, heaviest while a scan is still running, which is exactly when someone is
+            // confirming. Sequencing the two parked that whole round trip between the tap and the
+            // subscription appearing on Home.
+            let scanID = emailScanStatus?.scanID
+            async let refreshedStatus = performAuthenticated { accessToken in
+                try await self.client.emailScanStatus(scanID: scanID, accessToken: accessToken)
             }
             if decision == .confirm {
                 try await refreshSubscriptions()
+            }
+            let status = try await refreshedStatus
+            withAnimation(RenewaMotion.standard) {
+                emailScanStatus = status
             }
             return true
         } catch {
