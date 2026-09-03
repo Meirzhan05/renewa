@@ -44,6 +44,9 @@
             case loading = "inbox-loading"
             /// Empty inbox with the connect sheet already open.
             case connect = "inbox-connect"
+            /// Review queue with the "add it anyway?" warning already raised on the first card, so
+            /// the advisory path is inspectable without a merchant that has a real cancellation.
+            case warned = "inbox-warned"
 
             static var current: InboxScenario? {
                 ProcessInfo.processInfo.environment["RENEWA_QA_SCREEN"]
@@ -64,7 +67,7 @@
                     scanned: 1146,
                     connections: [inboxConnection()]
                 )
-            case .reviewReady:
+            case .reviewReady, .warned:
                 return inboxStatus(
                     status: .completed,
                     stage: .reviewReady,

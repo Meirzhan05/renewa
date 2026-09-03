@@ -13,7 +13,9 @@ type Call = { text: string; params: unknown[] };
 // statement. `senders` maps a message id to its sender so identity resolves as it does in production.
 function fakeRunner(opts: {
   suppressed?: string[];
-  subs?: Array<{ id: string; key: string }>;
+  // `key: null` models a subscription added by hand: manual creation writes straight to PostgREST
+  // and never sets the column, so identity has to come from the name.
+  subs?: Array<{ id: string; key: string | null; name?: string }>;
   conflictMerchants?: string[];
 }): { runner: SqlRunner; calls: Call[] } {
   const calls: Call[] = [];
@@ -25,7 +27,13 @@ function fakeRunner(opts: {
         return { rows: (opts.suppressed ?? []).map((k) => ({ canonical_merchant_key: k })) };
       }
       if (/from subscriptions/.test(text)) {
-        return { rows: (opts.subs ?? []).map((s) => ({ id: s.id, canonical_merchant_key: s.key })) };
+        return {
+          rows: (opts.subs ?? []).map((s) => ({
+            id: s.id,
+            canonical_merchant_key: s.key,
+            name: s.name ?? "",
+          })),
+        };
       }
       if (/insert into detected_billing_events/.test(text)) {
         eventSeq += 1;
@@ -288,4 +296,59 @@ test("the evidence upsert repairs an unkeyed row instead of writing a second one
   // Grain is unchanged — same natural key, so repair never forks a second evidence record.
   assert.match(insert.text, /on conflict \(user_id, provider, provider_message_id, event_type\)/);
   assert.equal(eventKeys(calls).length, 1);
+});
+
+// params (0-indexed) on the candidate insert: [3]=matched_subscription_id [4]=suggested_action
+const matchOf = (calls: Call[]) => {
+  const insert = calls.find((c) => /insert into subscription_candidates/.test(c.text))!;
+  return { subscriptionId: insert.params[3], action: insert.params[4] };
+};
+
+test("a subscription confirmed under the card's identity is matched by a later proposal", async () => {
+  // Confirm writes the CARD's identity onto the subscription, so the stored key is `anthropic` even
+  // though the row displays as "Anthropic (Claude Pro)". Keying it by display name instead meant the
+  // next scan could not recognize what the last confirmation had just created.
+  const { runner, calls } = fakeRunner({ subs: [{ id: "sub-1", key: "anthropic" }] });
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [proposal({
+      merchant_key: "anthropic-claude-pro",
+      merchant_name: "Anthropic (Claude Pro)",
+      evidence_refs: ["m1"],
+    })],
+    messageSenders: new Map([["m1", "Anthropic <billing@anthropic.com>"]]),
+  });
+
+  assert.deepEqual(matchOf(calls), { subscriptionId: "sub-1", action: "review" });
+});
+
+test("a hand-added subscription with no stored key is matched by its name", async () => {
+  const { runner, calls } = fakeRunner({ subs: [{ id: "sub-manual", key: null, name: "Notion" }] });
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [proposal({ merchant_key: "notion", merchant_name: "Notion" })],
+  });
+
+  // Before this, the lookup filtered `canonical_merchant_key is not null`, so the subscriptions a
+  // user entered themselves were precisely the ones the agent re-proposed after every scan.
+  assert.deepEqual(matchOf(calls), { subscriptionId: "sub-manual", action: "review" });
+});
+
+test("an unkeyed subscription does not match an unrelated merchant", async () => {
+  const { runner, calls } = fakeRunner({ subs: [{ id: "sub-manual", key: null, name: "Notion" }] });
+  await bridgeProposalsToCandidates(runner, {
+    userId: "u1",
+    scanRunId: "run-1",
+    provider: "google",
+    messagesScanned: 5,
+    proposals: [proposal({ merchant_key: "netflix", merchant_name: "Netflix" })],
+  });
+
+  assert.deepEqual(matchOf(calls), { subscriptionId: null, action: "add" });
 });

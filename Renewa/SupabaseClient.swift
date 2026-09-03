@@ -196,6 +196,7 @@ struct SupabaseClient {
         decision: EmailCandidateDecision,
         edits: EmailCandidateEdits?,
         correctionReason: String? = nil,
+        acknowledgeWarning: Bool = false,
         accessToken: String
     ) async throws -> EmailCandidateDecisionResponse {
         try await request(
@@ -206,7 +207,8 @@ struct SupabaseClient {
                 candidateID: id,
                 decision: decision.rawValue,
                 edits: edits.map(CandidateEditBody.init),
-                correctionReason: correctionReason
+                correctionReason: correctionReason,
+                acknowledgeWarning: acknowledgeWarning ? true : nil
             ),
             accessToken: accessToken
         )
@@ -535,6 +537,8 @@ private struct EmailCandidateReviewRequest: Encodable {
     let decision: String
     let edits: CandidateEditBody?
     let correctionReason: String?
+    /// Set only when re-submitting a decision the user was warned about and chose to proceed with.
+    let acknowledgeWarning: Bool?
 
     enum CodingKeys: String, CodingKey {
         case action
@@ -542,6 +546,7 @@ private struct EmailCandidateReviewRequest: Encodable {
         case decision
         case edits
         case correctionReason = "correction_reason"
+        case acknowledgeWarning = "acknowledge_warning"
     }
 }
 

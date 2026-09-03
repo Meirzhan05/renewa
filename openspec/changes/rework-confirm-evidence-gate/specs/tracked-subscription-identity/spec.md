@@ -19,23 +19,34 @@ canonical merchant key. It SHALL NOT derive a separate identity from the display
 - **THEN** the subscription is stored under the edited display name but keeps the card's merchant
   identity
 
-### Requirement: Every subscription carries a merchant identity, however it was created
-A subscription created outside the review flow, including one the user adds by hand, SHALL be
-assigned a canonical merchant key. The agent's tracked-subscription lookup SHALL NOT be limited to
-subscriptions that happen to have been created by a confirmation.
+### Requirement: Every subscription has a resolvable merchant identity, however it was created
+Every subscription SHALL have a canonical merchant identity available wherever identity is consumed,
+whether or not the stored row carries one. Where the column is unset — as it is for every
+subscription created outside the review flow — identity SHALL be derived from the subscription's name
+at the point of use. Lookups that consume identity SHALL NOT exclude subscriptions whose key column
+is null.
 
 #### Scenario: A manually added subscription is recognized by the agent
 - **WHEN** a user adds a subscription by hand and a later scan finds billing evidence for that
   merchant
 - **THEN** the proposal matches the manual subscription instead of being surfaced as a new add
 
-#### Scenario: Identity is assigned at creation
-- **WHEN** any subscription is created through any path
-- **THEN** it has a non-null canonical merchant key
+#### Scenario: Identity is derived where it is consumed
+- **WHEN** a subscription's stored canonical merchant key is null
+- **THEN** the reader derives it from the subscription's name rather than skipping the row
+
+#### Scenario: The agent knows what the user already tracks
+- **WHEN** the agent is given the user's current subscriptions to reason about
+- **THEN** manually added subscriptions are included, not filtered out for lacking a stored key
+
+#### Scenario: One derivation, not three
+- **WHEN** identity is derived for a subscription with no stored key
+- **THEN** it uses the same derivation as proposals and review cards, with no second implementation
+  in SQL or in the client that could drift from it
 
 #### Scenario: A user-chosen name still yields a usable key
 - **WHEN** a manually added subscription's name does not correspond to any known sender domain
-- **THEN** a name-derived key is assigned, which is stable for that name across scans
+- **THEN** a name-derived key is produced, stable for that name across scans
 
 ### Requirement: A user's tracked subscription is not proposed to them again
 Once a merchant is tracked, later evidence for that merchant SHALL be surfaced as an update to the

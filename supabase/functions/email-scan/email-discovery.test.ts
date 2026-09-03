@@ -4,6 +4,7 @@ import {
   candidateConfirmationIssues,
   canonicalMerchantKey,
   classifyCandidateAction,
+  confirmationWarning,
   discoveryReconcileAction,
   reconcileMerchantLifecycle,
   resolveMerchantIdentity,
@@ -458,5 +459,114 @@ Deno.test("discovery reconcile: the decision is idempotent (stable across repeat
   assert(
     first.kind === "keep" && second.kind === "keep",
     "Repeated reconciliation of the same state must not flip a candidate.",
+  );
+});
+
+// The confirm gate used to ask whether evidence SUPPORTED the confirmation and refused when it did
+// not, which fires on absence: a card someone completed by typing the missing amount was refused for
+// that very field, silently, behind an HTTP 200. These pin the inverted question — only a genuine
+// contradiction warns, and the person always gets to proceed.
+function lifecycle(
+  state: "current" | "ended" | "uncertain",
+  reason:
+    | "explicit_ending"
+    | "explicit_future_renewal"
+    | "projected_current_renewal"
+    | "no_paid_recurring_event"
+    | "renewal_window_elapsed"
+    | "conflicting_dates",
+) {
+  return { state, reason, supportingEventID: null } as const;
+}
+
+const warn = (over: Record<string, unknown> = {}) =>
+  confirmationWarning({
+    action: "add",
+    lifecycle: lifecycle("current", "explicit_future_renewal"),
+    suppressed: false,
+    merchantName: "Anthropic (Claude Pro)",
+    acknowledged: false,
+    ...over,
+  } as Parameters<typeof confirmationWarning>[0]);
+
+Deno.test("a current merchant confirms with no warning", () => {
+  assert(warn() === null, "supported evidence must not warn");
+  assert(
+    warn({ lifecycle: lifecycle("current", "projected_current_renewal") }) === null,
+    "a projected renewal is still support, not contradiction",
+  );
+});
+
+Deno.test("absence never warns — the person outranks a gap in the evidence", () => {
+  // The live OpenAI card: one bare `renewed` event with no amount, currency, or renewal date. Under
+  // the old rule this was refused forever; the amount the user types is the missing evidence.
+  assert(
+    warn({ lifecycle: lifecycle("uncertain", "no_paid_recurring_event") }) === null,
+    "a thin event row must not block a confirmation",
+  );
+  assert(
+    warn({ lifecycle: lifecycle("uncertain", "renewal_window_elapsed") }) === null,
+    "an elapsed window is stale evidence, not disagreement",
+  );
+});
+
+Deno.test("a later cancellation contradicts an add and warns", () => {
+  const warning = warn({ lifecycle: lifecycle("ended", "explicit_ending") });
+  assert(warning?.reason === "later_cancellation", "an ending later than any renewal must warn");
+  assert(
+    warning!.message.includes("Anthropic (Claude Pro)"),
+    "the message names the merchant from typed fields",
+  );
+});
+
+Deno.test("evidence that disagrees with itself warns", () => {
+  const warning = warn({ lifecycle: lifecycle("uncertain", "conflicting_dates") });
+  assert(warning?.reason === "conflicting_evidence_dates", "conflicting dates must warn");
+});
+
+Deno.test("a suppressed merchant warns as the user's own earlier choice", () => {
+  const warning = warn({ suppressed: true });
+  assert(warning?.reason === "merchant_suppressed", "suppression must warn");
+  assert(
+    warning!.message.includes("You chose"),
+    "suppression is the user's decision, not a fact about the merchant",
+  );
+});
+
+Deno.test("acknowledging a warning lets the confirmation through", () => {
+  for (
+    const over of [
+      { lifecycle: lifecycle("ended", "explicit_ending") },
+      { lifecycle: lifecycle("uncertain", "conflicting_dates") },
+      { suppressed: true },
+      { action: "cancel", lifecycle: lifecycle("current", "explicit_future_renewal") },
+    ]
+  ) {
+    assert(warn({ ...over, acknowledged: false }) !== null, "should warn before acknowledgement");
+    assert(warn({ ...over, acknowledged: true }) === null, "acknowledgement must let it apply");
+  }
+});
+
+Deno.test("a cancellation is contradicted by later billing, not by silence", () => {
+  const contradicted = warn({
+    action: "cancel",
+    lifecycle: lifecycle("current", "explicit_future_renewal"),
+  });
+  assert(contradicted?.reason === "later_renewal", "billing after an ending must warn");
+  assert(
+    warn({ action: "cancel", lifecycle: lifecycle("ended", "explicit_ending") }) === null,
+    "evidence agreeing with the cancellation must not warn",
+  );
+  assert(
+    warn({ action: "cancel", lifecycle: lifecycle("uncertain", "no_paid_recurring_event") }) === null,
+    "no evidence either way must not block a cancellation",
+  );
+});
+
+Deno.test("suppression outranks lifecycle when both would warn", () => {
+  const warning = warn({ suppressed: true, lifecycle: lifecycle("ended", "explicit_ending") });
+  assert(
+    warning?.reason === "merchant_suppressed",
+    "the user's own choice is the more useful thing to say",
   );
 });

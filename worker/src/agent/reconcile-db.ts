@@ -6,7 +6,7 @@
 // Pure of `pg`: it depends only on a narrow `SqlRunner` (satisfied by pg.Pool/PoolClient), so it is
 // unit-testable with a fake runner and does not couple the reader to the driver.
 
-import { billingCycles, type BillingCycle } from "../domain/email.ts";
+import { billingCycles, type BillingCycle, canonicalMerchantKey } from "../domain/email.ts";
 import type { PriorDecision, TrackedSubscription } from "./types.ts";
 import type { ReconcileReaders } from "./tools.ts";
 
@@ -47,14 +47,20 @@ function coerceStatus(value: unknown): TrackedSubscription["status"] {
 export function createPgReconcileReaders(runner: SqlRunner, userId: string): ReconcileReaders {
   return {
     async listCurrentSubscriptions(): Promise<TrackedSubscription[]> {
+      // No `canonical_merchant_key is not null` filter: that dropped every hand-added subscription,
+      // so the agent reasoned as though the user tracked nothing they had entered themselves and
+      // proposed those merchants again after every scan. Identity is derived from the name when the
+      // column is unset — the same derivation proposals use, kept in one place.
       const { rows } = await runner.query(
         `select canonical_merchant_key, name, price, currency, billing_cycle, status
            from subscriptions
-          where user_id = $1 and canonical_merchant_key is not null`,
+          where user_id = $1`,
         [userId],
       );
       return rows.map((row) => ({
-        merchant_key: String(row.canonical_merchant_key),
+        merchant_key: String(
+          row.canonical_merchant_key ?? canonicalMerchantKey(String(row.name ?? "")),
+        ),
         merchant_name: String(row.name ?? ""),
         amount: coerceAmount(row.price),
         currency: typeof row.currency === "string" ? row.currency : null,

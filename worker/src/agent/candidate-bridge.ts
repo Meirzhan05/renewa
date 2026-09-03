@@ -8,7 +8,7 @@
 // from email content (the `evidence` string is synthesized from typed fields only), so the anti-exfil
 // wall from `propose.ts` extends all the way to the human-facing card.
 
-import { resolveMerchantIdentity } from "../domain/email.ts";
+import { canonicalMerchantKey, resolveMerchantIdentity } from "../domain/email.ts";
 import type { ProposalCandidate } from "./types.ts";
 import type { SqlRunner } from "./reconcile-db.ts";
 
@@ -65,13 +65,23 @@ export async function bridgeProposalsToCandidates(
       [input.userId],
     ),
     runner.query(
-      `select id, canonical_merchant_key from subscriptions
-        where user_id = $1 and canonical_merchant_key is not null`,
+      `select id, canonical_merchant_key, name from subscriptions where user_id = $1`,
       [input.userId],
     ),
   ]);
   const suppressedKeys = new Set(suppressed.rows.map((r) => String(r.canonical_merchant_key)));
-  const subByKey = new Map(subs.rows.map((r) => [String(r.canonical_merchant_key), String(r.id)]));
+  // Identity is derived here when the row does not carry one. A subscription added by hand never
+  // gets the column — manual creation writes straight from the client to PostgREST — and the old
+  // `where canonical_merchant_key is not null` filter dropped exactly those rows, so the user's own
+  // subscriptions were the ones the agent could not recognize, and it proposed them after every
+  // scan. Deriving at the point of use keeps one implementation of the rule (this one) instead of a
+  // second copy in SQL or in Swift, and it covers rows that already exist rather than only new ones.
+  const subByKey = new Map(
+    subs.rows.map((r) => [
+      String(r.canonical_merchant_key ?? canonicalMerchantKey(String(r.name ?? ""))),
+      String(r.id),
+    ]),
+  );
 
   let written = 0;
   for (const p of input.proposals) {

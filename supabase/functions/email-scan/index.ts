@@ -21,6 +21,7 @@ import {
   candidateConfirmationIssues,
   canonicalMerchantKey,
   classifyCandidateAction,
+  confirmationWarning,
   discoveryReconcileAction,
   MailMessage,
   MailMetadata,
@@ -1565,6 +1566,7 @@ async function reviewCandidate(
     return {
       candidate_id: candidate.id,
       review_status: candidate.review_status,
+      outcome: "idempotent",
       applied_subscription_id: candidate.applied_subscription_id,
       idempotent: true,
     };
@@ -1584,32 +1586,13 @@ async function reviewCandidate(
     return {
       candidate_id: candidate.id,
       review_status: "ignored",
+      outcome: "ignored",
+      applied_subscription_id: null,
       idempotent: false,
     };
   }
 
   const lifecycleAction = resolvedCandidateAction(candidate);
-  const lifecycle = await merchantLifecycle(
-    admin,
-    userID,
-    candidate.canonical_merchant_key,
-  );
-  const suppressed = lifecycleAction !== "cancel" &&
-    await merchantIsSuppressed(admin, userID, candidate.canonical_merchant_key);
-  const stale = lifecycleAction === "cancel"
-    ? lifecycle.state !== "ended"
-    : lifecycle.state !== "current" || suppressed;
-  if (stale) {
-    const reason = suppressed
-      ? "You chose not to receive discovery suggestions for this merchant."
-      : lifecycleAction === "cancel"
-      ? "Later current renewal evidence was found."
-      : lifecycle.state === "ended"
-      ? lifecycleResolutionReason("ended")
-      : lifecycleResolutionReason("uncertain");
-    return await resolveCandidateForLifecycle(admin, userID, candidate, reason);
-  }
-
   const edits = isRecord(body.edits) ? body.edits as CandidateEdits : {};
   const merchantName = normalizedMerchantEdit(
     edits.merchant_name,
@@ -1624,6 +1607,10 @@ async function reviewCandidate(
   const category =
     (edits.category ?? candidate.category) as SubscriptionCategory;
   const action = lifecycleAction;
+
+  // Validate the decision AS SUBMITTED — the merged card plus whatever the person edited — and do it
+  // BEFORE the advisory below. An acknowledgement may wave past a warning; it must never wave past
+  // this, because an incomplete subscription should not be written either way.
   const issues = candidateConfirmationIssues({
     action,
     merchantName,
@@ -1635,6 +1622,37 @@ async function reviewCandidate(
   });
   if (issues.length > 0) {
     throw new Error(`Invalid candidate: ${issues.join(", ")}`);
+  }
+
+  // Advisory, not a veto. A person read the evidence and said yes, so the only thing worth stopping
+  // for is stored evidence that CONTRADICTS them — and even then they decide, because they can see
+  // their own inbox and we cannot. Warning leaves the card pending, so declining costs them nothing
+  // and the card is still there when they come back. This replaces a silent resolve-to-ignored that
+  // returned 200 and was indistinguishable, to both the client and the user, from a successful save.
+  const lifecycle = await merchantLifecycle(
+    admin,
+    userID,
+    candidate.canonical_merchant_key,
+  );
+  const suppressed = lifecycleAction !== "cancel" &&
+    await merchantIsSuppressed(admin, userID, candidate.canonical_merchant_key);
+  const warning = confirmationWarning({
+    action,
+    lifecycle,
+    suppressed,
+    merchantName,
+    acknowledged: body.acknowledge_warning === true,
+  });
+  if (warning) {
+    return {
+      candidate_id: candidate.id,
+      review_status: candidate.review_status,
+      outcome: "warned",
+      warning_reason: warning.reason,
+      warning_message: warning.message,
+      applied_subscription_id: null,
+      idempotent: false,
+    };
   }
 
   let appliedSubscriptionID: string;
@@ -1650,7 +1668,16 @@ async function reviewCandidate(
     if (!updated) throw new Error("Matched subscription is unavailable");
     appliedSubscriptionID = updated.id;
   } else {
-    const key = canonicalMerchantKey(merchantName);
+    // Identity comes from the CARD, not from a fresh slug of the display name. The agent matches
+    // tracked subscriptions on this column, so keying the row `anthropic-claude-pro` while the card
+    // that created it says `anthropic` guarantees the next scan cannot recognize what this
+    // confirmation just created, and proposes the merchant again as a new add.
+    const key = String(candidate.canonical_merchant_key);
+    // `source_key` deliberately stays name-derived. It is the conflict target of the upsert below,
+    // so changing it would strand every subscription an earlier confirmation created under the old
+    // key — a re-confirm would insert a duplicate instead of updating. Dedupe on write and identity
+    // for matching are separate jobs, and only the latter needs to agree with the card.
+    const sourceKey = canonicalMerchantKey(merchantName);
     const updateValues = {
       user_id: userID,
       name: merchantName,
@@ -1680,7 +1707,7 @@ async function reviewCandidate(
       const values = {
         ...updateValues,
         source: "email",
-        source_key: `email:${key}`,
+        source_key: `email:${sourceKey}`,
       };
       const { data: created, error: createError } = await admin
         .from("subscriptions")
@@ -1749,6 +1776,7 @@ async function reviewCandidate(
   return {
     candidate_id: candidate.id,
     review_status: "confirmed",
+    outcome: "applied",
     applied_subscription_id: appliedSubscriptionID,
     idempotent: false,
   };

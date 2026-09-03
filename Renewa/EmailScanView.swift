@@ -3,6 +3,15 @@ import SwiftUI
 
 /// The palette the Inbox mockup is drawn in: a card face a half-step lighter than
 /// `RenewaTheme.surface`, plus the borders and placeholder fills that go with it.
+/// A confirmation the server flagged as contradicted by stored evidence, held until the user says
+/// whether to proceed. Carries the edits so acknowledging re-sends exactly what was submitted.
+private struct CandidateWarning: Identifiable {
+    let id = UUID()
+    let candidate: EmailSubscriptionCandidate
+    let edits: EmailCandidateEdits?
+    let message: String
+}
+
 private enum InboxPalette {
     static let card = Color(red: 0.985, green: 0.974, blue: 0.953)
     static let cardBorder = Color(red: 0.925, green: 0.894, blue: 0.835)
@@ -35,6 +44,7 @@ struct EmailScanView: View {
     @State private var connectingProvider: String?
     /// Cards the reader has already answered, hidden while the decision is in flight.
     @State private var resolvingCandidateIDs: Set<UUID> = []
+    @State private var pendingWarning: CandidateWarning?
 
     private var presentation: EmailDiscoveryPresentationState {
         EmailDiscoveryPresentationState(status: store.emailScanStatus)
@@ -89,6 +99,15 @@ struct EmailScanView: View {
                 if RenewaPreviewFixture.InboxScenario.current == .connect {
                     showingInboxSettings = true
                 }
+                if RenewaPreviewFixture.InboxScenario.current == .warned,
+                    let candidate = store.emailScanStatus?.candidates.first
+                {
+                    pendingWarning = CandidateWarning(
+                        candidate: candidate,
+                        edits: EmailCandidateEdits(candidate: candidate),
+                        message: "The most recent billing email found for \(candidate.merchantName) was a cancellation."
+                    )
+                }
             #endif
             async let discovery: Void = store.loadEmailDiscovery()
             async let notificationSettings: Void = store.loadInboxNotificationSettings()
@@ -127,6 +146,32 @@ struct EmailScanView: View {
                 .presentationDetents([.medium])
                 .presentationCornerRadius(30)
         }
+        // The server no longer decides this on the user's behalf. It says what it found that
+        // disagrees; the person looking at their own inbox decides whether that matters.
+        .confirmationDialog(
+            "Add \(pendingWarning?.candidate.merchantName ?? "this") anyway?",
+            isPresented: Binding(
+                get: { pendingWarning != nil },
+                set: { if !$0 { pendingWarning = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingWarning
+        ) { warning in
+            Button("Add it anyway") {
+                pendingWarning = nil
+                resolve(warning.candidate, retryEdits: warning.edits) {
+                    await store.reviewEmailCandidate(
+                        warning.candidate,
+                        decision: .confirm,
+                        edits: warning.edits,
+                        acknowledgeWarning: true
+                    )
+                }
+            }
+            Button("Not now", role: .cancel) { pendingWarning = nil }
+        } message: { warning in
+            Text(warning.message)
+        }
         .confirmationDialog(
             "Stop suggestions from \(suppressionCandidate?.merchantName ?? "this service")?",
             isPresented: Binding(
@@ -138,7 +183,9 @@ struct EmailScanView: View {
         ) { candidate in
             Button("I don’t use this", role: .destructive) {
                 suppressionCandidate = nil
-                resolve(candidate) { await store.suppressEmailCandidate(candidate) }
+                resolve(candidate) {
+                    await store.suppressEmailCandidate(candidate) ? .ignored : .notApplied
+                }
             }
             Button("Keep reviewing", role: .cancel) {
                 suppressionCandidate = nil
@@ -854,12 +901,9 @@ struct EmailScanView: View {
             reviewCandidate = candidate
             return
         }
-        resolve(candidate) {
-            await store.reviewEmailCandidate(
-                candidate,
-                decision: .confirm,
-                edits: EmailCandidateEdits(candidate: candidate)
-            )
+        let edits = EmailCandidateEdits(candidate: candidate)
+        resolve(candidate, retryEdits: edits) {
+            await store.reviewEmailCandidate(candidate, decision: .confirm, edits: edits)
         }
     }
 
@@ -873,19 +917,33 @@ struct EmailScanView: View {
         }
     }
 
-    /// Collapses the card as soon as it is answered and puts it back if the decision did not
-    /// stick, so the list responds to the tap instead of to the round trip.
+    /// Collapses the card as soon as it is answered, and puts it back unless the decision actually
+    /// settled. A warning or a failure both leave the card exactly where it was, because in both
+    /// cases nothing changed on the server — collapsing anyway is how a discovery went missing
+    /// without anyone noticing.
     private func resolve(
         _ candidate: EmailSubscriptionCandidate,
-        _ decide: @escaping () async -> Bool
+        retryEdits: EmailCandidateEdits? = nil,
+        _ decide: @escaping () async -> EmailCandidateOutcome
     ) {
         withAnimation(sectionMotion) { _ = resolvingCandidateIDs.insert(candidate.id) }
         Task {
-            let succeeded = await decide()
-            if succeeded {
+            let outcome = await decide()
+            if outcome.settlesCard {
                 resolvingCandidateIDs.remove(candidate.id)
             } else {
                 withAnimation(sectionMotion) { _ = resolvingCandidateIDs.remove(candidate.id) }
+            }
+            if let warning = outcome.warning {
+                pendingWarning = CandidateWarning(
+                    candidate: candidate,
+                    edits: retryEdits,
+                    message: warning.message
+                )
+            } else if outcome == .notApplied, store.errorMessage == nil {
+                // A thrown request already reported itself through `errorMessage`; this covers the
+                // other shape — the server answered, but not with anything that applied.
+                store.errorMessage = "\(candidate.merchantName) was not added. Please try again."
             }
         }
     }
@@ -1749,6 +1807,7 @@ private struct EmailCandidateReviewSheet: View {
     @State private var edits: EmailCandidateEdits
     @State private var amountText: String
     @State private var correctionReason = ""
+    @State private var warningMessage: String?
 
     init(candidate: EmailSubscriptionCandidate) {
         self.candidate = candidate
@@ -1863,15 +1922,7 @@ private struct EmailCandidateReviewSheet: View {
                     .font(.renewa(14, weight: .medium))
 
                     Button {
-                        Task {
-                            let confirmed = await store.reviewEmailCandidate(
-                                candidate,
-                                decision: .confirm,
-                                edits: normalizedEdits,
-                                correctionReason: correctionReason.isEmpty ? nil : correctionReason
-                            )
-                            if confirmed { dismiss() }
-                        }
+                        Task { await confirm() }
                     } label: {
                         RenewaPrimaryActionLabel(
                             title: candidate.eventType == "canceled" ? "Confirm cancellation" : "Confirm discovery",
@@ -1899,6 +1950,40 @@ private struct EmailCandidateReviewSheet: View {
                         .font(.renewa(14, weight: .semibold))
                 }
             }
+            .confirmationDialog(
+                "Add \(candidate.merchantName) anyway?",
+                isPresented: Binding(
+                    get: { warningMessage != nil },
+                    set: { if !$0 { warningMessage = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Add it anyway") {
+                    warningMessage = nil
+                    Task { await confirm(acknowledging: true) }
+                }
+                Button("Not now", role: .cancel) { warningMessage = nil }
+            } message: {
+                Text(warningMessage ?? "")
+            }
+        }
+    }
+
+    /// Only dismisses once the confirmation actually applied. A warning keeps the sheet open with
+    /// the user's edits intact, so proceeding re-sends exactly what they typed rather than making
+    /// them fill the form in again.
+    private func confirm(acknowledging: Bool = false) async {
+        let outcome = await store.reviewEmailCandidate(
+            candidate,
+            decision: .confirm,
+            edits: normalizedEdits,
+            correctionReason: correctionReason.isEmpty ? nil : correctionReason,
+            acknowledgeWarning: acknowledging
+        )
+        if let warning = outcome.warning {
+            warningMessage = warning.message
+        } else if outcome.didApply {
+            dismiss()
         }
     }
 
@@ -1953,5 +2038,9 @@ private extension View {
 
     #Preview("Inbox · loading") {
         EmailScanView().environment(inboxPreviewStore(.loading))
+    }
+
+    #Preview("Inbox · warned") {
+        EmailScanView().environment(inboxPreviewStore(.warned))
     }
 #endif

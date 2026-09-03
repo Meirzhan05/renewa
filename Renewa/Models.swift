@@ -572,14 +572,78 @@ struct EmailCandidateEdits: Equatable {
 struct EmailCandidateDecisionResponse: Codable {
     let candidateID: UUID
     let reviewStatus: EmailCandidateReviewStatus
+    /// `applied`, `warned`, `ignored` or `idempotent`. Optional so a response from a server that
+    /// predates the advisory gate still decodes; `outcome` below falls back on the other fields.
+    let rawOutcome: String?
+    let warningReason: String?
+    let warningMessage: String?
     let appliedSubscriptionID: UUID?
     let idempotent: Bool?
 
     enum CodingKeys: String, CodingKey {
         case candidateID = "candidate_id"
         case reviewStatus = "review_status"
+        case rawOutcome = "outcome"
+        case warningReason = "warning_reason"
+        case warningMessage = "warning_message"
         case appliedSubscriptionID = "applied_subscription_id"
         case idempotent
+    }
+
+    /// A decision only counts as applied when the server says a subscription was written. An
+    /// outcome this build does not recognise resolves to `.notApplied`, never to success — the whole
+    /// defect this replaces was a refusal that arrived as HTTP 200 and was read as a save.
+    var outcome: EmailCandidateOutcome {
+        switch rawOutcome {
+        case "applied":
+            return .applied
+        case "warned":
+            return .warned(
+                reason: warningReason ?? "unknown",
+                message: warningMessage ?? "This does not match what we found in your inbox."
+            )
+        case "ignored":
+            return .ignored
+        case "idempotent":
+            return .idempotent
+        default:
+            // No `outcome` field: an older server, or one this build does not know. Trust only the
+            // evidence that a subscription exists.
+            if reviewStatus == .confirmed, appliedSubscriptionID != nil { return .applied }
+            if idempotent == true { return .idempotent }
+            return .notApplied
+        }
+    }
+}
+
+/// What actually happened to a review decision. `applied` is the only case that means the user's
+/// confirmation reached their subscriptions.
+enum EmailCandidateOutcome: Equatable {
+    case applied
+    case warned(reason: String, message: String)
+    case ignored
+    case idempotent
+    /// The request itself failed, or the server reported something this build cannot interpret.
+    case notApplied
+
+    var didApply: Bool {
+        switch self {
+        case .applied, .idempotent: true
+        case .warned, .ignored, .notApplied: false
+        }
+    }
+
+    /// True when the card should leave the review queue: the decision settled, one way or the other.
+    var settlesCard: Bool {
+        switch self {
+        case .applied, .idempotent, .ignored: true
+        case .warned, .notApplied: false
+        }
+    }
+
+    var warning: (reason: String, message: String)? {
+        if case let .warned(reason, message) = self { return (reason, message) }
+        return nil
     }
 }
 

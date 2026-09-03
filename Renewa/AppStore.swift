@@ -481,13 +481,18 @@ final class AppStore {
         }
     }
 
+    /// Returns what actually happened. The predecessor returned `true` whenever nothing was thrown,
+    /// so a server that refused the confirmation — HTTP 200 with the card left unapplied — was
+    /// reported to the user as a successful save, and the discovery was lost silently.
+    @discardableResult
     func reviewEmailCandidate(
         _ candidate: EmailSubscriptionCandidate,
         decision: EmailCandidateDecision,
         edits: EmailCandidateEdits? = nil,
-        correctionReason: String? = nil
-    ) async -> Bool {
-        guard session != nil else { return false }
+        correctionReason: String? = nil,
+        acknowledgeWarning: Bool = false
+    ) async -> EmailCandidateOutcome {
+        guard session != nil else { return .notApplied }
         isReviewingEmailCandidate = true
         emailCandidatePendingID = candidate.id
         defer {
@@ -495,15 +500,20 @@ final class AppStore {
             emailCandidatePendingID = nil
         }
         do {
-            _ = try await performAuthenticated { accessToken in
+            let response = try await performAuthenticated { accessToken in
                 try await self.client.reviewEmailCandidate(
                     id: candidate.id,
                     decision: decision,
                     edits: edits,
                     correctionReason: correctionReason,
+                    acknowledgeWarning: acknowledgeWarning,
                     accessToken: accessToken
                 )
             }
+            let outcome = response.outcome
+            // A warning changed nothing on the server: the card is still pending and no subscription
+            // was written. Refreshing would only cost the user a wait before they read it.
+            if case .warned = outcome { return outcome }
             // Start the status refetch and let the subscription refresh run alongside it, not after.
             // Home reads `subscriptions`, so a confirmed discovery is invisible there until that
             // refresh lands — and `scanStatus` opens with a reconcile plus half a dozen sequential
@@ -514,17 +524,17 @@ final class AppStore {
             async let refreshedStatus = performAuthenticated { accessToken in
                 try await self.client.emailScanStatus(scanID: scanID, accessToken: accessToken)
             }
-            if decision == .confirm {
+            if decision == .confirm, outcome.didApply {
                 try await refreshSubscriptions()
             }
             let status = try await refreshedStatus
             withAnimation(RenewaMotion.standard) {
                 emailScanStatus = status
             }
-            return true
+            return outcome
         } catch {
             reportAuthenticatedOperationError(error)
-            return false
+            return .notApplied
         }
     }
 

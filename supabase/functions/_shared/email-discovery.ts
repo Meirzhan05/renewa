@@ -350,6 +350,80 @@ export function canCreateLifecycleCandidate(
   return lifecycle.state === "current" && !suppressed;
 }
 
+export type ConfirmationWarningReason =
+  | "merchant_suppressed"
+  | "later_cancellation"
+  | "conflicting_evidence_dates"
+  | "later_renewal";
+
+export type ConfirmationWarning = {
+  reason: ConfirmationWarningReason;
+  message: string;
+};
+
+/**
+ * Whether stored evidence CONTRADICTS a confirmation a person just made — never whether it supports
+ * one.
+ *
+ * The predecessor asked the opposite question: it refused unless the lifecycle was positively
+ * `current`, which fires on ABSENCE. So a card someone completed by typing in the missing amount was
+ * refused for the very field they had just supplied — and silently, because the refusal returned 200.
+ * Absence is not disagreement: a person reading their own receipt is better evidence than an event
+ * row the extractor could not fill in. Only a real contradiction warns, and even then they decide.
+ *
+ * Returns null when nothing contradicts the decision, and null once the person has acknowledged one:
+ * they have already been shown the contradiction and chosen to proceed, and re-raising it would put
+ * the override out of reach. Messages are composed from typed fields and fixed copy only, never from
+ * email content, so the anti-exfiltration boundary holds.
+ */
+export function confirmationWarning(input: {
+  action: CandidateAction;
+  lifecycle: MerchantLifecycle;
+  suppressed: boolean;
+  merchantName: string;
+  acknowledged: boolean;
+}): ConfirmationWarning | null {
+  if (input.acknowledged) return null;
+  const name = input.merchantName.trim();
+
+  // Their own earlier choice, not a fact about the merchant — so say whose choice it was.
+  if (input.suppressed) {
+    return {
+      reason: "merchant_suppressed",
+      message:
+        `You chose to stop seeing inbox suggestions for ${name}. Adding it now will not undo that.`,
+    };
+  }
+
+  if (input.action === "cancel") {
+    // A cancellation is contradicted by billing that arrived after the ending, not by silence.
+    if (input.lifecycle.state === "current") {
+      return {
+        reason: "later_renewal",
+        message: `A more recent renewal was found for ${name} after this cancellation.`,
+      };
+    }
+    return null;
+  }
+
+  if (input.lifecycle.reason === "explicit_ending") {
+    return {
+      reason: "later_cancellation",
+      message: `The most recent billing email found for ${name} was a cancellation.`,
+    };
+  }
+  if (input.lifecycle.reason === "conflicting_dates") {
+    return {
+      reason: "conflicting_evidence_dates",
+      message: `The dates on the emails found for ${name} disagree with each other.`,
+    };
+  }
+
+  // `no_paid_recurring_event` and `renewal_window_elapsed` are absences — nothing was found, which
+  // is not the same as something disagreeing. The person in front of the evidence outranks a gap.
+  return null;
+}
+
 export function candidateConfirmationIssues(input: {
   action: CandidateAction;
   merchantName: string;

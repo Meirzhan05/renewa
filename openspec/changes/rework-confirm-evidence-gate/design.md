@@ -114,13 +114,33 @@ system tidied up a stale card" with "the system refused a person".
 ### Identity flows from the card to the subscription, and is assigned on every creation path
 
 Confirm takes the candidate's `canonical_merchant_key` instead of `canonicalMerchantKey(merchantName)`.
-`source_key` currently embeds that same derived slug (`email:${key}`), so it changes with it; since
-it participates in the confirm upsert's conflict target, the migration must not orphan existing rows'
-dedupe behaviour.
 
-Manual creation must also assign a key, or the tracked-subscription lookup stays empty for exactly
-the subscriptions the user cares most about not being asked about twice. Name-derived is the only
-option available with no sender in hand, and is stable per name.
+`source_key` stays name-derived and is now computed separately. It is the conflict target of the
+confirm upsert, so moving it to the card's identity would strand every subscription an earlier
+confirmation created under the old key — a re-confirm would insert a duplicate rather than update.
+Dedupe-on-write and identity-for-matching are separate jobs and only the latter has to agree with the
+card. (The design originally assumed the two moved together and that a migration would reconcile
+them; separating them removes the migration and its risk entirely.)
+
+**Where a manual subscription's identity comes from.** Manual creation writes straight from the
+client to PostgREST, so nothing on that path can set the column without a second copy of the
+derivation. There are exactly two consumers of the column, `candidate-bridge.ts` (write-boundary
+dedupe) and `reconcile-db.ts` (what the agent is told the user tracks), and both are worker
+TypeScript that already imports `canonicalMerchantKey`. So identity is derived at the point of use:
+each reader selects `name` alongside the key and falls back to `canonicalMerchantKey(name)` when the
+column is null.
+
+One implementation, in the module that owns it, no migration, and every manual subscription already
+in the database starts being recognized immediately rather than only newly created ones.
+
+*Alternative rejected — a Postgres trigger populating the column on insert:* it would cover every
+path, but puts a second copy of the slug rules in SQL, which is exactly what
+`dedupe-inbox-proposals-by-merchant` refused ("re-deriving them would put a second copy … in SQL,
+where it would drift"). Exact NFKD and `\p{Letter}` parity with the TypeScript is also difficult to
+guarantee.
+
+*Alternative rejected — compute it in Swift on manual insert:* a third copy of the rule, covering
+only the iOS path, and it does nothing for the manual rows that already exist.
 
 *Alternative rejected — match tracked subscriptions by name similarity when the key is null:* fuzzy
 matching across a boundary that already has a deterministic identity mechanism, and the failure mode
@@ -140,9 +160,9 @@ currently discarded at `AppStore.swift:498`.
   once identity is restored. Measure how often it fires before considering softening it.
 - **Users click through warnings** → Accepted. An explained, overridable warning is strictly better
   than a silent veto, and the user is the one who can see their own inbox.
-- **Changing `source_key` alters the confirm upsert's conflict target** → Plan the migration so
-  existing email-sourced subscriptions keep resolving to the same row; verify against the live schema
-  in a transaction before applying, as `dedupe-inbox-proposals-by-merchant` did.
+- **`source_key` and `canonical_merchant_key` now derive differently on the same row** → Deliberate,
+  and commented at the write site. The risk is a later reader assuming they agree; they answer
+  different questions and only identity is meant to match the card.
 - **Assigning identity to manual subscriptions makes the agent match rows it never matched** →
   Intended, but it changes proposals from "add" to "update" for merchants the user tracks. Verify the
   update path is safe before enabling, since an update writes to a subscription the user created.
@@ -158,8 +178,7 @@ currently discarded at `AppStore.swift:498`.
 1. Land and deploy `restore-detected-event-identity` first; confirm evidence rows are keyed.
 2. Server: warned outcome and acknowledgement in `reviewCandidate`; contradiction-based evidence
    test; identity inherited by the created subscription.
-3. Migration: assign canonical merchant keys on subscription creation including the manual path;
-   verify inside `BEGIN`/`ROLLBACK` against the live schema first.
+3. Worker: derive identity at the two readers so manual subscriptions are recognized. No migration.
 4. Client: typed outcome, response consumed, warning surfaced, optimistic rollback on non-applied.
 5. Verify with the real inbox: a normal confirm applies in one tap; a cancelled-merchant card warns
    and applies on acknowledgement; a confirmed subscription is not re-proposed by the next scan; a
