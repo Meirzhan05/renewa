@@ -52,7 +52,14 @@ test("managed orchestrator asks the Edge Function to process the next opaque pag
         return Response.json({ has_next_page: true, page_id: "page-1" });
       },
     );
-    assert.deepEqual(result, { cancelled: false, hasNextPage: true, pageId: "page-1" });
+    // `retryAfterMs: 0` on the ordinary path — the Edge Function only sends a delay when it has
+    // re-queued a page behind a backoff.
+    assert.deepEqual(result, {
+      cancelled: false,
+      hasNextPage: true,
+      pageId: "page-1",
+      retryAfterMs: 0,
+    });
   } finally {
     if (previousURL === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousURL;
     if (previousSecret === undefined) delete process.env.MANAGED_AGENT_SHARED_SECRET;
@@ -106,6 +113,43 @@ test("managed page context retries a short Edge service outage before claiming w
     );
     assert.equal(calls, 2);
     assert.deepEqual(result, { cancelled: false, executionId: "execution-1", accessToken: "short-lived" });
+  } finally {
+    if (previousURL === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousURL;
+    if (previousSecret === undefined) delete process.env.MANAGED_AGENT_SHARED_SECRET;
+    else process.env.MANAGED_AGENT_SHARED_SECRET = previousSecret;
+    if (previousPublicKey === undefined) delete process.env.SUPABASE_PUBLISHABLE_KEY;
+    else process.env.SUPABASE_PUBLISHABLE_KEY = previousPublicKey;
+  }
+});
+
+test("a deferred page reports how long to hold off", async () => {
+  const previousURL = process.env.SUPABASE_URL;
+  const previousSecret = process.env.MANAGED_AGENT_SHARED_SECRET;
+  const previousPublicKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+  process.env.SUPABASE_URL = "https://dev.example.test";
+  process.env.MANAGED_AGENT_SHARED_SECRET = "shared-development-secret";
+  process.env.SUPABASE_PUBLISHABLE_KEY = "public-development-key";
+  try {
+    // A page re-queued behind a backoff: still more work to do, but no page was admitted this pass.
+    const deferred = await processManagedConnection(
+      { version: 2, scanRunId: "run-1", connectionId: "connection-1" },
+      async () => Response.json({ has_next_page: true, retry_after_ms: 4000 }),
+    );
+    assert.deepEqual(deferred, {
+      cancelled: false,
+      hasNextPage: true,
+      pageId: null,
+      retryAfterMs: 4000,
+    });
+
+    // A nonsensical delay must not become a wait; treat it as no delay rather than trusting it.
+    for (const bad of [-1, 0, "soon", null]) {
+      const result = await processManagedConnection(
+        { version: 2, scanRunId: "run-1", connectionId: "connection-1" },
+        async () => Response.json({ has_next_page: true, retry_after_ms: bad }),
+      );
+      assert.equal(result.retryAfterMs, 0, `retry_after_ms ${JSON.stringify(bad)} must read as 0`);
+    }
   } finally {
     if (previousURL === undefined) delete process.env.SUPABASE_URL; else process.env.SUPABASE_URL = previousURL;
     if (previousSecret === undefined) delete process.env.MANAGED_AGENT_SHARED_SECRET;

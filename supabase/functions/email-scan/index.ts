@@ -43,7 +43,13 @@ import {
   scanDispatchGraceMs,
   totalRunProgress,
 } from "../_shared/scan-status.ts";
-import { userFacingScanError } from "../_shared/scan-errors.ts";
+import {
+  classifyProviderStatus,
+  isRetryableProviderFailure,
+  providerFailureClassOf,
+  taggedProviderFailure,
+  userFacingScanError,
+} from "../_shared/scan-errors.ts";
 import {
   cursorRecoveryLookbackDays,
   gmailHistoricalQuery,
@@ -54,6 +60,7 @@ import {
   renewDueInboxMonitoring,
   stopInboxMonitoring,
 } from "../_shared/inbox-monitoring.ts";
+import { monitoringHealthForError } from "../_shared/inbox-monitoring-policy.ts";
 import {
   derivePriorUpserts,
   type MerchantReviewPrior,
@@ -618,6 +625,10 @@ async function managedPageContext(
   return { execution_id: execution.id, access_token: tokens.access_token };
 }
 
+/** One retry policy for `email_scan_jobs`, shared by the managed and legacy page paths. */
+const maximumPageAttempts = 3;
+const managedRetryBackoffMs = 2_000;
+
 async function processManagedConnection(
   admin: AdminClient,
   body: Record<string, unknown>,
@@ -630,12 +641,28 @@ async function processManagedConnection(
   if (runError) throw runError;
   if (!run) throw new Error("Managed scan run not found");
   if (run.cancel_requested_at) return { cancelled: true, has_next_page: false };
+  // `available_at` is honoured so a page deferred by a retry is not re-claimed before its backoff
+  // has elapsed. Without this the orchestrator's loop would re-take it instantly and burn every
+  // attempt in milliseconds, which is worse than not retrying — it hammers a provider that has
+  // already asked us to slow down.
   const { data: job, error: jobError } = await admin.from("email_scan_jobs")
     .select("id,attempts,page_number,provider_continuation,batch_id")
     .eq("scan_run_id", runID).eq("connection_id", connectionID).eq("status", "queued")
+    .lte("available_at", new Date().toISOString())
     .order("created_at", { ascending: true }).limit(1).maybeSingle();
   if (jobError) throw jobError;
-  if (!job) return { has_next_page: false };
+  if (!job) {
+    // Nothing claimable now. Distinguish "this connection is finished" from "a retry is waiting out
+    // its backoff" — reporting the latter as finished would strand the page and stall the run.
+    const { count, error: pendingError } = await admin.from("email_scan_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("scan_run_id", runID).eq("connection_id", connectionID).eq("status", "queued");
+    if (pendingError) throw pendingError;
+    if ((count ?? 0) > 0) {
+      return { has_next_page: true, retry_after_ms: managedRetryBackoffMs };
+    }
+    return { has_next_page: false };
+  }
   const { data: claimed, error: claimError } = await admin.from("email_scan_jobs")
     .update({ status: "running", attempts: job.attempts + 1, started_at: new Date().toISOString(), error_message: null })
     .eq("id", job.id).eq("status", "queued").select("id").maybeSingle();
@@ -655,9 +682,27 @@ async function processManagedConnection(
     };
   } catch (error) {
     const message = safeErrorMessage(error);
+    // Retry a transient failure instead of discarding the scan. `processUserJobs` has always done
+    // this; this path — the one every scan now takes — silently did not, so a single throttled page
+    // failed a run that had already read seven pages successfully, and told the user to reconnect a
+    // sixty-second-old healthy inbox. Same policy as the legacy path, deliberately: one retry
+    // contract for one table.
+    const failureClass = providerFailureClassOf(message);
+    const retryable = (failureClass === null ||
+      isRetryableProviderFailure(failureClass)) &&
+      job.attempts + 1 < maximumPageAttempts;
+    const backoffMs = (job.attempts + 1) * managedRetryBackoffMs;
     await admin.from("email_scan_jobs").update({
-      status: "failed", error_message: message, completed_at: new Date().toISOString(),
+      status: retryable ? "queued" : "failed",
+      error_message: message,
+      available_at: new Date(Date.now() + backoffMs).toISOString(),
+      completed_at: retryable ? null : new Date().toISOString(),
     }).eq("id", job.id);
+    if (retryable) {
+      // The run keeps going and the page comes back round. Nothing is finalized, and the caller is
+      // told how long to wait so the backoff is real rather than decorative.
+      return { has_next_page: true, retry_after_ms: backoffMs };
+    }
     await finalizeScanRunIfDrained(admin, runID);
     throw error;
   }
@@ -740,12 +785,11 @@ async function processUserJobs(
         "id",
         job.connection_id,
       ).eq("user_id", userID);
+      // Only a real authorization failure marks the connection as needing reconnection; a rate limit
+      // or a provider outage leaves a perfectly good connection alone. Shared with the monitoring
+      // path rather than re-implemented here — this duplicate regex is what let the two disagree.
       await admin.from("inbox_monitoring_watches").update({
-        health: /reconnect|access expired|invalid.*token|unauthori[sz]ed/i.test(
-            message,
-          )
-          ? "reconnect_required"
-          : "degraded",
+        health: monitoringHealthForError(message),
         last_error: message.slice(0, 280),
       }).eq("connection_id", job.connection_id);
       await admin.from("email_scan_jobs").update({
@@ -2195,7 +2239,7 @@ async function gmailMailboxPage(
   const response = await providerFetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
     accessToken,
-    "Gmail could not be read. Reconnect your inbox.",
+    "Gmail could not be read.",
   );
   const payload = await response.json();
 
@@ -2227,7 +2271,7 @@ async function gmailRecentPage(
   const response = await providerFetch(
     `https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,
     accessToken,
-    "Gmail could not be read. Reconnect your inbox.",
+    "Gmail could not be read.",
   );
   const payload = await response.json();
   const profile = await providerFetch(
@@ -2265,7 +2309,14 @@ async function gmailHistory(
     );
     if (response.status === 404) throw new Error("Gmail cursor expired");
     if (!response.ok) {
-      throw new Error("Gmail history could not be read. Reconnect your inbox.");
+      // Hand-rolled rather than `providerFetch` because 404 means an expired cursor here, which is
+      // recoverable. Everything else still gets classified from its status.
+      throw new Error(
+        taggedProviderFailure(
+          classifyProviderStatus(response.status),
+          "Gmail history could not be read.",
+        ),
+      );
     }
     const payload = await response.json();
     for (const history of payload.history ?? []) {
@@ -2374,7 +2425,7 @@ async function fetchMicrosoftBatchAttempt(
       accessToken,
       sync
         ? "Microsoft synchronization cursor expired."
-        : "Microsoft mail could not be read. Reconnect your inbox.",
+        : "Microsoft mail could not be read.",
     );
     const payload = await response.json();
     for (const message of payload.value ?? []) {
@@ -2425,7 +2476,7 @@ async function fetchMicrosoftMailboxPage(
   const response = await providerFetch(
     nextURL,
     accessToken,
-    "Microsoft mail could not be read. Reconnect your inbox.",
+    "Microsoft mail could not be read.",
   );
   const payload = await response.json();
   const metadata = (payload.value ?? []).flatMap(
@@ -2570,15 +2621,30 @@ function gmailText(part: Record<string, unknown>): string {
   return parts?.map(gmailText).join("\n") ?? "";
 }
 
+/**
+ * The single choke point for every Gmail and Graph request the scan makes.
+ *
+ * `requestDescription` says WHICH request failed. WHY it failed comes from the status, which this
+ * used to discard entirely — every failure raised the same "Reconnect your inbox" text, so a 429
+ * during a long scan was indistinguishable from a revoked token and sent the user to re-authorize a
+ * healthy inbox. The provider's own response body is still never surfaced.
+ */
 async function providerFetch(
   url: string,
   accessToken: string,
-  failureMessage: string,
+  requestDescription: string,
 ): Promise<Response> {
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!response.ok) throw new Error(failureMessage);
+  if (!response.ok) {
+    throw new Error(
+      taggedProviderFailure(
+        classifyProviderStatus(response.status),
+        requestDescription,
+      ),
+    );
+  }
   return response;
 }
 
@@ -2786,6 +2852,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function safeErrorMessage(error: unknown): string {
   const message = errorMessage(error, "Email scan failed");
+  // A classified provider failure keeps its tag: the redaction below would otherwise rewrite an
+  // `[authorization]` failure into untagged prose and throw away the class that the status gave us.
+  const failureClass = providerFailureClassOf(message);
+  if (failureClass) {
+    return taggedProviderFailure(
+      failureClass,
+      message.replace(/^\[[a-z-]+\]\s*/, "").slice(0, 260),
+    );
+  }
   if (/token|secret|authorization|bearer/i.test(message)) {
     return "Inbox authorization needs attention.";
   }

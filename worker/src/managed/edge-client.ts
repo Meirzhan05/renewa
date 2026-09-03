@@ -48,7 +48,9 @@ export async function claimManagedPageContext(
 export async function processManagedConnection(
   payload: ScanInboxRunPayload,
   fetcher: typeof fetch = fetch,
-): Promise<{ cancelled: boolean; hasNextPage: boolean; pageId: string | null }> {
+): Promise<
+  { cancelled: boolean; hasNextPage: boolean; pageId: string | null; retryAfterMs: number }
+> {
   if (!isScanInboxRunPayload(payload)) throw new Error("Invalid managed Inbox run payload");
   const response = await fetchWithTransientRetries(fetcher, `${supabaseFunctionsBaseURL()}/functions/v1/email-scan`, {
     method: "POST",
@@ -67,6 +69,7 @@ export async function processManagedConnection(
     cancelled?: unknown;
     has_next_page?: unknown;
     page_id?: unknown;
+    retry_after_ms?: unknown;
     message?: unknown;
   };
   if (!response.ok) throw new Error(edgeErrorMessage(body, "Managed connection page could not be processed"));
@@ -74,6 +77,11 @@ export async function processManagedConnection(
     cancelled: body.cancelled === true,
     hasNextPage: body.has_next_page === true,
     pageId: typeof body.page_id === "string" ? body.page_id : null,
+    // How long the page asked us to hold off. Absent on the ordinary path, so it reads as zero and
+    // the orchestrator continues straight to the next page.
+    retryAfterMs: typeof body.retry_after_ms === "number" && body.retry_after_ms > 0
+      ? body.retry_after_ms
+      : 0,
   };
 }
 

@@ -1,3 +1,4 @@
+import { taggedProviderFailure } from "./scan-errors.ts";
 import { mustEnv } from "./supabase.ts";
 
 export type Provider = "google" | "microsoft";
@@ -85,7 +86,11 @@ export async function refreshTokens(
 ): Promise<StoredTokens> {
   if (tokens.expires_at > Math.floor(Date.now() / 1000) + 120) return tokens;
   if (!tokens.refresh_token) {
-    throw new Error("Mail access expired. Reconnect your inbox.");
+    // Tagged, not prose: this is a genuine authorization failure raised without an HTTP status, and
+    // classification must not depend on the word "reconnect" appearing in the sentence.
+    throw new Error(
+      taggedProviderFailure("authorization", "Mail access expired."),
+    );
   }
   const isGoogle = provider === "google";
   const body = new URLSearchParams({
