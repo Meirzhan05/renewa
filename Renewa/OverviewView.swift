@@ -61,11 +61,6 @@ struct OverviewView: View {
                         .renewaEntrance(appeared, delay: 0.3)
                 }
 
-                if !store.inactiveSubscriptions.isEmpty {
-                    inactiveSubscriptions
-                        .padding(.top, 30)
-                        .renewaEntrance(appeared, delay: 0.36)
-                }
             }
             .padding(.horizontal, 20)
             .padding(.top, 14)
@@ -414,38 +409,6 @@ struct OverviewView: View {
         }
     }
 
-    private var inactiveSubscriptions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Inactive")
-                .font(.renewa(17, weight: .bold))
-                .foregroundStyle(RenewaTheme.ink)
-
-            ForEach(
-                Array(
-                    store.inactiveSubscriptions
-                        .sorted {
-                            ($0.updatedAt ?? .distantPast) > ($1.updatedAt ?? .distantPast)
-                        }
-                        .enumerated()
-                ),
-                id: \.element.id
-            ) { index, subscription in
-                if !removingSubscriptionIDs.contains(subscription.id) {
-                    InactiveSubscriptionRow(
-                        subscription: subscription,
-                        priceText: inactivePriceText(for: subscription)
-                    )
-                    .renewaEntrance(appeared, delay: 0.4 + Double(index) * 0.045, distance: 10)
-                    .transition(subscriptionRemovalTransition)
-                    .contextMenu {
-                        subscriptionActions(subscription, removeTitle: "Delete permanently")
-                    }
-                }
-            }
-            .animation(removalAnimation, value: removingSubscriptionIDs)
-        }
-    }
-
     @ViewBuilder
     private func subscriptionActions(_ subscription: Subscription, removeTitle: String) -> some View {
         Button {
@@ -512,15 +475,6 @@ struct OverviewView: View {
             .filter { !tracked.contains($0.id) }
             .prefix(3)
             .map { .init(id: $0.id, name: $0.displayName) }
-    }
-
-    private func inactivePriceText(for subscription: Subscription) -> String {
-        guard subscription.currency != store.defaultCurrency,
-            let converted = store.convertedAmount(subscription.price, from: subscription.currency)
-        else {
-            return subscription.price.currencyText(code: subscription.currency)
-        }
-        return converted.currencyText(code: store.defaultCurrency)
     }
 
     private func deltaColor(_ direction: HomePresentationState.SpendDirection) -> Color {
@@ -727,35 +681,6 @@ private struct CycleTrack: View {
         .frame(height: 6)
         .onAppear { filled = true }
         .accessibilityHidden(true)
-    }
-}
-
-private struct InactiveSubscriptionRow: View {
-    let subscription: Subscription
-    let priceText: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            SubscriptionBrandIcon(subscription: subscription, size: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(subscription.name)
-                    .font(.renewa(16, weight: .semibold))
-                    .foregroundStyle(RenewaTheme.ink)
-                Text(subscription.status.title)
-                    .font(.renewa(13, weight: .medium))
-                    .foregroundStyle(RenewaTheme.mutedSoft)
-            }
-            Spacer()
-            Text(priceText)
-                .font(.system(size: 16, weight: .medium, design: .serif))
-                .foregroundStyle(RenewaTheme.muted)
-        }
-        .opacity(0.62)
-        .contentShape(
-            [.interaction, .contextMenuPreview],
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-        )
     }
 }
 
