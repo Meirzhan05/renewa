@@ -36,11 +36,8 @@ struct EmailScanView: View {
     @State private var suppressionCandidate: EmailSubscriptionCandidate?
     @State private var disconnectTarget: EmailConnectionSummary?
     @State private var learningItem: EmailScanLearningItem?
-    @State private var showingClearConfirmation = false
     @State private var showingInboxSettings = false
     @State private var showingScanDetails = false
-    @State private var showingInboxMenu = false
-    @State private var showingMutedServices = false
     @State private var connectingProvider: String?
     /// Cards the reader has already answered, hidden while the decision is in flight.
     @State private var resolvingCandidateIDs: Set<UUID> = []
@@ -60,39 +57,23 @@ struct EmailScanView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    header
-                        .renewaEntrance(appeared, delay: 0.02)
-                    if store.isLoadingEmailDiscovery && store.emailScanStatus == nil {
-                        inboxLoading
-                            .renewaEntrance(appeared, delay: 0.08)
-                    } else {
-                        inboxDashboard
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                    .renewaEntrance(appeared, delay: 0.02)
+                if store.isLoadingEmailDiscovery && store.emailScanStatus == nil {
+                    inboxLoading
+                        .renewaEntrance(appeared, delay: 0.08)
+                } else {
+                    inboxDashboard
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 34)
             }
-            .scrollIndicators(.hidden)
-            .background(RenewaTheme.background)
-
-            if showingInboxMenu {
-                Color.black.opacity(0.12)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture { showingInboxMenu = false }
-                    .transition(.opacity)
-
-                inboxMenu
-                    .padding(.top, 70)
-                    .padding(.trailing, 24)
-                    .transition(.scale(scale: 0.94, anchor: .topTrailing).combined(with: .opacity))
-            }
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 34)
         }
-        .animation(RenewaMotion.quick, value: showingInboxMenu)
+        .scrollIndicators(.hidden)
+        .background(RenewaTheme.background)
         .task {
             appeared = true
             #if DEBUG
@@ -140,11 +121,6 @@ struct EmailScanView: View {
             }
             .presentationDetents([.large])
             .presentationCornerRadius(30)
-        }
-        .sheet(isPresented: $showingMutedServices) {
-            mutedServicesSheet
-                .presentationDetents([.medium])
-                .presentationCornerRadius(30)
         }
         // The server no longer decides this on the user's behalf. It says what it found that
         // disagrees; the person looking at their own inbox decides whether that matters.
@@ -212,18 +188,6 @@ struct EmailScanView: View {
         } message: { _ in
             Text("Renewa will remove its encrypted credential and attempt to revoke provider access. Your confirmed subscriptions stay intact.")
         }
-        .confirmationDialog(
-            "Clear inbox discovery history?",
-            isPresented: $showingClearConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Clear scan history", role: .destructive) {
-                Task { _ = await store.clearEmailScanHistory() }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Scan runs and review history will be removed. Confirmed subscriptions and connected inboxes will remain.")
-        }
     }
 
     private var header: some View {
@@ -235,19 +199,6 @@ struct EmailScanView: View {
             Spacer(minLength: 6)
 
             scanButton
-
-            Button {
-                showingInboxMenu.toggle()
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(InboxPalette.secondaryInk)
-                    .frame(width: 34, height: 34)
-                    .background(InboxPalette.chipFill, in: Circle())
-            }
-            .buttonStyle(PressScaleStyle())
-            .accessibilityLabel("Inbox options")
-            .accessibilityHint("Shows connection, notification, and privacy options")
         }
     }
 
@@ -1079,128 +1030,6 @@ struct EmailScanView: View {
             )
     }
 
-    private var inboxMenu: some View {
-        VStack(spacing: 0) {
-            inboxMenuRow(
-                icon: "envelope",
-                title: "Manage inboxes",
-                detail: "\(presentation.connectionCount)"
-            ) {
-                showingInboxMenu = false
-                showingInboxSettings = true
-            }
-
-            inboxMenuToggleRow(
-                icon: "bell",
-                title: "Inbox scan alerts",
-                isOn: store.inboxNotificationSettings.inboxScanOutcomesEnabled
-            ) {
-                Task {
-                    _ = await store.setInboxScanNotificationsEnabled(
-                        !store.inboxNotificationSettings.inboxScanOutcomesEnabled
-                    )
-                }
-            }
-            .disabled(store.isUpdatingInboxNotifications)
-
-            menuDivider
-
-            inboxMenuRow(
-                icon: "bell.slash",
-                title: "Muted services",
-                detail: "\(store.emailScanStatus?.suppressedMerchants.count ?? 0)"
-            ) {
-                showingInboxMenu = false
-                showingMutedServices = true
-            }
-
-            inboxMenuRow(icon: "clock", title: "Everything it found") {
-                showingInboxMenu = false
-                showingScanDetails = true
-            }
-
-            inboxMenuRow(icon: "trash", title: "Clear scan history") {
-                showingInboxMenu = false
-                showingClearConfirmation = true
-            }
-            .disabled(store.emailScanStatus?.scanID == nil)
-        }
-        .padding(7)
-        .frame(width: 260)
-        .background(RenewaTheme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(RenewaTheme.divider.opacity(0.55), lineWidth: 1)
-        }
-        .shadow(color: RenewaTheme.ink.opacity(0.23), radius: 20, y: 9)
-        .accessibilityElement(children: .contain)
-    }
-
-    private var menuDivider: some View {
-        Divider()
-            .overlay(Color(red: 0.94, green: 0.91, blue: 0.85))
-            .padding(.vertical, 5)
-            .padding(.horizontal, 10)
-    }
-
-    private func inboxMenuRow(
-        icon: String,
-        title: String,
-        detail: String? = nil,
-        isEnabled: Bool? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 11) {
-                Image(systemName: icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .frame(width: 18)
-                Text(title)
-                    .font(.renewa(13, weight: .semibold))
-                Spacer(minLength: 6)
-                if let isEnabled {
-                    Text(isEnabled ? "On" : "Off")
-                        .font(.renewa(11, weight: .semibold))
-                        .foregroundStyle(isEnabled ? RenewaTheme.sage : RenewaTheme.muted)
-                } else if let detail {
-                    Text(detail)
-                        .font(.renewa(11, weight: .semibold))
-                        .foregroundStyle(Color(red: 0.66, green: 0.62, blue: 0.54))
-                }
-            }
-            .foregroundStyle(RenewaTheme.ink)
-            .padding(.horizontal, 11)
-            .frame(height: 42)
-            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-        }
-        .buttonStyle(InboxMenuButtonStyle())
-    }
-
-    private func inboxMenuToggleRow(
-        icon: String,
-        title: String,
-        isOn: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 11) {
-                Image(systemName: icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .frame(width: 18)
-                Text(title)
-                    .font(.renewa(13, weight: .semibold))
-                Spacer(minLength: 6)
-                InboxToggle(isOn: isOn)
-            }
-            .foregroundStyle(RenewaTheme.ink)
-            .padding(.horizontal, 11)
-            .frame(height: 42)
-            .contentShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-        }
-        .buttonStyle(InboxMenuButtonStyle())
-        .accessibilityValue(isOn ? "On" : "Off")
-    }
-
     /// Keeps the connect sheet at the mockup's bottom-sheet height instead of a full page. It
     /// grows with the rows it has to show, and `.large` stays available for long lists.
     private var inboxSheetHeight: CGFloat {
@@ -1265,37 +1094,6 @@ struct EmailScanView: View {
         .scrollIndicators(.hidden)
         .scrollBounceBehavior(.basedOnSize)
         .background(RenewaTheme.background)
-    }
-
-    private var mutedServicesSheet: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("Muted services")
-                        .font(.renewa(21, weight: .bold))
-                    Text("Muted services won’t be suggested from inbox evidence. You can restore them any time.")
-                        .font(.renewa(12, weight: .medium))
-                        .foregroundStyle(RenewaTheme.muted)
-
-                    if let suppressed = store.emailScanStatus?.suppressedMerchants, !suppressed.isEmpty {
-                        suppressionSection(suppressed)
-                    } else {
-                        Text("No services are muted.")
-                            .font(.renewa(13, weight: .medium))
-                            .foregroundStyle(RenewaTheme.muted)
-                            .padding(.top, 4)
-                    }
-                }
-                .padding(24)
-            }
-            .scrollIndicators(.hidden)
-            .background(RenewaTheme.background)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { showingMutedServices = false }
-                }
-            }
-        }
     }
 
     private func inboxConnectionRow(_ connection: EmailConnectionSummary) -> some View {
@@ -1463,36 +1261,6 @@ struct EmailScanView: View {
         .scrollIndicators(.hidden)
         .background(RenewaTheme.background)
         .navigationBarTitleDisplayMode(.inline)
-    }
-
-    private func suppressionSection(_ suppressions: [EmailMerchantSuppression]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Paused suggestions")
-                    .font(.renewa(19, weight: .bold))
-                Text("Resume a merchant whenever you want to see it in discovery again.")
-                    .font(.renewa(13))
-                    .foregroundStyle(RenewaTheme.muted)
-            }
-
-            ForEach(suppressions) { merchant in
-                RenewaCard {
-                    HStack(spacing: 12) {
-                        HeroIcon(.rectangleStack, size: 20)
-                            .foregroundStyle(RenewaTheme.muted)
-                        Text(merchant.merchantTitle)
-                            .font(.renewa(15, weight: .semibold))
-                        Spacer()
-                        Button("Resume") {
-                            Task { _ = await store.unsuppressEmailMerchant(merchant) }
-                        }
-                        .font(.renewa(13, weight: .semibold))
-                        .foregroundStyle(RenewaTheme.sage)
-                        .disabled(store.isReviewingEmailCandidate)
-                    }
-                }
-            }
-        }
     }
 
     private func connect(_ provider: String) async {
@@ -1699,39 +1467,6 @@ private struct InboxGhostCard: View {
         Capsule()
             .fill(tint)
             .frame(width: width, height: height)
-    }
-}
-
-private struct InboxMenuButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .background(
-                configuration.isPressed
-                    ? Color(red: 0.94, green: 0.91, blue: 0.85)
-                    : .clear,
-                in: RoundedRectangle(cornerRadius: 13, style: .continuous)
-            )
-            .opacity(configuration.isPressed ? 0.78 : 1)
-    }
-}
-
-private struct InboxToggle: View {
-    let isOn: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        Capsule()
-            .fill(isOn ? RenewaTheme.sage : Color(red: 0.87, green: 0.83, blue: 0.74))
-            .frame(width: 32, height: 19)
-            .overlay(alignment: isOn ? .trailing : .leading) {
-                Circle()
-                    .fill(.white)
-                    .frame(width: 15, height: 15)
-                    .padding(2)
-                    .shadow(color: .black.opacity(0.2), radius: 1, y: 1)
-            }
-            .animation(reduceMotion ? nil : RenewaMotion.quick, value: isOn)
-            .accessibilityHidden(true)
     }
 }
 
