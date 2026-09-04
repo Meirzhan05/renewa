@@ -69,7 +69,9 @@ struct OverviewView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 14)
-            .padding(.bottom, 28)
+            // MainTabView renders its tab bar as a floating control. Keep the final card
+            // above that control when the scroll view reaches its bottom edge.
+            .padding(.bottom, HomeLayout.floatingTabBarClearance)
         }
         .scrollIndicators(.hidden)
         .background(RenewaTheme.background)
@@ -695,6 +697,12 @@ struct SubscriptionCard: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(card.accessibilityLabel)
     }
+}
+
+private enum HomeLayout {
+    /// The tab bar's 86-point height, its 10-point bottom breathing room, and a small
+    /// visual gap so the last home card never sits behind the floating control.
+    static let floatingTabBarClearance: CGFloat = 112
 }
 
 /// How far through the current billing cycle a subscription is.

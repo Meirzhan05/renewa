@@ -14,6 +14,7 @@
 - [x] Replace the home-page avatar with a calendar shortcut to a Logo.dev-powered upcoming-payments view.
 - [x] Redesign the upcoming-payments destination as a navigable month calendar that projects active recurring subscription deadlines, supports selected-day payment details, preserves accessible date labels, and animates month/date changes while honoring Reduce Motion.
 - [x] Rebuild Home from the `Home Reimagined` design: one spend card carrying the period toggle, month-over-month delta, category split with shares, and the next charge; per-subscription cards with cadence, period cost, urgency, and billing-cycle progress; and a suggestion prompt for services Renewa hasn't seen. Category colours, surface tokens, and currency formatting were realigned to the design across the app.
+- [x] Keep Home's final suggestion card clear of the floating tab bar at the bottom of a scroll.
 
 ## Subscription experience
 
