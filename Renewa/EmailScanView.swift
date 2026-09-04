@@ -295,9 +295,14 @@ struct EmailScanView: View {
                     .padding(.top, 24)
                     .renewaEntrance(appeared, delay: 0.26)
 
+                whatHappensNext
+                    .padding(.top, 24)
+                    .renewaEntrance(appeared, delay: 0.3)
+                    .transition(sectionTransition)
+
                 privacyFooter
                     .padding(.top, 28)
-                    .renewaEntrance(appeared, delay: 0.32)
+                    .renewaEntrance(appeared, delay: 0.36)
             }
         }
         .animation(sectionMotion, value: pendingCandidates.map(\.id))
@@ -806,6 +811,101 @@ struct EmailScanView: View {
                 .padding(.top, 3)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - What happens next
+
+    /// Shown once the queue is settled. With nothing to decide, the tracked section collapses to
+    /// nothing and the screen falls away to blank under a single "nothing left to review" line —
+    /// which reads as though the scan stopped short. This says what the inbox is doing instead.
+    @ViewBuilder private var whatHappensNext: some View {
+        if pendingCandidates.isEmpty, !presentation.isScanning {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionDivider
+
+                Text("What happens next")
+                    .font(.renewa(13.5, weight: .bold))
+                    .padding(.top, 22)
+
+                VStack(spacing: 17) {
+                    nextStepRow(
+                        icon: monitoringStep.icon,
+                        tint: monitoringStep.tint,
+                        title: monitoringStep.title,
+                        detail: monitoringStep.detail
+                    )
+                    nextStepRow(
+                        icon: "checkmark",
+                        tint: RenewaTheme.sage,
+                        title: "Recognised receipts are added without asking you",
+                        detail: "Renewa only writes what it can match with confidence."
+                    )
+                    nextStepRow(
+                        icon: "bell",
+                        tint: RenewaTheme.muted,
+                        title: "A card appears here only when something needs deciding",
+                        detail: "Anything uncertain waits for you rather than guessing."
+                    )
+                }
+                .padding(.top, 16)
+            }
+        }
+    }
+
+    /// The first row has to describe what is actually configured. Promising an inbox is being
+    /// watched when nothing is monitoring it would be the one claim on this screen a person could
+    /// catch out.
+    private var monitoringStep: (icon: String, tint: Color, title: String, detail: String) {
+        switch presentation.monitoringState {
+        case .active:
+            ("arrow.triangle.2.circlepath", RenewaTheme.sage, "Watching for new receipts", lastCheckedDetail)
+        case .checking:
+            (
+                "arrow.triangle.2.circlepath", RenewaTheme.sage, "Checking for new receipts",
+                "A check is running now. You can leave Renewa while it finishes."
+            )
+        case .fallback:
+            ("clock", RenewaTheme.sage, "Checking once a day", lastCheckedDetail)
+        case .reconnectRequired:
+            (
+                "exclamationmark", RenewaTheme.coral, "Automatic checks are paused",
+                "Reconnect the inbox above to resume them."
+            )
+        case .notConfigured:
+            ("hand.tap", RenewaTheme.muted, "Scan whenever you want an update", lastCheckedDetail)
+        }
+    }
+
+    private var lastCheckedDetail: String {
+        guard let lastScannedAt = presentation.lastScannedAt else {
+            return "No inbox check has finished yet."
+        }
+        return "Last checked \(lastScannedAt.formatted(.relative(presentation: .named)))."
+    }
+
+    private func nextStepRow(
+        icon: String,
+        tint: Color,
+        title: String,
+        detail: String
+    ) -> some View {
+        HStack(alignment: .top, spacing: 11) {
+            trackedIcon(system: icon, tint: tint)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.renewa(12.5, weight: .semibold))
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(detail)
+                    .font(.renewa(11.5, weight: .medium))
+                    .foregroundStyle(RenewaTheme.mutedSoft)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private func trackedIcon(system: String, tint: Color) -> some View {
