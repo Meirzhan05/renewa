@@ -12,6 +12,28 @@ private struct CandidateWarning: Identifiable {
     let message: String
 }
 
+/// The beat between the tap and the server confirming a scan has started or stopped. Without it
+/// the header pill sits on its old label for the whole round trip, so the tap reads as if nothing
+/// happened.
+private enum ScanButtonPhase {
+    case starting
+    case stopping
+
+    var title: String {
+        switch self {
+        case .starting: "Starting…"
+        case .stopping: "Stopping…"
+        }
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .starting: "Starting inbox scan"
+        case .stopping: "Stopping inbox scan"
+        }
+    }
+}
+
 private enum InboxPalette {
     static let card = Color(red: 0.985, green: 0.974, blue: 0.953)
     static let cardBorder = Color(red: 0.925, green: 0.894, blue: 0.835)
@@ -39,9 +61,14 @@ struct EmailScanView: View {
     @State private var showingInboxSettings = false
     @State private var showingScanDetails = false
     @State private var connectingProvider: String?
+    /// Set while a start or stop request is in flight, so the pill can say so.
+    @State private var scanPhase: ScanButtonPhase?
     /// Cards the reader has already answered, hidden while the decision is in flight.
     @State private var resolvingCandidateIDs: Set<UUID> = []
     @State private var pendingWarning: CandidateWarning?
+    /// The screen the connect sheet has to sit on, so its height can be set against the phone
+    /// rather than guessed. Seeded with a mid-size iPhone for the first frame.
+    @State private var containerSize = CGSize(width: 393, height: 759)
 
     private var presentation: EmailDiscoveryPresentationState {
         EmailDiscoveryPresentationState(status: store.emailScanStatus)
@@ -73,7 +100,14 @@ struct EmailScanView: View {
             .padding(.bottom, 34)
         }
         .scrollIndicators(.hidden)
-        .background(RenewaTheme.background)
+        .background {
+            GeometryReader { proxy in
+                RenewaTheme.background
+                    .onChange(of: proxy.size, initial: true) { _, size in
+                        if size.width > 0 { containerSize = size }
+                    }
+            }
+        }
         .task {
             appeared = true
             #if DEBUG
@@ -206,29 +240,67 @@ struct EmailScanView: View {
     /// one that is running. With no inbox connected it opens the connect sheet instead.
     private var scanButton: some View {
         Button {
+            guard scanPhase == nil else { return }
             if presentation.isScanning {
-                Task { _ = await store.cancelEmailScan() }
+                runScanRequest(.stopping) { _ = await store.cancelEmailScan() }
             } else if presentation.canStartScan {
-                Task { _ = await store.startEmailScan() }
+                runScanRequest(.starting) { _ = await store.startEmailScan() }
             } else {
                 showingInboxSettings = true
             }
         } label: {
             HStack(spacing: 7) {
-                Image(systemName: presentation.isScanning ? "stop.fill" : "arrow.clockwise")
-                    .font(.system(size: 11.5, weight: .bold))
-                    .foregroundStyle(presentation.isScanning ? RenewaTheme.coral : InboxPalette.secondaryInk)
-                Text(presentation.isScanning ? "Stop" : "Scan now")
+                Group {
+                    if let scanPhase {
+                        ScanPhaseSpinner(tint: scanPhaseTint(scanPhase))
+                    } else {
+                        Image(systemName: presentation.isScanning ? "stop.fill" : "arrow.clockwise")
+                            .font(.system(size: 11.5, weight: .bold))
+                            .foregroundStyle(presentation.isScanning ? RenewaTheme.coral : InboxPalette.secondaryInk)
+                    }
+                }
+                .frame(width: 12, height: 12)
+                Text(scanButtonTitle)
                     .font(.renewa(13, weight: .semibold))
                     .foregroundStyle(RenewaTheme.ink)
+                    .contentTransition(.opacity)
             }
             .padding(.horizontal, 14)
             .frame(height: 34)
             .background(InboxPalette.chipFill, in: Capsule())
         }
         .buttonStyle(PressScaleStyle())
+        .disabled(scanPhase != nil)
         .animation(quickMotion, value: presentation.isScanning)
-        .accessibilityLabel(presentation.isScanning ? "Stop inbox scan" : "Scan now")
+        .animation(quickMotion, value: scanButtonTitle)
+        .accessibilityLabel(scanButtonAccessibilityLabel)
+    }
+
+    private var scanButtonTitle: String {
+        if let scanPhase { return scanPhase.title }
+        return presentation.isScanning ? "Stop" : "Scan now"
+    }
+
+    private var scanButtonAccessibilityLabel: String {
+        if let scanPhase { return scanPhase.accessibilityLabel }
+        return presentation.isScanning ? "Stop inbox scan" : "Scan now"
+    }
+
+    private func scanPhaseTint(_ phase: ScanButtonPhase) -> Color {
+        phase == .stopping ? RenewaTheme.coral : InboxPalette.secondaryInk
+    }
+
+    /// Runs a start or stop request behind its transient label, holding that label for a beat even
+    /// when the server answers immediately: a 40ms flash of "Starting…" reads as a glitch rather
+    /// than an acknowledgement of the tap.
+    private func runScanRequest(_ phase: ScanButtonPhase, _ operation: @escaping () async -> Void) {
+        scanPhase = phase
+        Task {
+            let settled = ContinuousClock.now.advanced(by: .milliseconds(420))
+            await operation()
+            try? await Task.sleep(until: settled, clock: .continuous)
+            scanPhase = nil
+        }
     }
 
     private var inboxLoading: some View {
@@ -516,14 +588,16 @@ struct EmailScanView: View {
                 if let connection = reconnectTarget {
                     Task { await connect(connection.provider) }
                 } else {
-                    Task { _ = await store.startEmailScan() }
+                    // Through the same phase as the header pill, so a retry from here says
+                    // "Starting…" up top rather than leaving both buttons looking untouched.
+                    runScanRequest(.starting) { _ = await store.startEmailScan() }
                 }
             }
             .font(.renewa(12, weight: .bold))
             .foregroundStyle(RenewaTheme.sage)
             .buttonStyle(.plain)
             .fixedSize()
-            .disabled(connectingProvider != nil || presentation.isScanning)
+            .disabled(connectingProvider != nil || presentation.isScanning || scanPhase != nil)
         }
         .padding(13)
         .background(InboxPalette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -1130,24 +1204,27 @@ struct EmailScanView: View {
             )
     }
 
-    /// Keeps the connect sheet at the mockup's bottom-sheet height instead of a full page. It
-    /// grows with the rows it has to show, and `.large` stays available for long lists.
+    /// The sheet ends where its content ends: the header, the gaps around the accounts, and the
+    /// privacy note, plus a card per account. Sizing it to anything larger leaves the rows
+    /// floating in space. It stops short of covering the screen, and `.large` stays available
+    /// for long lists or large type.
     private var inboxSheetHeight: CGFloat {
-        let rows = connections.count + max(2 - connectedProviders.count, 0)
-        return 140 + CGFloat(max(rows, 1)) * 78
+        let rows = max(connections.count + max(2 - connectedProviders.count, 0), 1)
+        let rowsHeight = CGFloat(rows) * 78 + CGFloat(rows - 1) * 10
+        return min(184 + rowsHeight, containerSize.height * 0.9)
     }
 
     private var inboxSettingsSheet: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Text(connectedProviders.isEmpty ? "Add an inbox" : "Your inboxes")
-                    .font(.renewa(17, weight: .bold))
+                    .font(.renewa(21, weight: .bold))
                 Text("Watching more accounts catches subscriptions billed to work or personal mail.")
-                    .font(.renewa(11.5, weight: .medium))
+                    .font(.renewa(12.5, weight: .medium))
                     .foregroundStyle(RenewaTheme.muted)
                     .lineSpacing(2)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 3)
+                    .padding(.top, 4)
 
                 VStack(spacing: 10) {
                     ForEach(connections) { connection in
@@ -1171,7 +1248,7 @@ struct EmailScanView: View {
                         )
                     }
                 }
-                .padding(.top, 18)
+                .padding(.top, 20)
                 .animation(sectionMotion, value: connections.count)
                 .animation(quickMotion, value: connectingProvider)
 
@@ -1185,11 +1262,11 @@ struct EmailScanView: View {
                 }
                 .font(.renewa(11, weight: .medium))
                 .foregroundStyle(RenewaTheme.mutedSoft)
-                .padding(.top, 16)
+                .padding(.top, 20)
             }
             .padding(.horizontal, 24)
-            .padding(.top, 20)
-            .padding(.bottom, 28)
+            .padding(.top, 24)
+            .padding(.bottom, 26)
         }
         .scrollIndicators(.hidden)
         .scrollBounceBehavior(.basedOnSize)
@@ -1207,7 +1284,7 @@ struct EmailScanView: View {
             }
         } label: {
             HStack(spacing: 12) {
-                inboxProviderIcon(connection.provider, size: 36)
+                inboxProviderIcon(connection.provider, size: 40)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(connection.providerTitle)
@@ -1240,7 +1317,7 @@ struct EmailScanView: View {
             }
             .foregroundStyle(RenewaTheme.ink)
             .padding(.horizontal, 15)
-            .frame(minHeight: 68)
+            .frame(minHeight: 78)
             .frame(maxWidth: .infinity)
             .background(InboxPalette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
@@ -1264,7 +1341,7 @@ struct EmailScanView: View {
             Task { await connect(provider) }
         } label: {
             HStack(spacing: 12) {
-                inboxProviderIcon(provider, size: 36)
+                inboxProviderIcon(provider, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.renewa(13.5, weight: .semibold))
@@ -1284,7 +1361,7 @@ struct EmailScanView: View {
             }
             .foregroundStyle(RenewaTheme.ink)
             .padding(.horizontal, 15)
-            .frame(minHeight: 68)
+            .frame(minHeight: 78)
             .frame(maxWidth: .infinity)
             .background(InboxPalette.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
@@ -1406,6 +1483,37 @@ struct EmailScanView: View {
 }
 
 /// The status dot, with the halo that pushes out of it while a scan is running.
+/// The header pill's working indicator: an arc that turns while a start or stop request is out.
+/// It stands in for the pill's own glyph, so the button keeps its width as the label changes.
+private struct ScanPhaseSpinner: View {
+    let tint: Color
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var spinning = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0.08, to: 0.86)
+            .stroke(tint, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+            .rotationEffect(.degrees(spinning ? 360 : 0))
+            .animation(
+                reduceMotion ? nil : .linear(duration: 0.85).repeatForever(autoreverses: false),
+                value: spinning
+            )
+            // Flipping the flag one frame late is what lets the animation attach; set in the same
+            // frame as insertion it snaps straight to the end.
+            .task(id: reduceMotion) {
+                spinning = false
+                guard !reduceMotion else { return }
+                try? await Task.sleep(for: .milliseconds(60))
+                guard !Task.isCancelled else { return }
+                spinning = true
+            }
+            .frame(width: 11, height: 11)
+            .accessibilityHidden(true)
+    }
+}
+
 private struct InboxStatusDot: View {
     let tint: Color
     let isPulsing: Bool
